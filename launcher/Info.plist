@@ -5,8 +5,8 @@
   <key>CFBundleName</key><string>Ọrọ̀</string>
   <key>CFBundleDisplayName</key><string>Ọrọ̀</string>
   <key>CFBundleIdentifier</key><string>local.oro.launcher</string>
-  <key>CFBundleVersion</key><string>2.1</string>
-  <key>CFBundleShortVersionString</key><string>2.1</string>
+  <key>CFBundleVersion</key><string>2.2</string>
+  <key>CFBundleShortVersionString</key><string>2.2</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>Oro</string>
   <key>CFBundleIconFile</key><string>oro</string>
