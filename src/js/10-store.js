@@ -165,10 +165,10 @@ const Vault = {
   },
 };
 
-/* ---------- persistence: browser storage + a Keel folder (or a single data file) ---------- */
+/* ---------- persistence: browser storage + a Ọrọ̀ folder (or a single data file) ---------- */
 const Store = {
   key: null, salt: null, pass: null,
-  dir: null,                 // FileSystemDirectoryHandle for the Keel folder
+  dir: null,                 // FileSystemDirectoryHandle for the Ọrọ̀ folder
   handle: null,              // legacy single data file
   perm: 'none', fileName: '', fileSavedAt: null, lastBackup: null,
   status: 'idle', savedAt: null, error: '',
@@ -178,7 +178,7 @@ const Store = {
 const hasFolder = () => !!(Store.dir && Store.perm === 'granted');
 
 async function serialize() {
-  const plain = { keel: 2, encrypted: false, savedAt: new Date().toISOString(), state };
+  const plain = { keel: 2, /* format id, kept for compatibility */ encrypted: false, savedAt: new Date().toISOString(), state };
   if (Store.key) return Vault.seal(plain, Store.key, Store.salt);
   return plain;
 }
@@ -202,6 +202,12 @@ async function dirFile(sub, name, create) {
   for (const part of sub.split('/').filter(Boolean)) d = await d.getDirectoryHandle(part, { create });
   return d.getFileHandle(name, { create });
 }
+/* Data file names. Builds before the rename used keel.json and keel-YYYY-MM-DD backups; those are still read. */
+const DATA_FILE = 'oro.json', LEGACY_DATA_FILE = 'keel.json';
+async function readFolderData() {
+  for (const n of [DATA_FILE, LEGACY_DATA_FILE]) { try { const t = await readHandleText(await dirFile('data', n, false)); if (t && t.trim()) return t; } catch (e) { /* try the next name */ } }
+  return null;
+}
 async function writeHandle(fh, data) { const w = await fh.createWritable(); await w.write(data); await w.close(); }
 async function readHandleText(fh) { return (await fh.getFile()).text(); }
 
@@ -214,7 +220,7 @@ async function persistNow() {
     const text = JSON.stringify(payload);
     if (hasFolder()) {
       try {
-        await writeHandle(await dirFile('data', 'keel.json', true), text);
+        await writeHandle(await dirFile('data', DATA_FILE, true), text);
         Store.fileSavedAt = new Date();
         await dailyBackup(text);
       } catch (e) { console.warn(e); Store.perm = await queryPerm(Store.dir); }
@@ -234,7 +240,7 @@ const persist = debounce(persistNow, 450);
 async function dailyBackup(text) {
   const day = today();
   if (Store.lastBackup === day) return;
-  const name = `keel-${day}.json`;
+  const name = `oro-${day}.json`;
   await writeHandle(await dirFile('backups', name, true), text);
   Store.lastBackup = day;
   await pruneBackups();
@@ -244,8 +250,11 @@ async function listBackups() {
   try {
     const d = await Store.dir.getDirectoryHandle('backups', { create: true });
     const out = [];
-    for await (const [name, h] of d.entries()) if (h.kind === 'file' && /^keel-\d{4}-\d{2}-\d{2}.*\.json$/.test(name)) out.push({ name, date: name.slice(5, 15), handle: h });
-    return out.sort((a, b) => b.name.localeCompare(a.name));
+    for await (const [name, h] of d.entries()) {
+      const m = h.kind === 'file' && /^(?:oro|keel)-(\d{4}-\d{2}-\d{2}).*\.json$/.exec(name);
+      if (m) out.push({ name, date: m[1], handle: h });
+    }
+    return out.sort((a, b) => b.date.localeCompare(a.date) || b.name.localeCompare(a.name));
   } catch (e) { return []; }
 }
 async function pruneBackups() {
@@ -306,7 +315,7 @@ async function loadFromBrowser() {
   return payload;
 }
 async function readStoredText() {
-  if (Store.dir) { try { return await readHandleText(await dirFile('data', 'keel.json', false)); } catch (e) { return null; } }
+  if (Store.dir) return readFolderData();
   if (Store.handle) return readHandleText(Store.handle);
   return null;
 }
@@ -340,9 +349,9 @@ async function useFolder(dir) {
   try { await IDB.set('dirHandle', dir); await IDB.del('fileHandle'); } catch (e) { /* not persisted */ }
   return Store.perm === 'granted';
 }
-async function folderHasData() { try { const t = await readHandleText(await dirFile('data', 'keel.json', false)); return t && t.trim() ? t : null; } catch (e) { return null; } }
+async function folderHasData() { return readFolderData(); }
 async function connectNewFile() {
-  const handle = await window.showSaveFilePicker({ suggestedName: 'keel-finances.json', types: [{ description: 'Keel data file', accept: { 'application/json': ['.json'] } }] });
+  const handle = await window.showSaveFilePicker({ suggestedName: 'oro-finances.json', types: [{ description: 'Ọrọ̀ data file', accept: { 'application/json': ['.json'] } }] });
   Store.handle = handle; Store.dir = null; Store.perm = 'granted'; Store.fileName = handle.name;
   try { await IDB.set('fileHandle', handle); await IDB.del('dirHandle'); } catch (e) { /* not persisted */ }
   await persistNow();
@@ -360,10 +369,10 @@ async function disconnectStorage() {
   paintStatus();
 }
 
-/* Read a Keel data file (picker, backup, or folder). Returns migrated state or throws. */
+/* Read a Ọrọ̀ data file (picker, backup, or folder). Returns migrated state or throws. */
 async function readDataFile(text, askPass) {
   let payload;
-  try { payload = JSON.parse(text); } catch (e) { throw new Error('That file isn’t a Keel data file (it isn’t valid JSON).'); }
+  try { payload = JSON.parse(text); } catch (e) { throw new Error('That file isn’t a Ọrọ̀ data file (it isn’t valid JSON).'); }
   if (payload.encrypted) {
     let pass = Store.pass, opened = null;
     if (pass) { try { opened = await Vault.open(payload, pass); } catch (e) { opened = null; } }
@@ -373,17 +382,17 @@ async function readDataFile(text, askPass) {
     }
     Store.key = opened.key; Store.salt = opened.salt; Store.pass = pass;
     const s = unwrap(opened.data);
-    if (!s) throw new Error('The file unlocked, but it holds no Keel data.');
+    if (!s) throw new Error('The file unlocked, but it holds no Ọrọ̀ data.');
     return migrate(s);
   }
   const s = unwrap(payload);
-  if (!s) throw new Error('That file isn’t a Keel data file.');
+  if (!s) throw new Error('That file isn’t a Ọrọ̀ data file.');
   return migrate(s);
 }
 
-/* ---------- receipts and exports in the Keel folder ---------- */
+/* ---------- receipts and exports in the Ọrọ̀ folder ---------- */
 async function saveAttachment(file, t) {
-  if (!hasFolder()) throw new Error('Connect your Keel folder in Settings to keep receipts.');
+  if (!hasFolder()) throw new Error('Connect your Ọrọ̀ folder in Settings to keep receipts.');
   const ext = (file.name.split('.').pop() || 'bin').toLowerCase().slice(0, 6);
   const name = `${t.date}-${slugFile(t.payee)}-${uid().slice(0, 5)}.${ext}${Store.key ? '.enc' : ''}`;
   const folder = `receipts/${t.date.slice(0, 4)}`;
@@ -393,7 +402,7 @@ async function saveAttachment(file, t) {
   return { name: file.name, path: `${folder}/${name}`, type: file.type || '', size: file.size };
 }
 async function openAttachment(att) {
-  if (!hasFolder()) throw new Error('Connect your Keel folder to open receipts.');
+  if (!hasFolder()) throw new Error('Connect your Ọrọ̀ folder to open receipts.');
   const parts = att.path.split('/'), name = parts.pop();
   const fh = await dirFile(parts.join('/'), name, false);
   let bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer());

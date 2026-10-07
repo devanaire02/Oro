@@ -168,7 +168,7 @@ function loadPdfJs() {
       await new Promise((res, rej) => {
         const s = document.createElement('script');
         if (inline) { s.textContent = inline.textContent; document.head.appendChild(s); res(); }
-        else { s.src = `app/vendor/${file}`; s.onload = res; s.onerror = () => rej(new Error('Keel couldn’t load its PDF reader from the app folder.')); document.head.appendChild(s); }
+        else { s.src = `app/vendor/${file}`; s.onload = res; s.onerror = () => rej(new Error('Ọrọ̀ couldn’t load its PDF reader from the app folder.')); document.head.appendChild(s); }
       });
     }
     _pdfjs = window.pdfjsLib;
@@ -312,7 +312,7 @@ function builtinCategory(payee, amount) {
   return null;
 }
 
-/* Bank-provided category names → Keel categories */
+/* Bank-provided category names → Ọrọ̀ categories */
 const BANK_CATEGORY_MAP = [
   [/grocer|supermarket/i, 'Groceries'], [/food|dining|restaurant|bar\b/i, 'Dining out'], [/coffee/i, 'Coffee'],
   [/gas|fuel|automotive fuel/i, 'Fuel and charging'], [/auto(motive)?|car service/i, 'Auto maintenance'], [/parking|toll/i, 'Parking and tolls'],

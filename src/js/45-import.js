@@ -36,7 +36,7 @@ async function handleImportFile(file) {
     if (ext === 'pdf') {
       const lines = await pdfToLines(await readFileAsBuffer(file));
       const { rows, period, last4: textLast4, isCard } = parseStatementLines(lines);
-      if (!rows.length) throw new Error('Keel couldn’t find transaction lines in that PDF. If it’s a scanned image, or an unusual layout, download the OFX/QFX or CSV version from your bank instead.');
+      if (!rows.length) throw new Error('Ọrọ̀ couldn’t find transaction lines in that PDF. If it’s a scanned image, or an unusual layout, download the OFX/QFX or CSV version from your bank instead.');
       IMP.source = 'pdf'; IMP.period = period; IMP.pdfRows = rows;
       IMP.accountId = guessAccount(textLast4) || guessAccount(last4);
       if (!IMP.accountId) IMP.newDefaults = { type: isCard ? 'credit' : 'checking' };
@@ -70,7 +70,7 @@ async function handleImportFile(file) {
         if (isPositionsHeader(rows[hi])) {
           IMP.source = 'csv'; IMP.kind = 'positions'; IMP.step = 'positions';
           IMP.positions = parsePositionsCSV(rows).map(p => ({ ...p, assetClass: guessAssetClass(p.symbol, p.name), include: true }));
-          if (!IMP.positions.length) throw new Error('Keel found a positions file but couldn’t read any holdings from it.');
+          if (!IMP.positions.length) throw new Error('Ọrọ̀ found a positions file but couldn’t read any holdings from it.');
           IMP.srcMap = {};
           for (const src of [...new Set(IMP.positions.map(p => p.srcAccount || ''))]) IMP.srcMap[src] = matchInvAccount(src);
         } else {
@@ -188,7 +188,7 @@ function renderImport() {
       </label>
       <div class="help-grid">
         <div><h4>Bank and credit card activity</h4><p>On your bank’s site, look for “Download transactions.” Pick <strong>Quicken (QFX)</strong> or <strong>OFX</strong> if offered: it carries IDs that prevent duplicates and the current balance. CSV works too.</p></div>
-        <div><h4>Brokerage holdings</h4><p>Download the <strong>Positions</strong> page as CSV (Fidelity, Schwab, Vanguard and most others), or an investment QFX. Keel updates shares, prices and cost basis.</p></div>
+        <div><h4>Brokerage holdings</h4><p>Download the <strong>Positions</strong> page as CSV (Fidelity, Schwab, Vanguard and most others), or an investment QFX. Ọrọ̀ updates shares, prices and cost basis.</p></div>
         <div><h4>Moving from another app</h4><p>Exports from <strong>YNAB, Monarch, Mint, Copilot, Tiller</strong> (CSV) or <strong>Quicken</strong> (QIF) bring every account at once, with categories, tags and notes. PDF statements work as a last resort.</p></div>
       </div>`;
     const inp = $('#imp-file'), drop = $('#imp-drop');
@@ -208,14 +208,14 @@ function colSelect(id, val, allowNone) {
 }
 function acctMapBlock() {
   const srcs = Object.keys(IMP.acctMap || {});
-  return `<div class="map-list"><p class="muted small">This file has ${srcs.length} account${srcs.length === 1 ? '' : 's'}. Match each one, or let Keel create it.</p>${srcs.map((src, k) => `<div class="map-row"><span class="map-src">${esc(src || '(no account name)')}</span><select data-amap="${k}">${txnAccountOptions(IMP.acctMap[src], `New account “${src || 'Imported'}”`)}</select></div>`).join('')}</div>`;
+  return `<div class="map-list"><p class="muted small">This file has ${srcs.length} account${srcs.length === 1 ? '' : 's'}. Match each one, or let Ọrọ̀ create it.</p>${srcs.map((src, k) => `<div class="map-row"><span class="map-src">${esc(src || '(no account name)')}</span><select data-amap="${k}">${txnAccountOptions(IMP.acctMap[src], `New account “${src || 'Imported'}”`)}</select></div>`).join('')}</div>`;
 }
 function renderMapStep(box) {
   const m = IMP.map;
   const preview = csvMappedRows();
   if (IMP.useAcctCol) setupAccountMap(preview, IMP.last4); else IMP.multi = false;
   box.innerHTML = `
-    <p class="lede">${esc(IMP.fileName)} has ${IMP.csv.length - IMP.headerRow - 1} rows. Check that Keel picked the right columns.</p>
+    <p class="lede">${esc(IMP.fileName)} has ${IMP.csv.length - IMP.headerRow - 1} rows. Check that Ọrọ̀ picked the right columns.</p>
     <div class="form-grid four">
       <label class="field"><span>Date</span>${colSelect('map-date', m.date)}</label>
       <label class="field"><span>Description</span>${colSelect('map-payee', m.payee)}</label>
@@ -230,7 +230,7 @@ function renderMapStep(box) {
       <label class="check"><input type="checkbox" id="map-flip" ${IMP.flip ? 'checked' : ''}> Flip signs (purchases show as positive)</label>
     </div>
     ${IMP.useAcctCol ? acctMapBlock() : `<div class="form-grid"><label class="field"><span>Import into</span><select id="imp-acct">${txnAccountOptions(IMP.accountId)}</select></label></div><div id="imp-new">${IMP.accountId === '__new' ? newAccountFields('imp-new', { type: 'checking', ...(IMP.newDefaults || {}) }) : ''}</div>`}
-    ${m.category >= 0 ? `<label class="check"><input type="checkbox" id="map-create" ${IMP.createCats ? 'checked' : ''}> Create categories from the file that Keel doesn’t have yet</label>` : ''}
+    ${m.category >= 0 ? `<label class="check"><input type="checkbox" id="map-create" ${IMP.createCats ? 'checked' : ''}> Create categories from the file that Ọrọ̀ doesn’t have yet</label>` : ''}
     <table class="ledger compact"><thead><tr><th>Date</th><th>Description</th>${IMP.useAcctCol ? '<th>Account</th>' : ''}${m.category >= 0 ? '<th>Category</th>' : ''}<th class="num">Amount</th></tr></thead>
       <tbody>${preview.slice(0, 6).map(r => `<tr><td>${dateLabel(r.date, true)}</td><td>${esc(r.payee)}</td>${IMP.useAcctCol ? `<td class="muted">${esc(r.srcAccount)}</td>` : ''}${m.category >= 0 ? `<td class="muted">${esc(r.bankCategory)}</td>` : ''}<td class="num ${signClass(r.amount)}">${money(r.amount)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No rows could be read with this mapping.</td></tr>'}</tbody></table>
     <p class="muted small">Money out should be negative. Purchases on a credit card are money out.</p>`;
@@ -269,7 +269,7 @@ function renderReviewStep(box) {
     ${IMP.multi ? acctMapBlock() : `<div class="form-grid"><label class="field"><span>Import into</span><select id="imp-acct">${txnAccountOptions(IMP.accountId)}</select></label></div>
     <div id="imp-new">${IMP.accountId === '__new' ? newAccountFields('imp-new', { type: 'checking', ...(IMP.newDefaults || {}) }) : ''}</div>`}
     <p class="lede">${rows.length.toLocaleString()} transaction${rows.length === 1 ? '' : 's'}${dates.length ? `, ${dateLabel(dates[0], true)} to ${dateLabel(dates[dates.length - 1], true)}` : ''}.
-      ${dup ? `${dup} look${dup === 1 ? 's' : ''} like ${dup === 1 ? 'a duplicate' : 'duplicates'} and ${dup === 1 ? 'is' : 'are'} unchecked.` : 'None of them are already in Keel.'}
+      ${dup ? `${dup} look${dup === 1 ? 's' : ''} like ${dup === 1 ? 'a duplicate' : 'duplicates'} and ${dup === 1 ? 'is' : 'are'} unchecked.` : 'None of them are already in Ọrọ̀.'}
       ${IMP.source === 'pdf' ? ' Read from a PDF: check the signs. Click any amount to flip it.' : ''}
       ${newCats.length ? ` ${newCats.length} new categor${newCats.length === 1 ? 'y' : 'ies'} will be created: ${newCats.slice(0, 5).map(esc).join(', ')}${newCats.length > 5 ? '…' : ''}.` : ''}</p>
     <div class="toolbar">
@@ -311,7 +311,7 @@ function renderPositionsStep(box) {
   const srcs = Object.keys(IMP.srcMap);
   const total = sum(P.filter(p => p.include).map(p => p.value));
   box.innerHTML = `
-    <p class="lede">${P.length} holding${P.length === 1 ? '' : 's'} worth ${money(total, { cents: false })} in ${srcs.length} account${srcs.length === 1 ? '' : 's'}. Choose where each account goes in Keel.</p>
+    <p class="lede">${P.length} holding${P.length === 1 ? '' : 's'} worth ${money(total, { cents: false })} in ${srcs.length} account${srcs.length === 1 ? '' : 's'}. Choose where each account goes in Ọrọ̀.</p>
     <div class="map-list">${srcs.map((src, k) => `
       <div class="map-row">
         <span class="map-src">${esc(src || IMP.fileName)}</span>

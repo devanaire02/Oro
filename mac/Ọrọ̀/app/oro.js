@@ -297,10 +297,10 @@ const Vault = {
   },
 };
 
-/* ---------- persistence: browser storage + a Keel folder (or a single data file) ---------- */
+/* ---------- persistence: browser storage + a Ọrọ̀ folder (or a single data file) ---------- */
 const Store = {
   key: null, salt: null, pass: null,
-  dir: null,                 // FileSystemDirectoryHandle for the Keel folder
+  dir: null,                 // FileSystemDirectoryHandle for the Ọrọ̀ folder
   handle: null,              // legacy single data file
   perm: 'none', fileName: '', fileSavedAt: null, lastBackup: null,
   status: 'idle', savedAt: null, error: '',
@@ -310,7 +310,7 @@ const Store = {
 const hasFolder = () => !!(Store.dir && Store.perm === 'granted');
 
 async function serialize() {
-  const plain = { keel: 2, encrypted: false, savedAt: new Date().toISOString(), state };
+  const plain = { keel: 2, /* format id, kept for compatibility */ encrypted: false, savedAt: new Date().toISOString(), state };
   if (Store.key) return Vault.seal(plain, Store.key, Store.salt);
   return plain;
 }
@@ -334,6 +334,12 @@ async function dirFile(sub, name, create) {
   for (const part of sub.split('/').filter(Boolean)) d = await d.getDirectoryHandle(part, { create });
   return d.getFileHandle(name, { create });
 }
+/* Data file names. Builds before the rename used keel.json and keel-YYYY-MM-DD backups; those are still read. */
+const DATA_FILE = 'oro.json', LEGACY_DATA_FILE = 'keel.json';
+async function readFolderData() {
+  for (const n of [DATA_FILE, LEGACY_DATA_FILE]) { try { const t = await readHandleText(await dirFile('data', n, false)); if (t && t.trim()) return t; } catch (e) { /* try the next name */ } }
+  return null;
+}
 async function writeHandle(fh, data) { const w = await fh.createWritable(); await w.write(data); await w.close(); }
 async function readHandleText(fh) { return (await fh.getFile()).text(); }
 
@@ -346,7 +352,7 @@ async function persistNow() {
     const text = JSON.stringify(payload);
     if (hasFolder()) {
       try {
-        await writeHandle(await dirFile('data', 'keel.json', true), text);
+        await writeHandle(await dirFile('data', DATA_FILE, true), text);
         Store.fileSavedAt = new Date();
         await dailyBackup(text);
       } catch (e) { console.warn(e); Store.perm = await queryPerm(Store.dir); }
@@ -366,7 +372,7 @@ const persist = debounce(persistNow, 450);
 async function dailyBackup(text) {
   const day = today();
   if (Store.lastBackup === day) return;
-  const name = `keel-${day}.json`;
+  const name = `oro-${day}.json`;
   await writeHandle(await dirFile('backups', name, true), text);
   Store.lastBackup = day;
   await pruneBackups();
@@ -376,8 +382,11 @@ async function listBackups() {
   try {
     const d = await Store.dir.getDirectoryHandle('backups', { create: true });
     const out = [];
-    for await (const [name, h] of d.entries()) if (h.kind === 'file' && /^keel-\d{4}-\d{2}-\d{2}.*\.json$/.test(name)) out.push({ name, date: name.slice(5, 15), handle: h });
-    return out.sort((a, b) => b.name.localeCompare(a.name));
+    for await (const [name, h] of d.entries()) {
+      const m = h.kind === 'file' && /^(?:oro|keel)-(\d{4}-\d{2}-\d{2}).*\.json$/.exec(name);
+      if (m) out.push({ name, date: m[1], handle: h });
+    }
+    return out.sort((a, b) => b.date.localeCompare(a.date) || b.name.localeCompare(a.name));
   } catch (e) { return []; }
 }
 async function pruneBackups() {
@@ -438,7 +447,7 @@ async function loadFromBrowser() {
   return payload;
 }
 async function readStoredText() {
-  if (Store.dir) { try { return await readHandleText(await dirFile('data', 'keel.json', false)); } catch (e) { return null; } }
+  if (Store.dir) return readFolderData();
   if (Store.handle) return readHandleText(Store.handle);
   return null;
 }
@@ -472,9 +481,9 @@ async function useFolder(dir) {
   try { await IDB.set('dirHandle', dir); await IDB.del('fileHandle'); } catch (e) { /* not persisted */ }
   return Store.perm === 'granted';
 }
-async function folderHasData() { try { const t = await readHandleText(await dirFile('data', 'keel.json', false)); return t && t.trim() ? t : null; } catch (e) { return null; } }
+async function folderHasData() { return readFolderData(); }
 async function connectNewFile() {
-  const handle = await window.showSaveFilePicker({ suggestedName: 'keel-finances.json', types: [{ description: 'Keel data file', accept: { 'application/json': ['.json'] } }] });
+  const handle = await window.showSaveFilePicker({ suggestedName: 'oro-finances.json', types: [{ description: 'Ọrọ̀ data file', accept: { 'application/json': ['.json'] } }] });
   Store.handle = handle; Store.dir = null; Store.perm = 'granted'; Store.fileName = handle.name;
   try { await IDB.set('fileHandle', handle); await IDB.del('dirHandle'); } catch (e) { /* not persisted */ }
   await persistNow();
@@ -492,10 +501,10 @@ async function disconnectStorage() {
   paintStatus();
 }
 
-/* Read a Keel data file (picker, backup, or folder). Returns migrated state or throws. */
+/* Read a Ọrọ̀ data file (picker, backup, or folder). Returns migrated state or throws. */
 async function readDataFile(text, askPass) {
   let payload;
-  try { payload = JSON.parse(text); } catch (e) { throw new Error('That file isn’t a Keel data file (it isn’t valid JSON).'); }
+  try { payload = JSON.parse(text); } catch (e) { throw new Error('That file isn’t a Ọrọ̀ data file (it isn’t valid JSON).'); }
   if (payload.encrypted) {
     let pass = Store.pass, opened = null;
     if (pass) { try { opened = await Vault.open(payload, pass); } catch (e) { opened = null; } }
@@ -505,17 +514,17 @@ async function readDataFile(text, askPass) {
     }
     Store.key = opened.key; Store.salt = opened.salt; Store.pass = pass;
     const s = unwrap(opened.data);
-    if (!s) throw new Error('The file unlocked, but it holds no Keel data.');
+    if (!s) throw new Error('The file unlocked, but it holds no Ọrọ̀ data.');
     return migrate(s);
   }
   const s = unwrap(payload);
-  if (!s) throw new Error('That file isn’t a Keel data file.');
+  if (!s) throw new Error('That file isn’t a Ọrọ̀ data file.');
   return migrate(s);
 }
 
-/* ---------- receipts and exports in the Keel folder ---------- */
+/* ---------- receipts and exports in the Ọrọ̀ folder ---------- */
 async function saveAttachment(file, t) {
-  if (!hasFolder()) throw new Error('Connect your Keel folder in Settings to keep receipts.');
+  if (!hasFolder()) throw new Error('Connect your Ọrọ̀ folder in Settings to keep receipts.');
   const ext = (file.name.split('.').pop() || 'bin').toLowerCase().slice(0, 6);
   const name = `${t.date}-${slugFile(t.payee)}-${uid().slice(0, 5)}.${ext}${Store.key ? '.enc' : ''}`;
   const folder = `receipts/${t.date.slice(0, 4)}`;
@@ -525,7 +534,7 @@ async function saveAttachment(file, t) {
   return { name: file.name, path: `${folder}/${name}`, type: file.type || '', size: file.size };
 }
 async function openAttachment(att) {
-  if (!hasFolder()) throw new Error('Connect your Keel folder to open receipts.');
+  if (!hasFolder()) throw new Error('Connect your Ọrọ̀ folder to open receipts.');
   const parts = att.path.split('/'), name = parts.pop();
   const fh = await dirFile(parts.join('/'), name, false);
   let bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer());
@@ -1032,8 +1041,8 @@ function goalProgress(g) {
 /* ---------- attention items ---------- */
 function attentionItems() {
   const items = [];
-  if (!hasFolder() && !Store.handle && state.accounts.length && !state.meta.sample) items.push({ tone: 'warn', text: 'Your data only lives in this browser. Choose your Keel folder so it’s saved as files with daily backups', go: '#/data' });
-  else if ((Store.dir || Store.handle) && Store.perm !== 'granted') items.push({ tone: 'warn', text: `Keel needs permission again to save to ${Store.fileName}`, go: '#/data' });
+  if (!hasFolder() && !Store.handle && state.accounts.length && !state.meta.sample) items.push({ tone: 'warn', text: 'Your data only lives in this browser. Choose your Ọrọ̀ folder so it’s saved as files with daily backups', go: '#/data' });
+  else if ((Store.dir || Store.handle) && Store.perm !== 'granted') items.push({ tone: 'warn', text: `Ọrọ̀ needs permission again to save to ${Store.fileName}`, go: '#/data' });
   const unc = state.transactions.filter(isUncat).length;
   if (unc) items.push({ tone: 'warn', text: `${unc} transaction${unc > 1 ? 's' : ''} need a category`, go: '#/transactions?cat=_none&m=all' });
   const stale = activeAccounts().filter(a => !holdingsFor(a.id).length && !a.ledger && a.balanceDate && daysBetween(a.balanceDate, today()) > (state.settings.staleDays || 35));
@@ -1729,7 +1738,7 @@ function loadPdfJs() {
       await new Promise((res, rej) => {
         const s = document.createElement('script');
         if (inline) { s.textContent = inline.textContent; document.head.appendChild(s); res(); }
-        else { s.src = `app/vendor/${file}`; s.onload = res; s.onerror = () => rej(new Error('Keel couldn’t load its PDF reader from the app folder.')); document.head.appendChild(s); }
+        else { s.src = `app/vendor/${file}`; s.onload = res; s.onerror = () => rej(new Error('Ọrọ̀ couldn’t load its PDF reader from the app folder.')); document.head.appendChild(s); }
       });
     }
     _pdfjs = window.pdfjsLib;
@@ -1873,7 +1882,7 @@ function builtinCategory(payee, amount) {
   return null;
 }
 
-/* Bank-provided category names → Keel categories */
+/* Bank-provided category names → Ọrọ̀ categories */
 const BANK_CATEGORY_MAP = [
   [/grocer|supermarket/i, 'Groceries'], [/food|dining|restaurant|bar\b/i, 'Dining out'], [/coffee/i, 'Coffee'],
   [/gas|fuel|automotive fuel/i, 'Fuel and charging'], [/auto(motive)?|car service/i, 'Auto maintenance'], [/parking|toll/i, 'Parking and tolls'],
@@ -1928,7 +1937,7 @@ async function handleImportFile(file) {
     if (ext === 'pdf') {
       const lines = await pdfToLines(await readFileAsBuffer(file));
       const { rows, period, last4: textLast4, isCard } = parseStatementLines(lines);
-      if (!rows.length) throw new Error('Keel couldn’t find transaction lines in that PDF. If it’s a scanned image, or an unusual layout, download the OFX/QFX or CSV version from your bank instead.');
+      if (!rows.length) throw new Error('Ọrọ̀ couldn’t find transaction lines in that PDF. If it’s a scanned image, or an unusual layout, download the OFX/QFX or CSV version from your bank instead.');
       IMP.source = 'pdf'; IMP.period = period; IMP.pdfRows = rows;
       IMP.accountId = guessAccount(textLast4) || guessAccount(last4);
       if (!IMP.accountId) IMP.newDefaults = { type: isCard ? 'credit' : 'checking' };
@@ -1962,7 +1971,7 @@ async function handleImportFile(file) {
         if (isPositionsHeader(rows[hi])) {
           IMP.source = 'csv'; IMP.kind = 'positions'; IMP.step = 'positions';
           IMP.positions = parsePositionsCSV(rows).map(p => ({ ...p, assetClass: guessAssetClass(p.symbol, p.name), include: true }));
-          if (!IMP.positions.length) throw new Error('Keel found a positions file but couldn’t read any holdings from it.');
+          if (!IMP.positions.length) throw new Error('Ọrọ̀ found a positions file but couldn’t read any holdings from it.');
           IMP.srcMap = {};
           for (const src of [...new Set(IMP.positions.map(p => p.srcAccount || ''))]) IMP.srcMap[src] = matchInvAccount(src);
         } else {
@@ -2080,7 +2089,7 @@ function renderImport() {
       </label>
       <div class="help-grid">
         <div><h4>Bank and credit card activity</h4><p>On your bank’s site, look for “Download transactions.” Pick <strong>Quicken (QFX)</strong> or <strong>OFX</strong> if offered: it carries IDs that prevent duplicates and the current balance. CSV works too.</p></div>
-        <div><h4>Brokerage holdings</h4><p>Download the <strong>Positions</strong> page as CSV (Fidelity, Schwab, Vanguard and most others), or an investment QFX. Keel updates shares, prices and cost basis.</p></div>
+        <div><h4>Brokerage holdings</h4><p>Download the <strong>Positions</strong> page as CSV (Fidelity, Schwab, Vanguard and most others), or an investment QFX. Ọrọ̀ updates shares, prices and cost basis.</p></div>
         <div><h4>Moving from another app</h4><p>Exports from <strong>YNAB, Monarch, Mint, Copilot, Tiller</strong> (CSV) or <strong>Quicken</strong> (QIF) bring every account at once, with categories, tags and notes. PDF statements work as a last resort.</p></div>
       </div>`;
     const inp = $('#imp-file'), drop = $('#imp-drop');
@@ -2100,14 +2109,14 @@ function colSelect(id, val, allowNone) {
 }
 function acctMapBlock() {
   const srcs = Object.keys(IMP.acctMap || {});
-  return `<div class="map-list"><p class="muted small">This file has ${srcs.length} account${srcs.length === 1 ? '' : 's'}. Match each one, or let Keel create it.</p>${srcs.map((src, k) => `<div class="map-row"><span class="map-src">${esc(src || '(no account name)')}</span><select data-amap="${k}">${txnAccountOptions(IMP.acctMap[src], `New account “${src || 'Imported'}”`)}</select></div>`).join('')}</div>`;
+  return `<div class="map-list"><p class="muted small">This file has ${srcs.length} account${srcs.length === 1 ? '' : 's'}. Match each one, or let Ọrọ̀ create it.</p>${srcs.map((src, k) => `<div class="map-row"><span class="map-src">${esc(src || '(no account name)')}</span><select data-amap="${k}">${txnAccountOptions(IMP.acctMap[src], `New account “${src || 'Imported'}”`)}</select></div>`).join('')}</div>`;
 }
 function renderMapStep(box) {
   const m = IMP.map;
   const preview = csvMappedRows();
   if (IMP.useAcctCol) setupAccountMap(preview, IMP.last4); else IMP.multi = false;
   box.innerHTML = `
-    <p class="lede">${esc(IMP.fileName)} has ${IMP.csv.length - IMP.headerRow - 1} rows. Check that Keel picked the right columns.</p>
+    <p class="lede">${esc(IMP.fileName)} has ${IMP.csv.length - IMP.headerRow - 1} rows. Check that Ọrọ̀ picked the right columns.</p>
     <div class="form-grid four">
       <label class="field"><span>Date</span>${colSelect('map-date', m.date)}</label>
       <label class="field"><span>Description</span>${colSelect('map-payee', m.payee)}</label>
@@ -2122,7 +2131,7 @@ function renderMapStep(box) {
       <label class="check"><input type="checkbox" id="map-flip" ${IMP.flip ? 'checked' : ''}> Flip signs (purchases show as positive)</label>
     </div>
     ${IMP.useAcctCol ? acctMapBlock() : `<div class="form-grid"><label class="field"><span>Import into</span><select id="imp-acct">${txnAccountOptions(IMP.accountId)}</select></label></div><div id="imp-new">${IMP.accountId === '__new' ? newAccountFields('imp-new', { type: 'checking', ...(IMP.newDefaults || {}) }) : ''}</div>`}
-    ${m.category >= 0 ? `<label class="check"><input type="checkbox" id="map-create" ${IMP.createCats ? 'checked' : ''}> Create categories from the file that Keel doesn’t have yet</label>` : ''}
+    ${m.category >= 0 ? `<label class="check"><input type="checkbox" id="map-create" ${IMP.createCats ? 'checked' : ''}> Create categories from the file that Ọrọ̀ doesn’t have yet</label>` : ''}
     <table class="ledger compact"><thead><tr><th>Date</th><th>Description</th>${IMP.useAcctCol ? '<th>Account</th>' : ''}${m.category >= 0 ? '<th>Category</th>' : ''}<th class="num">Amount</th></tr></thead>
       <tbody>${preview.slice(0, 6).map(r => `<tr><td>${dateLabel(r.date, true)}</td><td>${esc(r.payee)}</td>${IMP.useAcctCol ? `<td class="muted">${esc(r.srcAccount)}</td>` : ''}${m.category >= 0 ? `<td class="muted">${esc(r.bankCategory)}</td>` : ''}<td class="num ${signClass(r.amount)}">${money(r.amount)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No rows could be read with this mapping.</td></tr>'}</tbody></table>
     <p class="muted small">Money out should be negative. Purchases on a credit card are money out.</p>`;
@@ -2161,7 +2170,7 @@ function renderReviewStep(box) {
     ${IMP.multi ? acctMapBlock() : `<div class="form-grid"><label class="field"><span>Import into</span><select id="imp-acct">${txnAccountOptions(IMP.accountId)}</select></label></div>
     <div id="imp-new">${IMP.accountId === '__new' ? newAccountFields('imp-new', { type: 'checking', ...(IMP.newDefaults || {}) }) : ''}</div>`}
     <p class="lede">${rows.length.toLocaleString()} transaction${rows.length === 1 ? '' : 's'}${dates.length ? `, ${dateLabel(dates[0], true)} to ${dateLabel(dates[dates.length - 1], true)}` : ''}.
-      ${dup ? `${dup} look${dup === 1 ? 's' : ''} like ${dup === 1 ? 'a duplicate' : 'duplicates'} and ${dup === 1 ? 'is' : 'are'} unchecked.` : 'None of them are already in Keel.'}
+      ${dup ? `${dup} look${dup === 1 ? 's' : ''} like ${dup === 1 ? 'a duplicate' : 'duplicates'} and ${dup === 1 ? 'is' : 'are'} unchecked.` : 'None of them are already in Ọrọ̀.'}
       ${IMP.source === 'pdf' ? ' Read from a PDF: check the signs. Click any amount to flip it.' : ''}
       ${newCats.length ? ` ${newCats.length} new categor${newCats.length === 1 ? 'y' : 'ies'} will be created: ${newCats.slice(0, 5).map(esc).join(', ')}${newCats.length > 5 ? '…' : ''}.` : ''}</p>
     <div class="toolbar">
@@ -2203,7 +2212,7 @@ function renderPositionsStep(box) {
   const srcs = Object.keys(IMP.srcMap);
   const total = sum(P.filter(p => p.include).map(p => p.value));
   box.innerHTML = `
-    <p class="lede">${P.length} holding${P.length === 1 ? '' : 's'} worth ${money(total, { cents: false })} in ${srcs.length} account${srcs.length === 1 ? '' : 's'}. Choose where each account goes in Keel.</p>
+    <p class="lede">${P.length} holding${P.length === 1 ? '' : 's'} worth ${money(total, { cents: false })} in ${srcs.length} account${srcs.length === 1 ? '' : 's'}. Choose where each account goes in Ọrọ̀.</p>
     <div class="map-list">${srcs.map((src, k) => `
       <div class="map-row">
         <span class="map-src">${esc(src || IMP.fileName)}</span>
@@ -2395,7 +2404,7 @@ function render() {
     const w = document.createElement('div'); w.className = 'scroll-table'; t.replaceWith(w); w.appendChild(t);
   }
   $$('.nav a').forEach(a => a.classList.toggle('active', a.dataset.page === page));
-  document.title = `${PAGES.find(p => p[0] === page)[1]} · Keel`;
+  document.title = `${PAGES.find(p => p[0] === page)[1]} · Ọrọ̀`;
   paintTopbar(page);
   drawCharts($('#main'));
   if (focusSel) {
@@ -2446,7 +2455,7 @@ function paintStatus() {
   el.className = 'save-status ' + tone;
   el.innerHTML = `<span class="dot"></span><span>${esc(text)}${Store.key ? ' <span class="lock" title="Encrypted with your passphrase">encrypted</span>' : ''}</span>`;
   el.dataset.action = action;
-  el.title = action ? 'Click to give Keel permission to keep saving' : (Store.savedAt ? `Last saved ${Store.savedAt.toLocaleTimeString()}` : '');
+  el.title = action ? 'Click to give Ọrọ̀ permission to keep saving' : (Store.savedAt ? `Last saved ${Store.savedAt.toLocaleTimeString()}` : '');
 }
 
 /* ---------- modal ---------- */
@@ -2519,7 +2528,7 @@ function acctOptions(sel, filter, emptyLabel) {
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
 function pageHead(title, sub, actions = '') {
-  return `<header class="page-head"><div><h1>${esc(title)}</h1>${sub ? `<p class="sub">${sub}</p>` : ''}</div><div class="actions">${actions}</div></header>`;
+  return `<header class="page-head"><div><h1>${esc(title).replace(/Ọrọ̀/g, '<span class="wordmark">Ọrọ̀</span>')}</h1>${sub ? `<p class="sub">${sub}</p>` : ''}</div><div class="actions">${actions}</div></header>`;
 }
 function lensNote() { return UI.lens ? `<p class="lens-note">Showing ${esc(memberName(UI.lens))}’s spending only. <button class="linklike" data-lens="">Show everyone</button></p>` : ''; }
 function monthNav(mk, param = 'm') {
@@ -2610,10 +2619,10 @@ VIEWS.overview = () => {
   const d = new Date();
   const sub = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   if (!state.accounts.length) {
-    return pageHead('Welcome to Keel', sub) + `<div class="welcome">
+    return pageHead('Welcome to Ọrọ̀', sub) + `<div class="welcome">
       <div class="welcome-copy"><h2>Your money, on your own machine</h2>
-        <p>Keel keeps your budget, net worth, investments, property and plans in one place that never leaves this Mac. Nothing is uploaded, and there’s no subscription.</p>
-        <ol class="steps"><li><strong>Choose your Keel folder</strong> so everything is saved as files with daily backups. <button class="linklike" data-act="connect-folder">Choose folder</button></li>
+        <p>Ọrọ̀ keeps your budget, net worth, investments, property and plans in one place that never leaves this Mac. Nothing is uploaded, and there’s no subscription.</p>
+        <ol class="steps"><li><strong>Choose your Ọrọ̀ folder</strong> so everything is saved as files with daily backups. <button class="linklike" data-act="connect-folder">Choose folder</button></li>
         <li><strong>Add your accounts</strong>, or import a statement from your bank, card or brokerage.</li>
         <li><strong>Set a few budgets and goals</strong>, then use Money date to go over the month together.</li></ol>
         <div class="actions"><button class="btn primary" data-act="add-account">Add an account</button><button class="btn" data-act="import">Import a file</button><button class="btn ghost" data-act="load-sample">Explore with sample data</button></div></div></div>`;
@@ -3016,7 +3025,7 @@ VIEWS.investments = () => {
 /* ================= Property ================= */
 VIEWS.property = () => {
   const props = activeAccounts().filter(a => a.type === 'realestate');
-  if (!props.length) return pageHead('Property') + emptyState('No properties yet', 'Add your home or a rental. For rentals, Keel tracks rent, operating costs, NOI, cap rate and cash-on-cash return from your categorized transactions.', `<button class="btn primary" data-act="add-account" data-type="realestate">Add a property</button>`);
+  if (!props.length) return pageHead('Property') + emptyState('No properties yet', 'Add your home or a rental. For rentals, Ọrọ̀ tracks rent, operating costs, NOI, cap rate and cash-on-cash return from your categorized transactions.', `<button class="btn primary" data-act="add-account" data-type="realestate">Add a property</button>`);
   const mk = thisMonth(), yr = mk.slice(0, 4);
   const ttmFrom = `${addMonths(mk, -12)}-01`, ttmTo = monthEnd(addMonths(mk, -1));
   return pageHead('Property', 'Equity, leverage and, for rentals, operating returns.', `<button class="btn primary" data-act="add-account" data-type="realestate">Add a property</button>`) +
@@ -3103,7 +3112,7 @@ VIEWS.cashflow = () => {
       ${repNew.map(r => `<tr><th scope="row">${esc(r.payee)}${r.isNew ? ' <span class="tag">New</span>' : ''}<div class="muted small">${esc(catName(r.categoryId))}, ${esc(acctById(r.accountId)?.name || '')}</div></th><td class="hide-sm muted nowrap">${dateLabel(r.firstSeen, true)}</td><td class="num">${money(r.monthly)}</td>
         <td class="acts">${r.fromCash ? `<button class="btn small ghost" data-add-rep="${rep.indexOf(r)}">Add to forecast</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : ''}
-      <p class="muted small">${rep.length ? `Keel found ${rep.length} charges that repeat at a steady amount${rep.length - repNew.length ? `; ${rep.length - repNew.length} are already scheduled and hidden here` : ''}. Card charges are covered by your card-payment estimate, so only bills paid straight from checking need adding.` : 'Keel looks for charges that repeat at a steady amount. Import a few months of history to see them.'}</p>
+      <p class="muted small">${rep.length ? `Ọrọ̀ found ${rep.length} charges that repeat at a steady amount${rep.length - repNew.length ? `; ${rep.length - repNew.length} are already scheduled and hidden here` : ''}. Card charges are covered by your card-payment estimate, so only bills paid straight from checking need adding.` : 'Ọrọ̀ looks for charges that repeat at a steady amount. Import a few months of history to see them.'}</p>
     </section>
   </div>
 
@@ -3369,7 +3378,7 @@ VIEWS.planning = p => {
   const head = pageHead('Planning', tab === 'retire' ? 'A Monte Carlo projection in today’s dollars. It’s a planning tool, not a promise.' : tab === 'debt' ? 'Pay debt off faster and see what it saves.' : 'What you’re saving toward, and whether you’re on pace.',
     tab === 'goals' ? '<button class="btn primary" data-act="add-goal">Add a goal</button>' : '') + tabs('t', tab, [['goals', 'Goals'], ['retire', 'Retirement'], ['debt', 'Debt payoff']]);
   if (tab === 'goals') {
-    if (!state.goals.length) return head + emptyState('No goals yet', 'Create a goal for an emergency fund, a trip, a down payment or college. Link it to an account or a rollover budget and Keel tracks progress automatically.', '<button class="btn primary" data-act="add-goal">Add a goal</button>');
+    if (!state.goals.length) return head + emptyState('No goals yet', 'Create a goal for an emergency fund, a trip, a down payment or college. Link it to an account or a rollover budget and Ọrọ̀ tracks progress automatically.', '<button class="btn primary" data-act="add-goal">Add a goal</button>');
     return head + `<div class="goal-grid">${state.goals.map(g => {
       const pr = goalProgress(g);
       return `<article class="goal-card ${pr.status}">
@@ -3411,7 +3420,7 @@ VIEWS.planning = p => {
   }
   // retirement
   const P = state.plan, D = planDefaults();
-  if (!P.age) return head + `<section class="panel narrow"><h2>Start with your age</h2><p class="muted">Keel fills in the rest from your accounts and spending, and you can adjust any of it.</p>
+  if (!P.age) return head + `<section class="panel narrow"><h2>Start with your age</h2><p class="muted">Ọrọ̀ fills in the rest from your accounts and spending, and you can adjust any of it.</p>
     <div class="form-grid"><label class="field"><span>Your age</span><input data-plan="age" inputmode="numeric" autofocus placeholder="e.g. 42"></label><label class="field"><span>Retire at</span><input data-plan="retireAge" inputmode="numeric" value="${P.retireAge}"></label></div></section>`;
   const stats = portfolioStats(D.alloc);
   const inp = {
@@ -3454,7 +3463,7 @@ VIEWS.planning = p => {
       </div>
       <label class="check"><input type="checkbox" data-plan="includePrivate" ${P.includePrivate ? 'checked' : ''}> Count private investments</label>
       <label class="check"><input type="checkbox" data-plan="includeRental" ${P.includeRental ? 'checked' : ''}> Keep rental cash flow in retirement (${money(D.rentalNet, { cents: false })} a year)</label>
-      <p class="muted small">Leave a field blank to use the value Keel works out from your data. Returns are drawn from a lognormal distribution each year; everything is in today’s dollars.</p>
+      <p class="muted small">Leave a field blank to use the value Ọrọ̀ works out from your data. Returns are drawn from a lognormal distribution each year; everything is in today’s dollars.</p>
     </section>
     <div class="plan-results">
       <section class="panel result-hero">
@@ -3511,21 +3520,21 @@ VIEWS.data = () => {
   const n = state.transactions.length;
   const groups = groupBy(state.categories, c => c.group);
   let where;
-  if (Store.dir) where = Store.perm === 'granted' ? `Saving to your <strong>${esc(Store.fileName)}</strong> folder: <code>data/keel.json</code>, with a dated copy in <code>backups/</code> each day and receipts in <code>receipts/</code>.` : `Your <strong>${esc(Store.fileName)}</strong> folder is connected, but this browser needs your permission again.`;
-  else if (Store.handle) where = `Saving to <strong>${esc(Store.fileName)}</strong>. Switch to a Keel folder to get daily backups and receipts.`;
-  else where = 'Only saved in this browser’s private storage. Choose your Keel folder so your data lives as files you can see and back up.';
+  if (Store.dir) where = Store.perm === 'granted' ? `Saving to your <strong>${esc(Store.fileName)}</strong> folder: <code>data/oro.json</code>, with a dated copy in <code>backups/</code> each day and receipts in <code>receipts/</code>.` : `Your <strong>${esc(Store.fileName)}</strong> folder is connected, but this browser needs your permission again.`;
+  else if (Store.handle) where = `Saving to <strong>${esc(Store.fileName)}</strong>. Switch to a Ọrọ̀ folder to get daily backups and receipts.`;
+  else where = 'Only saved in this browser’s private storage. Choose your Ọrọ̀ folder so your data lives as files you can see and back up.';
   return pageHead('Settings', '') + `
   <section class="panel">
     <header class="panel-head"><h2>Where your data lives</h2><span class="muted small">Nothing ever leaves this Mac</span></header>
     <p>${where}</p>
     <div class="actions wrap">
-      ${Store.canPickFolder ? (Store.dir && Store.perm !== 'granted' ? `<button class="btn primary" data-act="reconnect">Reconnect ${esc(Store.fileName)}</button>` : `<button class="btn ${Store.dir ? '' : 'primary'}" data-act="connect-folder">${Store.dir ? 'Choose a different folder…' : 'Choose your Keel folder…'}</button>`) : ''}
+      ${Store.canPickFolder ? (Store.dir && Store.perm !== 'granted' ? `<button class="btn primary" data-act="reconnect">Reconnect ${esc(Store.fileName)}</button>` : `<button class="btn ${Store.dir ? '' : 'primary'}" data-act="connect-folder">${Store.dir ? 'Choose a different folder…' : 'Choose your Ọrọ̀ folder…'}</button>`) : ''}
       <button class="btn" data-act="open-file">Open a data file…</button>
       <button class="btn" data-act="backup">Download a backup</button>
       <button class="btn ghost" data-act="export-csv">Export transactions as CSV</button>
       ${Store.dir || Store.handle ? `<button class="btn ghost" data-act="disconnect-file">Disconnect</button>` : ''}
     </div>
-    <p class="muted small">Tip: choose the Keel folder this app lives in (Documents › Claude › Keel). If that folder is synced to iCloud Drive, turn on a passphrase so the copy Apple stores is encrypted.</p>
+    <p class="muted small">Tip: choose the Ọrọ̀ folder this app lives in (Documents › Claude › Ọrọ̀). If that folder is synced to iCloud Drive, turn on a passphrase so the copy Apple stores is encrypted.</p>
     <div id="backup-list" class="backup-list"></div>
   </section>
 
@@ -3558,7 +3567,7 @@ VIEWS.data = () => {
 
   <section class="panel">
     <header class="panel-head"><h2>Categorization rules</h2><span class="muted small">${state.rules.length} rule${state.rules.length === 1 ? '' : 's'}</span></header>
-    <p class="muted">When a payee contains the text, it gets that category (and optionally a person), on import and when you run the rules. Keel also knows about 150 common merchants out of the box.</p>
+    <p class="muted">When a payee contains the text, it gets that category (and optionally a person), on import and when you run the rules. Ọrọ̀ also knows about 150 common merchants out of the box.</p>
     ${state.rules.length ? `<div class="scroll-table short"><table class="ledger compact"><thead><tr><th>Payee contains</th><th>Category</th><th class="hide-sm">Person</th><th class="hide-sm">Rename to</th><th></th></tr></thead><tbody>
     ${state.rules.map(r => `<tr><td><code>${esc(r.text)}</code></td><td>${esc(catName(r.categoryId))}</td><td class="hide-sm muted">${r.person ? esc(memberName(r.person)) : ''}</td><td class="hide-sm muted">${esc(r.rename || '')}</td><td class="acts"><button class="linklike small" data-edit-rule="${r.id}">Edit</button></td></tr>`).join('')}
     </tbody></table></div>` : ''}
@@ -3573,7 +3582,7 @@ VIEWS.data = () => {
 
   <section class="panel">
     <header class="panel-head"><h2>Moving from another app</h2></header>
-    <p class="muted">Export your history from YNAB, Monarch, Mint, Copilot, Tiller or Quicken (CSV or QIF), then use Import. Keel reads the account and category columns, creates any categories you don’t have, and keeps tags and notes.</p>
+    <p class="muted">Export your history from YNAB, Monarch, Mint, Copilot, Tiller or Quicken (CSV or QIF), then use Import. Ọrọ̀ reads the account and category columns, creates any categories you don’t have, and keeps tags and notes.</p>
     <div class="actions"><button class="btn" data-act="import">Import a file</button></div>
   </section>
 
@@ -3587,7 +3596,7 @@ VIEWS.data = () => {
     <p class="muted">${state.accounts.length} accounts, ${n.toLocaleString()} transactions, ${state.holdings.length} holdings, ${state.goals.length} goals${state.meta.sample ? '. This is sample data.' : '.'}</p>
     <div class="actions"><button class="btn" data-act="load-sample">Load sample data</button><button class="btn ghost danger-text" data-act="erase">Erase everything</button></div>
   </section>
-  <p class="muted small center">Keel 2.0 · Runs entirely on this Mac. No accounts, servers or tracking.</p>`;
+  <p class="muted small center">Ọrọ̀ 2.1 · Runs entirely on this Mac. No accounts, servers or tracking.</p>`;
 };
 async function paintBackups() {
   const box = $('#backup-list'); if (!box) return;
@@ -3642,7 +3651,7 @@ function txnModal(id) {
       <label class="field wide"><span>Memo</span><input name="memo" value="${esc(v.memo || '')}"></label>
       <div class="wide" id="split-box"></div>
       <div class="wide attach-box"><span class="field-label">Receipts</span><div id="att-list"></div>
-        <label class="btn small ${hasFolder() ? '' : 'disabled'}" title="${hasFolder() ? 'Saved into receipts/ in your Keel folder' : 'Choose your Keel folder in Settings first'}">Attach a file<input type="file" id="att-input" accept="image/*,application/pdf" hidden ${hasFolder() ? '' : 'disabled'}></label></div>
+        <label class="btn small ${hasFolder() ? '' : 'disabled'}" title="${hasFolder() ? 'Saved into receipts/ in your Ọrọ̀ folder' : 'Choose your Ọrọ̀ folder in Settings first'}">Attach a file<input type="file" id="att-input" accept="image/*,application/pdf" hidden ${hasFolder() ? '' : 'disabled'}></label></div>
       ${t?.rawPayee && t.rawPayee !== t.payee ? `<p class="muted small wide">Bank description: ${esc(t.rawPayee)}</p>` : ''}
       ${t?.reconciled ? '<p class="muted small wide">✓ Reconciled with a statement</p>' : ''}
     </form>`,
@@ -3795,7 +3804,7 @@ function reconcileModal(id) {
   const from = a.reconciledThrough || '0000-00-00';
   openModal({
     title: `Reconcile ${a.name}`, wide: true,
-    body: `<p class="muted">Enter the ending balance and date from your statement. Keel compares it with the balance it calculates from your transactions.</p>
+    body: `<p class="muted">Enter the ending balance and date from your statement. Ọrọ̀ compares it with the balance it calculates from your transactions.</p>
       <div class="form-grid"><label class="field"><span>Statement date</span><input type="date" id="rc-date" value="${monthEnd(addMonths(thisMonth(), -1))}"></label>
       <label class="field"><span>${isLiability(a) ? 'Statement balance owed' : 'Statement ending balance'}</span><input id="rc-bal" inputmode="decimal" placeholder="0.00" autofocus></label></div>
       <div id="rc-out"></div>`,
@@ -3807,7 +3816,7 @@ function reconcileModal(id) {
     const txs = txByAccount(a.id).filter(t => t.date > from && t.date <= date).sort((x, y) => x.date.localeCompare(y.date));
     let run = ledgerBalance(a, from === '0000-00-00' ? addDays(txs[0]?.date || date, -1) : from);
     const diff = isFinite(st) ? round2(Math.abs(st) - calc) : null;
-    $('#rc-out').innerHTML = `<dl class="kpis three"><div><dt>Keel’s balance on ${dateLabel(date, true)}</dt><dd class="num">${money(calc)}</dd></div><div><dt>Statement</dt><dd class="num">${isFinite(st) ? money(Math.abs(st)) : '—'}</dd></div><div><dt>Difference</dt><dd class="num ${diff ? 'neg' : diff === 0 ? 'pos' : ''}">${diff == null ? '—' : diff === 0 ? 'Matches' : money(diff, { sign: true })}</dd></div></dl>
+    $('#rc-out').innerHTML = `<dl class="kpis three"><div><dt>Ọrọ̀’s balance on ${dateLabel(date, true)}</dt><dd class="num">${money(calc)}</dd></div><div><dt>Statement</dt><dd class="num">${isFinite(st) ? money(Math.abs(st)) : '—'}</dd></div><div><dt>Difference</dt><dd class="num ${diff ? 'neg' : diff === 0 ? 'pos' : ''}">${diff == null ? '—' : diff === 0 ? 'Matches' : money(diff, { sign: true })}</dd></div></dl>
       ${diff ? `<p class="notice">Look for a missing or duplicated transaction of ${money(Math.abs(diff))}, or one with the wrong sign (that shows up as twice its amount). If the statement is right and nothing is missing, treat it as the true balance on that date; transactions after it carry on from there.</p><button class="btn small" id="rc-adjust">Use the statement balance of ${money(Math.abs(st))}</button>` : ''}
       <div class="scroll-table short"><table class="ledger compact"><thead><tr><th>Date</th><th>Payee</th><th class="num">Amount</th><th class="num">Running balance</th></tr></thead><tbody>
       ${txs.map(t => { run = round2(run + (isLiability(a) ? -t.amount : t.amount)); return `<tr><td class="nowrap muted">${dateLabel(t.date)}</td><td>${esc(t.payee)}${t.reconciled ? ' <span class="rec">✓</span>' : ''}</td><td class="num ${signClass(t.amount)}">${money(t.amount)}</td><td class="num">${money(run)}</td></tr>`; }).join('') || '<tr><td colspan="4" class="muted">No transactions since the last reconciliation.</td></tr>'}</tbody></table></div>`;
@@ -3833,7 +3842,7 @@ function historyModal(id) {
   const vals = months.slice().reverse().map(m => Math.abs(state.snapshots[m][id]));
   openModal({
     title: `${a.name}: balance history`,
-    body: `${vals.length > 1 ? `<div class="hist-spark">${sparkline(vals, { w: 520, h: 60, color: liab ? 'var(--neg)' : 'var(--ink-accent)' })}</div>` : ''}<p class="muted">Month-end ${liab ? 'amounts owed' : 'values'} feed the net worth chart. Keel records the current month automatically; add earlier months from old statements.</p>
+    body: `${vals.length > 1 ? `<div class="hist-spark">${sparkline(vals, { w: 520, h: 60, color: liab ? 'var(--neg)' : 'var(--ink-accent)' })}</div>` : ''}<p class="muted">Month-end ${liab ? 'amounts owed' : 'values'} feed the net worth chart. Ọrọ̀ records the current month automatically; add earlier months from old statements.</p>
       <div class="scroll-table short"><table class="ledger compact" id="hist"><tbody>${rows || '<tr><td class="muted">No history yet.</td></tr>'}</tbody></table></div>
       <div class="form-grid"><label class="field"><span>Add a month</span><input type="month" id="h-m" max="${addMonths(cur, -1)}"></label><label class="field"><span>${liab ? 'Owed' : 'Value'}</span><input id="h-v" inputmode="decimal" placeholder="0.00"></label></div>`,
     actions: `<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">Save history</button>`,
@@ -3924,7 +3933,7 @@ function goalModal(id) {
       <label class="field"><span>Track progress with</span><select name="src" id="g-src"><option value="manual" ${src === 'manual' ? 'selected' : ''}>An amount I update</option><option value="account" ${src === 'account' ? 'selected' : ''}>An account’s balance</option><option value="category" ${src === 'category' ? 'selected' : ''}>A rollover budget category</option></select></label>
       <label class="field g-src g-manual"><span>Saved so far</span><input name="saved" inputmode="decimal" value="${v.saved ?? ''}"></label>
       <label class="field g-src g-account"><span>Account</span><select name="accountId">${acctOptions(v.accountId, a => !isLiability(a))}</select></label>
-      <label class="field g-src g-category"><span>Category</span><select name="categoryId">${catOptions(v.categoryId, false, c => c.kind === 'expense')}</select><small class="muted">Keel turns on rollover for it</small></label>
+      <label class="field g-src g-category"><span>Category</span><select name="categoryId">${catOptions(v.categoryId, false, c => c.kind === 'expense')}</select><small class="muted">Ọrọ̀ turns on rollover for it</small></label>
       <label class="field"><span>Planning to put in each month</span><input name="monthly" inputmode="decimal" value="${v.monthly ?? ''}" placeholder="Optional"></label>
     </form>`,
     actions: `${g ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${g ? 'Save' : 'Add goal'}</button>`,
@@ -4028,7 +4037,7 @@ function paintSlide() {
   for (const k in ChartSpecs) delete ChartSpecs[k];
   const n = MD.slides.length, s = MD.slides[MD.i];
   el.innerHTML = `
-    <header class="present-top"><span class="brand">Keel</span><span class="present-title">Money date · ${monthLabel(MD.mk)}</span>
+    <header class="present-top"><span class="brand">Ọrọ̀</span><span class="present-title">Money date · ${monthLabel(MD.mk)}</span>
       <span class="present-prog">${MD.slides.map((_, k) => `<i class="${k === MD.i ? 'on' : k < MD.i ? 'done' : ''}"></i>`).join('')}</span>
       <button class="icon-btn" data-md="close" aria-label="Exit Money date">×</button></header>
     <section class="slide" aria-live="polite">${s.html()}</section>
@@ -4115,7 +4124,7 @@ function paletteItems(q) {
   const acts = [['Add a transaction', () => txnModal()], ['Import a file', () => startImport()], ['Add an account', () => acctModal()], ['Add a goal', () => goalModal()], ['Start a Money date', () => startMoneyDate()],
     [state.settings.privacy ? 'Show amounts' : 'Hide amounts', () => ACTIONS.privacy()], [UI.mode === 'simple' ? 'Switch to Detailed view' : 'Switch to Simple view', () => { setMode(UI.mode === 'simple' ? 'detailed' : 'simple'); }],
     ['Undo', undo], ['Redo', redo], ['Download a backup', () => ACTIONS.backup()], ['Update balances', () => go('#/accounts?update=1')], ['Monthly review', () => go('#/review')]];
-  if (Store.key) acts.push(['Lock Keel now', () => lockNow()]);
+  if (Store.key) acts.push(['Lock Ọrọ̀ now', () => lockNow()]);
   for (const [label, run] of acts) out.push({ group: 'Actions', label, run });
   for (const a of activeAccounts()) out.push({ group: 'Accounts', label: a.name, hint: money(accountValue(a), { cents: false }), run: () => acctModal(a.id) });
   for (const c of state.categories) out.push({ group: 'Categories', label: c.name, hint: c.group, run: () => go(`#/transactions?m=all&cat=${c.id}`) });
@@ -4170,7 +4179,7 @@ function lockNow() {
   closeModal(true);
   const wrap = document.createElement('div');
   wrap.className = 'lock-screen';
-  wrap.innerHTML = `<form class="lock-card" id="relock"><div class="brand big">Keel</div><p>Keel locked after a period of inactivity.</p>
+  wrap.innerHTML = `<form class="lock-card" id="relock"><div class="brand big">Ọrọ̀</div><p>Ọrọ̀ locked after a period of inactivity.</p>
     <label class="field"><span>Passphrase</span><input type="password" id="relock-pass" autocomplete="current-password" autofocus></label>
     <p class="notice bad small" id="relock-err" hidden>That passphrase didn’t work.</p><button class="btn primary" type="submit">Unlock</button></form>`;
   document.body.appendChild(wrap);
@@ -4208,13 +4217,13 @@ const ACTIONS = {
     commit(); toast(n ? `Categorized ${n} transaction${n > 1 ? 's' : ''}.` : 'No uncategorized transactions matched a rule.');
   },
   'load-sample': async () => {
-    if (state.accounts.length && !await confirmBox('Load sample data', 'This replaces everything in Keel with a fictional household. You can undo it right after.', 'Replace with sample data', true)) return;
+    if (state.accounts.length && !await confirmBox('Load sample data', 'This replaces everything in Ọrọ̀ with a fictional household. You can undo it right after.', 'Replace with sample data', true)) return;
     const s = buildSampleState(); UI.nwRange = '12'; UI.lens = '';
     replaceState(s); go('#/overview');
     toast('Sample data loaded. Explore, then erase it in Settings when you’re ready to start.', { label: 'Undo', fn: undo });
   },
   'erase': () => {
-    openModal({ title: 'Erase everything', body: `<p>This deletes every account, transaction, holding and setting${hasFolder() ? ` here and in <code>${esc(Store.fileName)}/data</code>. Earlier copies stay in the backups folder` : ''}. You can undo it until you close Keel.</p><label class="field"><span>Type ERASE to confirm</span><input id="erase-confirm" autocomplete="off"></label>`,
+    openModal({ title: 'Erase everything', body: `<p>This deletes every account, transaction, holding and setting${hasFolder() ? ` here and in <code>${esc(Store.fileName)}/data</code>. Earlier copies stay in the backups folder` : ''}. You can undo it until you close Ọrọ̀.</p><label class="field"><span>Type ERASE to confirm</span><input id="erase-confirm" autocomplete="off"></label>`,
       actions: `<button class="btn ghost" data-close>Cancel</button><button class="btn danger" id="erase-go">Erase everything</button>` });
     $('#erase-go').onclick = () => {
       if ($('#erase-confirm').value.trim().toUpperCase() !== 'ERASE') return toast('Type ERASE to confirm.');
@@ -4260,22 +4269,22 @@ const ACTIONS = {
   },
   'connect-folder': async () => {
     let dir;
-    try { dir = await window.showDirectoryPicker({ id: 'keel', mode: 'readwrite', startIn: 'documents' }); }
+    try { dir = await window.showDirectoryPicker({ id: 'oro', mode: 'readwrite', startIn: 'documents' }); }
     catch (e) { if (e.name !== 'AbortError') toast('Couldn’t open that folder: ' + e.message); return; }
     await connectFolder(dir);
   },
-  'reconnect': async () => { const ok = await reconnect(); render(); toast(ok ? `Saving to ${Store.fileName} again.` : 'Keel still doesn’t have permission to write there.'); },
+  'reconnect': async () => { const ok = await reconnect(); render(); toast(ok ? `Saving to ${Store.fileName} again.` : 'Ọrọ̀ still doesn’t have permission to write there.'); },
   'disconnect-file': async () => { await disconnectStorage(); render(); toast('Disconnected. Your data is still saved in this browser.'); },
   'open-file': async () => {
     const ask = () => promptPass('Unlock data file', 'This file is encrypted. Enter its passphrase.');
     const load = async text => {
       let next;
       try { next = await readDataFile(text, ask); } catch (e) { if (e.message !== 'cancelled') toast(e.message); return; }
-      if (state.accounts.length && !await confirmBox('Open data file', 'Replace what’s in Keel now with the contents of this file? You can undo it.', 'Open file', true)) return;
+      if (state.accounts.length && !await confirmBox('Open data file', 'Replace what’s in Ọrọ̀ now with the contents of this file? You can undo it.', 'Open file', true)) return;
       replaceState(next, 'Data file opened.'); go('#/overview');
     };
     if (window.showOpenFilePicker) {
-      try { const [h] = await window.showOpenFilePicker({ types: [{ description: 'Keel data file', accept: { 'application/json': ['.json'] } }] }); await load(await (await h.getFile()).text()); }
+      try { const [h] = await window.showOpenFilePicker({ types: [{ description: 'Ọrọ̀ data file', accept: { 'application/json': ['.json'] } }] }); await load(await (await h.getFile()).text()); }
       catch (e) { if (e.name !== 'AbortError') toast(e.message); }
     } else {
       const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json,application/json';
@@ -4283,12 +4292,12 @@ const ACTIONS = {
       inp.click();
     }
   },
-  'backup': async () => { downloadFile(`keel-backup-${today()}.json`, JSON.stringify(await serialize())); toast(Store.key ? 'Encrypted backup downloaded.' : 'Backup downloaded. It isn’t encrypted; add a passphrase if you’ll store it somewhere shared.'); },
+  'backup': async () => { downloadFile(`oro-backup-${today()}.json`, JSON.stringify(await serialize())); toast(Store.key ? 'Encrypted backup downloaded.' : 'Backup downloaded. It isn’t encrypted; add a passphrase if you’ll store it somewhere shared.'); },
   'export-csv': () => {
     const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const lines = [['Date', 'Account', 'Payee', 'Category', 'Group', 'Amount', 'Person', 'Tags', 'Memo'].join(',')];
     for (const t of state.transactions) for (const l of txLines(t)) { const c = catById(l.categoryId); lines.push([t.date, q(acctById(t.accountId)?.name), q(t.payee), q(c?.name || 'Uncategorized'), q(c?.group || ''), l.amount.toFixed(2), q(memberName(personOf(t))), q((t.tags || []).join(' ')), q(t.memo)].join(',')); }
-    saveExport(`keel-transactions-${today()}.csv`, lines.join('\n'));
+    saveExport(`oro-transactions-${today()}.csv`, lines.join('\n'));
   },
   'export-statement': el => {
     const ms = monthsIn(el.dataset.from, el.dataset.to).slice(-12);
@@ -4296,11 +4305,11 @@ const ACTIONS = {
     const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const lines = [['Group', 'Category', ...ms, 'Total'].join(',')];
     for (const c of state.categories.filter(c => c.kind !== 'transfer')) { const vals = per.map(a => a[c.id] || 0); if (vals.some(Boolean)) lines.push([q(c.group), q(c.name), ...vals.map(v => v.toFixed(2)), sum(vals).toFixed(2)].join(',')); }
-    saveExport(`keel-income-statement-${ms[0]}-to-${ms[ms.length - 1]}.csv`, lines.join('\n'));
+    saveExport(`oro-income-statement-${ms[0]}-to-${ms[ms.length - 1]}.csv`, lines.join('\n'));
   },
   'export-tax': el => {
     const year = +el.dataset.year, q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const lines = [`Keel tax summary for ${year}`, ''];
+    const lines = [`Ọrọ̀ tax summary for ${year}`, ''];
     for (const a of activeAccounts().filter(x => x.type === 'realestate' && x.rental)) {
       const E = scheduleE(a, year);
       lines.push(`Schedule E,${q(a.name)}`, 'Line,Description,Amount');
@@ -4313,9 +4322,9 @@ const ACTIONS = {
     if (D.tagged.length) { lines.push('', 'Transactions tagged #tax', 'Date,Payee,Amount'); D.tagged.forEach(t => lines.push(`${t.date},${q(t.payee)},${t.amount.toFixed(2)}`)); }
     lines.push('', 'Detail: every transaction in tax-tagged and rental categories', 'Date,Account,Payee,Category,Amount');
     for (const t of txInRange(`${year}-01-01`, `${year}-12-31`)) for (const l of txLines(t)) { const c = catById(l.categoryId); if (c && (c.taxTag || c.rental)) lines.push(`${t.date},${q(acctById(t.accountId)?.name)},${q(t.payee)},${q(c.name)},${l.amount.toFixed(2)}`); }
-    saveExport(`keel-tax-${year}.csv`, lines.join('\n'));
+    saveExport(`oro-tax-${year}.csv`, lines.join('\n'));
   },
-  'set-pass': async () => { const p = await promptPass('Add a passphrase', 'Keel will encrypt your data, backups and receipts with this passphrase. You’ll need it every time you open Keel.', { confirm: true, ok: 'Encrypt my data' }); if (p) { await setPassphrase(p); render(); armAutoLock(); toast('Your data is now encrypted.'); } },
+  'set-pass': async () => { const p = await promptPass('Add a passphrase', 'Ọrọ̀ will encrypt your data, backups and receipts with this passphrase. You’ll need it every time you open Ọrọ̀.', { confirm: true, ok: 'Encrypt my data' }); if (p) { await setPassphrase(p); render(); armAutoLock(); toast('Your data is now encrypted.'); } },
   'change-pass': async () => { const p = await promptPass('Change passphrase', 'Choose a new passphrase. Receipts saved earlier still open with the old one, so keep it until you re-attach them.', { confirm: true, ok: 'Change passphrase' }); if (p) { await setPassphrase(p); render(); toast('Passphrase changed.'); } },
   'remove-pass': async () => { if (await confirmBox('Remove passphrase', 'Your data and new backups will be stored without encryption.', 'Remove passphrase', true)) { await setPassphrase(null); render(); toast('Passphrase removed.'); } },
   'add-member': () => { const id = 'm' + uid().slice(0, 5); state.settings.members.push({ id, name: 'New person' }); commit(); setTimeout(() => { const el = $(`[data-member="${id}"]`); if (el) { el.focus(); el.select(); } }, 30); },
@@ -4323,14 +4332,14 @@ const ACTIONS = {
 
 async function connectFolder(dir) {
   const ok = await useFolder(dir);
-  if (!ok) return toast('Keel needs permission to save in that folder.');
+  if (!ok) return toast('Ọrọ̀ needs permission to save in that folder.');
   const existing = await folderHasData();
   if (existing) {
     let next = null;
-    try { next = await readDataFile(existing, () => promptPass('Unlock Keel data', 'The data in this folder is encrypted. Enter its passphrase.')); } catch (e) { if (e.message !== 'cancelled') toast(e.message); }
+    try { next = await readDataFile(existing, () => promptPass('Unlock Ọrọ̀ data', 'The data in this folder is encrypted. Enter its passphrase.')); } catch (e) { if (e.message !== 'cancelled') toast(e.message); }
     if (next && JSON.stringify(next.accounts) !== JSON.stringify(state.accounts)) {
       const theirs = next.meta?.modified ? new Date(next.meta.modified).toLocaleString() : 'an earlier date';
-      const useTheirs = !state.accounts.length || await confirmBox('This folder already has Keel data', `It was last saved ${esc(theirs)}. Open it, replacing what’s on screen now? Choose Cancel to keep what’s on screen and save it into the folder instead.`, 'Open the folder’s data');
+      const useTheirs = !state.accounts.length || await confirmBox('This folder already has Ọrọ̀ data', `It was last saved ${esc(theirs)}. Open it, replacing what’s on screen now? Choose Cancel to keep what’s on screen and save it into the folder instead.`, 'Open the folder’s data');
       if (useTheirs) { replaceState(next); resetHistory(); toast(`Opened your data from ${Store.fileName}.`); return; }
     }
   }
@@ -4380,7 +4389,7 @@ document.addEventListener('click', e => {
     (async () => {
       const b = (await listBackups()).find(x => x.name === d.restore); if (!b) return;
       let next; try { next = await readDataFile(await readHandleText(b.handle), () => promptPass('Unlock backup', 'This backup is encrypted. Enter its passphrase.')); } catch (err) { if (err.message !== 'cancelled') toast(err.message); return; }
-      if (!await confirmBox('Restore backup', `Replace what’s in Keel now with the backup from ${dateLabel(b.date, true)}? You can undo it.`, 'Restore', true)) return;
+      if (!await confirmBox('Restore backup', `Replace what’s in Ọrọ̀ now with the backup from ${dateLabel(b.date, true)}? You can undo it.`, 'Restore', true)) return;
       replaceState(next, `Restored the backup from ${dateLabel(b.date, true)}.`);
     })();
     return;
@@ -4471,7 +4480,7 @@ function lockScreen(payload) {
     const wrap = document.createElement('div');
     wrap.className = 'lock-screen';
     wrap.innerHTML = `<form class="lock-card" id="lock-form">
-      <div class="brand big">Keel</div>
+      <div class="brand big">Ọrọ̀</div>
       <p>Your data is encrypted. Enter your passphrase to open it.</p>
       <label class="field"><span>Passphrase</span><input type="password" id="lock-pass" autocomplete="current-password" autofocus></label>
       <p class="notice bad small" id="lock-err" hidden>That passphrase didn’t work.</p>
@@ -4493,7 +4502,7 @@ function lockScreen(payload) {
       } catch (err) { $('#lock-err').hidden = false; btn.disabled = false; btn.textContent = 'Unlock'; }
     };
     $('#lock-reset').onclick = async () => {
-      if (!confirm('Erase the encrypted copy in this browser? Your Keel folder (if any) is not touched.')) return;
+      if (!confirm('Erase the encrypted copy in this browser? Your Ọrọ̀ folder (if any) is not touched.')) return;
       try { await IDB.del('state'); } catch (e) { /* ignore */ }
       try { localStorage.removeItem('keel.state'); } catch (e) { /* ignore */ }
       state = defaultState(); wrap.remove(); document.body.classList.remove('locked'); resolve();

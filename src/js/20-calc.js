@@ -251,8 +251,8 @@ function goalProgress(g) {
 /* ---------- attention items ---------- */
 function attentionItems() {
   const items = [];
-  if (!hasFolder() && !Store.handle && state.accounts.length && !state.meta.sample) items.push({ tone: 'warn', text: 'Your data only lives in this browser. Choose your Keel folder so it’s saved as files with daily backups', go: '#/data' });
-  else if ((Store.dir || Store.handle) && Store.perm !== 'granted') items.push({ tone: 'warn', text: `Keel needs permission again to save to ${Store.fileName}`, go: '#/data' });
+  if (!hasFolder() && !Store.handle && state.accounts.length && !state.meta.sample) items.push({ tone: 'warn', text: 'Your data only lives in this browser. Choose your Ọrọ̀ folder so it’s saved as files with daily backups', go: '#/data' });
+  else if ((Store.dir || Store.handle) && Store.perm !== 'granted') items.push({ tone: 'warn', text: `Ọrọ̀ needs permission again to save to ${Store.fileName}`, go: '#/data' });
   const unc = state.transactions.filter(isUncat).length;
   if (unc) items.push({ tone: 'warn', text: `${unc} transaction${unc > 1 ? 's' : ''} need a category`, go: '#/transactions?cat=_none&m=all' });
   const stale = activeAccounts().filter(a => !holdingsFor(a.id).length && !a.ledger && a.balanceDate && daysBetween(a.balanceDate, today()) > (state.settings.staleDays || 35));

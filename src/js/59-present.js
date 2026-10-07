@@ -16,7 +16,7 @@ function paintSlide() {
   for (const k in ChartSpecs) delete ChartSpecs[k];
   const n = MD.slides.length, s = MD.slides[MD.i];
   el.innerHTML = `
-    <header class="present-top"><span class="brand">Keel</span><span class="present-title">Money date · ${monthLabel(MD.mk)}</span>
+    <header class="present-top"><span class="brand">Ọrọ̀</span><span class="present-title">Money date · ${monthLabel(MD.mk)}</span>
       <span class="present-prog">${MD.slides.map((_, k) => `<i class="${k === MD.i ? 'on' : k < MD.i ? 'done' : ''}"></i>`).join('')}</span>
       <button class="icon-btn" data-md="close" aria-label="Exit Money date">×</button></header>
     <section class="slide" aria-live="polite">${s.html()}</section>
@@ -103,7 +103,7 @@ function paletteItems(q) {
   const acts = [['Add a transaction', () => txnModal()], ['Import a file', () => startImport()], ['Add an account', () => acctModal()], ['Add a goal', () => goalModal()], ['Start a Money date', () => startMoneyDate()],
     [state.settings.privacy ? 'Show amounts' : 'Hide amounts', () => ACTIONS.privacy()], [UI.mode === 'simple' ? 'Switch to Detailed view' : 'Switch to Simple view', () => { setMode(UI.mode === 'simple' ? 'detailed' : 'simple'); }],
     ['Undo', undo], ['Redo', redo], ['Download a backup', () => ACTIONS.backup()], ['Update balances', () => go('#/accounts?update=1')], ['Monthly review', () => go('#/review')]];
-  if (Store.key) acts.push(['Lock Keel now', () => lockNow()]);
+  if (Store.key) acts.push(['Lock Ọrọ̀ now', () => lockNow()]);
   for (const [label, run] of acts) out.push({ group: 'Actions', label, run });
   for (const a of activeAccounts()) out.push({ group: 'Accounts', label: a.name, hint: money(accountValue(a), { cents: false }), run: () => acctModal(a.id) });
   for (const c of state.categories) out.push({ group: 'Categories', label: c.name, hint: c.group, run: () => go(`#/transactions?m=all&cat=${c.id}`) });
@@ -158,7 +158,7 @@ function lockNow() {
   closeModal(true);
   const wrap = document.createElement('div');
   wrap.className = 'lock-screen';
-  wrap.innerHTML = `<form class="lock-card" id="relock"><div class="brand big">Keel</div><p>Keel locked after a period of inactivity.</p>
+  wrap.innerHTML = `<form class="lock-card" id="relock"><div class="brand big">Ọrọ̀</div><p>Ọrọ̀ locked after a period of inactivity.</p>
     <label class="field"><span>Passphrase</span><input type="password" id="relock-pass" autocomplete="current-password" autofocus></label>
     <p class="notice bad small" id="relock-err" hidden>That passphrase didn’t work.</p><button class="btn primary" type="submit">Unlock</button></form>`;
   document.body.appendChild(wrap);

@@ -33,10 +33,10 @@ VIEWS.overview = () => {
   const d = new Date();
   const sub = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   if (!state.accounts.length) {
-    return pageHead('Welcome to Keel', sub) + `<div class="welcome">
+    return pageHead('Welcome to Ọrọ̀', sub) + `<div class="welcome">
       <div class="welcome-copy"><h2>Your money, on your own machine</h2>
-        <p>Keel keeps your budget, net worth, investments, property and plans in one place that never leaves this Mac. Nothing is uploaded, and there’s no subscription.</p>
-        <ol class="steps"><li><strong>Choose your Keel folder</strong> so everything is saved as files with daily backups. <button class="linklike" data-act="connect-folder">Choose folder</button></li>
+        <p>Ọrọ̀ keeps your budget, net worth, investments, property and plans in one place that never leaves this Mac. Nothing is uploaded, and there’s no subscription.</p>
+        <ol class="steps"><li><strong>Choose your Ọrọ̀ folder</strong> so everything is saved as files with daily backups. <button class="linklike" data-act="connect-folder">Choose folder</button></li>
         <li><strong>Add your accounts</strong>, or import a statement from your bank, card or brokerage.</li>
         <li><strong>Set a few budgets and goals</strong>, then use Money date to go over the month together.</li></ol>
         <div class="actions"><button class="btn primary" data-act="add-account">Add an account</button><button class="btn" data-act="import">Import a file</button><button class="btn ghost" data-act="load-sample">Explore with sample data</button></div></div></div>`;

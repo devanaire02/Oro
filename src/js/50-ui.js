@@ -56,7 +56,7 @@ function render() {
     const w = document.createElement('div'); w.className = 'scroll-table'; t.replaceWith(w); w.appendChild(t);
   }
   $$('.nav a').forEach(a => a.classList.toggle('active', a.dataset.page === page));
-  document.title = `${PAGES.find(p => p[0] === page)[1]} · Keel`;
+  document.title = `${PAGES.find(p => p[0] === page)[1]} · Ọrọ̀`;
   paintTopbar(page);
   drawCharts($('#main'));
   if (focusSel) {
@@ -107,7 +107,7 @@ function paintStatus() {
   el.className = 'save-status ' + tone;
   el.innerHTML = `<span class="dot"></span><span>${esc(text)}${Store.key ? ' <span class="lock" title="Encrypted with your passphrase">encrypted</span>' : ''}</span>`;
   el.dataset.action = action;
-  el.title = action ? 'Click to give Keel permission to keep saving' : (Store.savedAt ? `Last saved ${Store.savedAt.toLocaleTimeString()}` : '');
+  el.title = action ? 'Click to give Ọrọ̀ permission to keep saving' : (Store.savedAt ? `Last saved ${Store.savedAt.toLocaleTimeString()}` : '');
 }
 
 /* ---------- modal ---------- */
@@ -180,7 +180,7 @@ function acctOptions(sel, filter, emptyLabel) {
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
 function pageHead(title, sub, actions = '') {
-  return `<header class="page-head"><div><h1>${esc(title)}</h1>${sub ? `<p class="sub">${sub}</p>` : ''}</div><div class="actions">${actions}</div></header>`;
+  return `<header class="page-head"><div><h1>${esc(title).replace(/Ọrọ̀/g, '<span class="wordmark">Ọrọ̀</span>')}</h1>${sub ? `<p class="sub">${sub}</p>` : ''}</div><div class="actions">${actions}</div></header>`;
 }
 function lensNote() { return UI.lens ? `<p class="lens-note">Showing ${esc(memberName(UI.lens))}’s spending only. <button class="linklike" data-lens="">Show everyone</button></p>` : ''; }
 function monthNav(mk, param = 'm') {

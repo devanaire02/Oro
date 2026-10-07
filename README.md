@@ -1,22 +1,22 @@
-# Keel
+# Ọrọ̀
 
-Your household finances on your own Mac: budget, net worth, investments, property, planning and taxes. Nothing is uploaded and there's no subscription. Keel is a set of files in this folder that runs in your browser.
+Your household finances on your own Mac: budget, net worth, investments, property, planning and taxes. Nothing is uploaded and there's no subscription. Ọrọ̀ is a set of files in this folder that runs in your browser.
 
 ## Open it
 
-- **Double-click `Keel.app`.** It opens Keel in its own window using Chrome, Edge or Brave, whichever you have. You can drag it to your Dock.
-- Or open `Keel.html` in Chrome, Edge or Brave directly.
-- Use a Chromium-based browser. Safari and Firefox can show Keel but can't save into this folder.
+- **Double-click `Ọrọ̀.app`.** It opens Ọrọ̀ in its own window using Chrome, Edge or Brave, whichever you have. You can drag it to your Dock.
+- Or open `Ọrọ̀.html` in Chrome, Edge or Brave directly.
+- Use a Chromium-based browser. Safari and Firefox can show Ọrọ̀ but can't save into this folder.
 
 ## First-time setup (2 minutes)
 
-1. Open **Settings › Where your data lives** and click **Choose your Keel folder…**. Pick this folder (Documents › Claude › Keel) and allow Keel to edit files there.
-2. Keel creates these folders inside it:
-   - `data/keel.json`: your data, saved on every change.
+1. Open **Settings › Where your data lives** and click **Choose your Ọrọ̀ folder…**. Pick this folder (Documents › Claude › Ọrọ̀) and allow Ọrọ̀ to edit files there.
+2. Ọrọ̀ creates these folders inside it:
+   - `data/oro.json`: your data, saved on every change.
    - `backups/`: one copy per day, kept for 30 days plus one per month for a year.
    - `receipts/`: files you attach to transactions.
    - `exports/`: CSVs you export (transactions, income statement, tax summary).
-3. Turn on a **passphrase** (Settings › Security). It encrypts your data, backups and receipts with AES-256. Keel can't recover a lost passphrase, so keep it in your password manager.
+3. Turn on a **passphrase** (Settings › Security). It encrypts your data, backups and receipts with AES-256. Ọrọ̀ can't recover a lost passphrase, so keep it in your password manager.
 4. In **Settings › Household**, rename "You" and "Partner" and add anyone else. Then give each account an owner.
 
 ## Getting data in
@@ -27,7 +27,7 @@ Click **Import** (or press `I`) and drop a file:
 - **Brokerage holdings:** the Positions CSV from Fidelity, Schwab or Vanguard, or an investment QFX.
 - **Moving from another app:** YNAB, Monarch, Mint, Copilot or Tiller CSV exports, or Quicken QIF. All accounts come over at once, with categories, tags and notes.
 
-Keel categorizes transactions with your rules plus about 150 known merchants. Fix one by hand and it offers to remember the fix.
+Ọrọ̀ categorizes transactions with your rules plus about 150 known merchants. Fix one by hand and it offers to remember the fix.
 
 ## Going over the month together
 
@@ -49,6 +49,7 @@ Use **Money date** (top right) for a slide-by-slide walkthrough of any month, ma
 ## Good to know
 
 - If the sidebar says **Reconnect**, click it. Browsers occasionally ask you to re-confirm folder access.
-- To use Keel on another Mac, copy this whole folder. Your data travels in `data/`.
+- To use Ọrọ̀ on another Mac, copy this whole folder. Your data travels in `data/`.
 - If this folder syncs through iCloud Drive, Apple stores a copy, so turn on the passphrase.
 - Taxes and planning pages are organizers and projections, not tax or investment advice.
+- The Ọrọ̀ wordmark is set in Charis SIL, © SIL International, used under the SIL Open Font License 1.1.

@@ -23,13 +23,13 @@ const ACTIONS = {
     commit(); toast(n ? `Categorized ${n} transaction${n > 1 ? 's' : ''}.` : 'No uncategorized transactions matched a rule.');
   },
   'load-sample': async () => {
-    if (state.accounts.length && !await confirmBox('Load sample data', 'This replaces everything in Keel with a fictional household. You can undo it right after.', 'Replace with sample data', true)) return;
+    if (state.accounts.length && !await confirmBox('Load sample data', 'This replaces everything in Ọrọ̀ with a fictional household. You can undo it right after.', 'Replace with sample data', true)) return;
     const s = buildSampleState(); UI.nwRange = '12'; UI.lens = '';
     replaceState(s); go('#/overview');
     toast('Sample data loaded. Explore, then erase it in Settings when you’re ready to start.', { label: 'Undo', fn: undo });
   },
   'erase': () => {
-    openModal({ title: 'Erase everything', body: `<p>This deletes every account, transaction, holding and setting${hasFolder() ? ` here and in <code>${esc(Store.fileName)}/data</code>. Earlier copies stay in the backups folder` : ''}. You can undo it until you close Keel.</p><label class="field"><span>Type ERASE to confirm</span><input id="erase-confirm" autocomplete="off"></label>`,
+    openModal({ title: 'Erase everything', body: `<p>This deletes every account, transaction, holding and setting${hasFolder() ? ` here and in <code>${esc(Store.fileName)}/data</code>. Earlier copies stay in the backups folder` : ''}. You can undo it until you close Ọrọ̀.</p><label class="field"><span>Type ERASE to confirm</span><input id="erase-confirm" autocomplete="off"></label>`,
       actions: `<button class="btn ghost" data-close>Cancel</button><button class="btn danger" id="erase-go">Erase everything</button>` });
     $('#erase-go').onclick = () => {
       if ($('#erase-confirm').value.trim().toUpperCase() !== 'ERASE') return toast('Type ERASE to confirm.');
@@ -75,22 +75,22 @@ const ACTIONS = {
   },
   'connect-folder': async () => {
     let dir;
-    try { dir = await window.showDirectoryPicker({ id: 'keel', mode: 'readwrite', startIn: 'documents' }); }
+    try { dir = await window.showDirectoryPicker({ id: 'oro', mode: 'readwrite', startIn: 'documents' }); }
     catch (e) { if (e.name !== 'AbortError') toast('Couldn’t open that folder: ' + e.message); return; }
     await connectFolder(dir);
   },
-  'reconnect': async () => { const ok = await reconnect(); render(); toast(ok ? `Saving to ${Store.fileName} again.` : 'Keel still doesn’t have permission to write there.'); },
+  'reconnect': async () => { const ok = await reconnect(); render(); toast(ok ? `Saving to ${Store.fileName} again.` : 'Ọrọ̀ still doesn’t have permission to write there.'); },
   'disconnect-file': async () => { await disconnectStorage(); render(); toast('Disconnected. Your data is still saved in this browser.'); },
   'open-file': async () => {
     const ask = () => promptPass('Unlock data file', 'This file is encrypted. Enter its passphrase.');
     const load = async text => {
       let next;
       try { next = await readDataFile(text, ask); } catch (e) { if (e.message !== 'cancelled') toast(e.message); return; }
-      if (state.accounts.length && !await confirmBox('Open data file', 'Replace what’s in Keel now with the contents of this file? You can undo it.', 'Open file', true)) return;
+      if (state.accounts.length && !await confirmBox('Open data file', 'Replace what’s in Ọrọ̀ now with the contents of this file? You can undo it.', 'Open file', true)) return;
       replaceState(next, 'Data file opened.'); go('#/overview');
     };
     if (window.showOpenFilePicker) {
-      try { const [h] = await window.showOpenFilePicker({ types: [{ description: 'Keel data file', accept: { 'application/json': ['.json'] } }] }); await load(await (await h.getFile()).text()); }
+      try { const [h] = await window.showOpenFilePicker({ types: [{ description: 'Ọrọ̀ data file', accept: { 'application/json': ['.json'] } }] }); await load(await (await h.getFile()).text()); }
       catch (e) { if (e.name !== 'AbortError') toast(e.message); }
     } else {
       const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json,application/json';
@@ -98,12 +98,12 @@ const ACTIONS = {
       inp.click();
     }
   },
-  'backup': async () => { downloadFile(`keel-backup-${today()}.json`, JSON.stringify(await serialize())); toast(Store.key ? 'Encrypted backup downloaded.' : 'Backup downloaded. It isn’t encrypted; add a passphrase if you’ll store it somewhere shared.'); },
+  'backup': async () => { downloadFile(`oro-backup-${today()}.json`, JSON.stringify(await serialize())); toast(Store.key ? 'Encrypted backup downloaded.' : 'Backup downloaded. It isn’t encrypted; add a passphrase if you’ll store it somewhere shared.'); },
   'export-csv': () => {
     const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const lines = [['Date', 'Account', 'Payee', 'Category', 'Group', 'Amount', 'Person', 'Tags', 'Memo'].join(',')];
     for (const t of state.transactions) for (const l of txLines(t)) { const c = catById(l.categoryId); lines.push([t.date, q(acctById(t.accountId)?.name), q(t.payee), q(c?.name || 'Uncategorized'), q(c?.group || ''), l.amount.toFixed(2), q(memberName(personOf(t))), q((t.tags || []).join(' ')), q(t.memo)].join(',')); }
-    saveExport(`keel-transactions-${today()}.csv`, lines.join('\n'));
+    saveExport(`oro-transactions-${today()}.csv`, lines.join('\n'));
   },
   'export-statement': el => {
     const ms = monthsIn(el.dataset.from, el.dataset.to).slice(-12);
@@ -111,11 +111,11 @@ const ACTIONS = {
     const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const lines = [['Group', 'Category', ...ms, 'Total'].join(',')];
     for (const c of state.categories.filter(c => c.kind !== 'transfer')) { const vals = per.map(a => a[c.id] || 0); if (vals.some(Boolean)) lines.push([q(c.group), q(c.name), ...vals.map(v => v.toFixed(2)), sum(vals).toFixed(2)].join(',')); }
-    saveExport(`keel-income-statement-${ms[0]}-to-${ms[ms.length - 1]}.csv`, lines.join('\n'));
+    saveExport(`oro-income-statement-${ms[0]}-to-${ms[ms.length - 1]}.csv`, lines.join('\n'));
   },
   'export-tax': el => {
     const year = +el.dataset.year, q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const lines = [`Keel tax summary for ${year}`, ''];
+    const lines = [`Ọrọ̀ tax summary for ${year}`, ''];
     for (const a of activeAccounts().filter(x => x.type === 'realestate' && x.rental)) {
       const E = scheduleE(a, year);
       lines.push(`Schedule E,${q(a.name)}`, 'Line,Description,Amount');
@@ -128,9 +128,9 @@ const ACTIONS = {
     if (D.tagged.length) { lines.push('', 'Transactions tagged #tax', 'Date,Payee,Amount'); D.tagged.forEach(t => lines.push(`${t.date},${q(t.payee)},${t.amount.toFixed(2)}`)); }
     lines.push('', 'Detail: every transaction in tax-tagged and rental categories', 'Date,Account,Payee,Category,Amount');
     for (const t of txInRange(`${year}-01-01`, `${year}-12-31`)) for (const l of txLines(t)) { const c = catById(l.categoryId); if (c && (c.taxTag || c.rental)) lines.push(`${t.date},${q(acctById(t.accountId)?.name)},${q(t.payee)},${q(c.name)},${l.amount.toFixed(2)}`); }
-    saveExport(`keel-tax-${year}.csv`, lines.join('\n'));
+    saveExport(`oro-tax-${year}.csv`, lines.join('\n'));
   },
-  'set-pass': async () => { const p = await promptPass('Add a passphrase', 'Keel will encrypt your data, backups and receipts with this passphrase. You’ll need it every time you open Keel.', { confirm: true, ok: 'Encrypt my data' }); if (p) { await setPassphrase(p); render(); armAutoLock(); toast('Your data is now encrypted.'); } },
+  'set-pass': async () => { const p = await promptPass('Add a passphrase', 'Ọrọ̀ will encrypt your data, backups and receipts with this passphrase. You’ll need it every time you open Ọrọ̀.', { confirm: true, ok: 'Encrypt my data' }); if (p) { await setPassphrase(p); render(); armAutoLock(); toast('Your data is now encrypted.'); } },
   'change-pass': async () => { const p = await promptPass('Change passphrase', 'Choose a new passphrase. Receipts saved earlier still open with the old one, so keep it until you re-attach them.', { confirm: true, ok: 'Change passphrase' }); if (p) { await setPassphrase(p); render(); toast('Passphrase changed.'); } },
   'remove-pass': async () => { if (await confirmBox('Remove passphrase', 'Your data and new backups will be stored without encryption.', 'Remove passphrase', true)) { await setPassphrase(null); render(); toast('Passphrase removed.'); } },
   'add-member': () => { const id = 'm' + uid().slice(0, 5); state.settings.members.push({ id, name: 'New person' }); commit(); setTimeout(() => { const el = $(`[data-member="${id}"]`); if (el) { el.focus(); el.select(); } }, 30); },
@@ -138,14 +138,14 @@ const ACTIONS = {
 
 async function connectFolder(dir) {
   const ok = await useFolder(dir);
-  if (!ok) return toast('Keel needs permission to save in that folder.');
+  if (!ok) return toast('Ọrọ̀ needs permission to save in that folder.');
   const existing = await folderHasData();
   if (existing) {
     let next = null;
-    try { next = await readDataFile(existing, () => promptPass('Unlock Keel data', 'The data in this folder is encrypted. Enter its passphrase.')); } catch (e) { if (e.message !== 'cancelled') toast(e.message); }
+    try { next = await readDataFile(existing, () => promptPass('Unlock Ọrọ̀ data', 'The data in this folder is encrypted. Enter its passphrase.')); } catch (e) { if (e.message !== 'cancelled') toast(e.message); }
     if (next && JSON.stringify(next.accounts) !== JSON.stringify(state.accounts)) {
       const theirs = next.meta?.modified ? new Date(next.meta.modified).toLocaleString() : 'an earlier date';
-      const useTheirs = !state.accounts.length || await confirmBox('This folder already has Keel data', `It was last saved ${esc(theirs)}. Open it, replacing what’s on screen now? Choose Cancel to keep what’s on screen and save it into the folder instead.`, 'Open the folder’s data');
+      const useTheirs = !state.accounts.length || await confirmBox('This folder already has Ọrọ̀ data', `It was last saved ${esc(theirs)}. Open it, replacing what’s on screen now? Choose Cancel to keep what’s on screen and save it into the folder instead.`, 'Open the folder’s data');
       if (useTheirs) { replaceState(next); resetHistory(); toast(`Opened your data from ${Store.fileName}.`); return; }
     }
   }
@@ -195,7 +195,7 @@ document.addEventListener('click', e => {
     (async () => {
       const b = (await listBackups()).find(x => x.name === d.restore); if (!b) return;
       let next; try { next = await readDataFile(await readHandleText(b.handle), () => promptPass('Unlock backup', 'This backup is encrypted. Enter its passphrase.')); } catch (err) { if (err.message !== 'cancelled') toast(err.message); return; }
-      if (!await confirmBox('Restore backup', `Replace what’s in Keel now with the backup from ${dateLabel(b.date, true)}? You can undo it.`, 'Restore', true)) return;
+      if (!await confirmBox('Restore backup', `Replace what’s in Ọrọ̀ now with the backup from ${dateLabel(b.date, true)}? You can undo it.`, 'Restore', true)) return;
       replaceState(next, `Restored the backup from ${dateLabel(b.date, true)}.`);
     })();
     return;
@@ -286,7 +286,7 @@ function lockScreen(payload) {
     const wrap = document.createElement('div');
     wrap.className = 'lock-screen';
     wrap.innerHTML = `<form class="lock-card" id="lock-form">
-      <div class="brand big">Keel</div>
+      <div class="brand big">Ọrọ̀</div>
       <p>Your data is encrypted. Enter your passphrase to open it.</p>
       <label class="field"><span>Passphrase</span><input type="password" id="lock-pass" autocomplete="current-password" autofocus></label>
       <p class="notice bad small" id="lock-err" hidden>That passphrase didn’t work.</p>
@@ -308,7 +308,7 @@ function lockScreen(payload) {
       } catch (err) { $('#lock-err').hidden = false; btn.disabled = false; btn.textContent = 'Unlock'; }
     };
     $('#lock-reset').onclick = async () => {
-      if (!confirm('Erase the encrypted copy in this browser? Your Keel folder (if any) is not touched.')) return;
+      if (!confirm('Erase the encrypted copy in this browser? Your Ọrọ̀ folder (if any) is not touched.')) return;
       try { await IDB.del('state'); } catch (e) { /* ignore */ }
       try { localStorage.removeItem('keel.state'); } catch (e) { /* ignore */ }
       state = defaultState(); wrap.remove(); document.body.classList.remove('locked'); resolve();

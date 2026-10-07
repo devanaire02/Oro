@@ -138,7 +138,7 @@ VIEWS.planning = p => {
   const head = pageHead('Planning', tab === 'retire' ? 'A Monte Carlo projection in today’s dollars. It’s a planning tool, not a promise.' : tab === 'debt' ? 'Pay debt off faster and see what it saves.' : 'What you’re saving toward, and whether you’re on pace.',
     tab === 'goals' ? '<button class="btn primary" data-act="add-goal">Add a goal</button>' : '') + tabs('t', tab, [['goals', 'Goals'], ['retire', 'Retirement'], ['debt', 'Debt payoff']]);
   if (tab === 'goals') {
-    if (!state.goals.length) return head + emptyState('No goals yet', 'Create a goal for an emergency fund, a trip, a down payment or college. Link it to an account or a rollover budget and Keel tracks progress automatically.', '<button class="btn primary" data-act="add-goal">Add a goal</button>');
+    if (!state.goals.length) return head + emptyState('No goals yet', 'Create a goal for an emergency fund, a trip, a down payment or college. Link it to an account or a rollover budget and Ọrọ̀ tracks progress automatically.', '<button class="btn primary" data-act="add-goal">Add a goal</button>');
     return head + `<div class="goal-grid">${state.goals.map(g => {
       const pr = goalProgress(g);
       return `<article class="goal-card ${pr.status}">
@@ -180,7 +180,7 @@ VIEWS.planning = p => {
   }
   // retirement
   const P = state.plan, D = planDefaults();
-  if (!P.age) return head + `<section class="panel narrow"><h2>Start with your age</h2><p class="muted">Keel fills in the rest from your accounts and spending, and you can adjust any of it.</p>
+  if (!P.age) return head + `<section class="panel narrow"><h2>Start with your age</h2><p class="muted">Ọrọ̀ fills in the rest from your accounts and spending, and you can adjust any of it.</p>
     <div class="form-grid"><label class="field"><span>Your age</span><input data-plan="age" inputmode="numeric" autofocus placeholder="e.g. 42"></label><label class="field"><span>Retire at</span><input data-plan="retireAge" inputmode="numeric" value="${P.retireAge}"></label></div></section>`;
   const stats = portfolioStats(D.alloc);
   const inp = {
@@ -223,7 +223,7 @@ VIEWS.planning = p => {
       </div>
       <label class="check"><input type="checkbox" data-plan="includePrivate" ${P.includePrivate ? 'checked' : ''}> Count private investments</label>
       <label class="check"><input type="checkbox" data-plan="includeRental" ${P.includeRental ? 'checked' : ''}> Keep rental cash flow in retirement (${money(D.rentalNet, { cents: false })} a year)</label>
-      <p class="muted small">Leave a field blank to use the value Keel works out from your data. Returns are drawn from a lognormal distribution each year; everything is in today’s dollars.</p>
+      <p class="muted small">Leave a field blank to use the value Ọrọ̀ works out from your data. Returns are drawn from a lognormal distribution each year; everything is in today’s dollars.</p>
     </section>
     <div class="plan-results">
       <section class="panel result-hero">
@@ -280,21 +280,21 @@ VIEWS.data = () => {
   const n = state.transactions.length;
   const groups = groupBy(state.categories, c => c.group);
   let where;
-  if (Store.dir) where = Store.perm === 'granted' ? `Saving to your <strong>${esc(Store.fileName)}</strong> folder: <code>data/keel.json</code>, with a dated copy in <code>backups/</code> each day and receipts in <code>receipts/</code>.` : `Your <strong>${esc(Store.fileName)}</strong> folder is connected, but this browser needs your permission again.`;
-  else if (Store.handle) where = `Saving to <strong>${esc(Store.fileName)}</strong>. Switch to a Keel folder to get daily backups and receipts.`;
-  else where = 'Only saved in this browser’s private storage. Choose your Keel folder so your data lives as files you can see and back up.';
+  if (Store.dir) where = Store.perm === 'granted' ? `Saving to your <strong>${esc(Store.fileName)}</strong> folder: <code>data/oro.json</code>, with a dated copy in <code>backups/</code> each day and receipts in <code>receipts/</code>.` : `Your <strong>${esc(Store.fileName)}</strong> folder is connected, but this browser needs your permission again.`;
+  else if (Store.handle) where = `Saving to <strong>${esc(Store.fileName)}</strong>. Switch to a Ọrọ̀ folder to get daily backups and receipts.`;
+  else where = 'Only saved in this browser’s private storage. Choose your Ọrọ̀ folder so your data lives as files you can see and back up.';
   return pageHead('Settings', '') + `
   <section class="panel">
     <header class="panel-head"><h2>Where your data lives</h2><span class="muted small">Nothing ever leaves this Mac</span></header>
     <p>${where}</p>
     <div class="actions wrap">
-      ${Store.canPickFolder ? (Store.dir && Store.perm !== 'granted' ? `<button class="btn primary" data-act="reconnect">Reconnect ${esc(Store.fileName)}</button>` : `<button class="btn ${Store.dir ? '' : 'primary'}" data-act="connect-folder">${Store.dir ? 'Choose a different folder…' : 'Choose your Keel folder…'}</button>`) : ''}
+      ${Store.canPickFolder ? (Store.dir && Store.perm !== 'granted' ? `<button class="btn primary" data-act="reconnect">Reconnect ${esc(Store.fileName)}</button>` : `<button class="btn ${Store.dir ? '' : 'primary'}" data-act="connect-folder">${Store.dir ? 'Choose a different folder…' : 'Choose your Ọrọ̀ folder…'}</button>`) : ''}
       <button class="btn" data-act="open-file">Open a data file…</button>
       <button class="btn" data-act="backup">Download a backup</button>
       <button class="btn ghost" data-act="export-csv">Export transactions as CSV</button>
       ${Store.dir || Store.handle ? `<button class="btn ghost" data-act="disconnect-file">Disconnect</button>` : ''}
     </div>
-    <p class="muted small">Tip: choose the Keel folder this app lives in (Documents › Claude › Keel). If that folder is synced to iCloud Drive, turn on a passphrase so the copy Apple stores is encrypted.</p>
+    <p class="muted small">Tip: choose the Ọrọ̀ folder this app lives in (Documents › Claude › Ọrọ̀). If that folder is synced to iCloud Drive, turn on a passphrase so the copy Apple stores is encrypted.</p>
     <div id="backup-list" class="backup-list"></div>
   </section>
 
@@ -327,7 +327,7 @@ VIEWS.data = () => {
 
   <section class="panel">
     <header class="panel-head"><h2>Categorization rules</h2><span class="muted small">${state.rules.length} rule${state.rules.length === 1 ? '' : 's'}</span></header>
-    <p class="muted">When a payee contains the text, it gets that category (and optionally a person), on import and when you run the rules. Keel also knows about 150 common merchants out of the box.</p>
+    <p class="muted">When a payee contains the text, it gets that category (and optionally a person), on import and when you run the rules. Ọrọ̀ also knows about 150 common merchants out of the box.</p>
     ${state.rules.length ? `<div class="scroll-table short"><table class="ledger compact"><thead><tr><th>Payee contains</th><th>Category</th><th class="hide-sm">Person</th><th class="hide-sm">Rename to</th><th></th></tr></thead><tbody>
     ${state.rules.map(r => `<tr><td><code>${esc(r.text)}</code></td><td>${esc(catName(r.categoryId))}</td><td class="hide-sm muted">${r.person ? esc(memberName(r.person)) : ''}</td><td class="hide-sm muted">${esc(r.rename || '')}</td><td class="acts"><button class="linklike small" data-edit-rule="${r.id}">Edit</button></td></tr>`).join('')}
     </tbody></table></div>` : ''}
@@ -342,7 +342,7 @@ VIEWS.data = () => {
 
   <section class="panel">
     <header class="panel-head"><h2>Moving from another app</h2></header>
-    <p class="muted">Export your history from YNAB, Monarch, Mint, Copilot, Tiller or Quicken (CSV or QIF), then use Import. Keel reads the account and category columns, creates any categories you don’t have, and keeps tags and notes.</p>
+    <p class="muted">Export your history from YNAB, Monarch, Mint, Copilot, Tiller or Quicken (CSV or QIF), then use Import. Ọrọ̀ reads the account and category columns, creates any categories you don’t have, and keeps tags and notes.</p>
     <div class="actions"><button class="btn" data-act="import">Import a file</button></div>
   </section>
 
@@ -356,7 +356,7 @@ VIEWS.data = () => {
     <p class="muted">${state.accounts.length} accounts, ${n.toLocaleString()} transactions, ${state.holdings.length} holdings, ${state.goals.length} goals${state.meta.sample ? '. This is sample data.' : '.'}</p>
     <div class="actions"><button class="btn" data-act="load-sample">Load sample data</button><button class="btn ghost danger-text" data-act="erase">Erase everything</button></div>
   </section>
-  <p class="muted small center">Keel 2.0 · Runs entirely on this Mac. No accounts, servers or tracking.</p>`;
+  <p class="muted small center">Ọrọ̀ 2.1 · Runs entirely on this Mac. No accounts, servers or tracking.</p>`;
 };
 async function paintBackups() {
   const box = $('#backup-list'); if (!box) return;
