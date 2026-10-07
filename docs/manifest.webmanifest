@@ -1,0 +1,22 @@
+{
+ "name": "Ọrọ̀",
+ "short_name": "Ọrọ̀",
+ "description": "Household finances that stay on your own devices.",
+ "start_url": "./",
+ "scope": "./",
+ "display": "standalone",
+ "background_color": "#E8EEE5",
+ "theme_color": "#24508C",
+ "icons": [
+  {
+   "src": "icons/icon-192.png",
+   "sizes": "192x192",
+   "type": "image/png"
+  },
+  {
+   "src": "icons/icon-512.png",
+   "sizes": "512x512",
+   "type": "image/png"
+  }
+ ]
+}

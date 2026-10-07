@@ -283,18 +283,25 @@ VIEWS.data = () => {
   if (Store.dir) where = Store.perm === 'granted' ? `Saving to your <strong>${esc(Store.fileName)}</strong> folder: <code>data/oro.json</code>, with a dated copy in <code>backups/</code> each day and receipts in <code>receipts/</code>.` : `Your <strong>${esc(Store.fileName)}</strong> folder is connected, but this browser needs your permission again.`;
   else if (Store.handle) where = `Saving to <strong>${esc(Store.fileName)}</strong>. Switch to a Ọrọ̀ folder to get daily backups and receipts.`;
   else where = 'Only saved in this browser’s private storage. Choose your Ọrọ̀ folder so your data lives as files you can see and back up.';
+  const lm = state.meta.lastMerge;
+  const phoneLine = !isCompanion() && Store.dir ? `<p class="muted small"><strong>iPhone:</strong> changes you send from Ọrọ̀ on your iPhone are saved into <code>inbox/</code> in this folder and added here automatically while Ọrọ̀ is open.${lm ? ` Last added ${esc(whenLabel(lm.at))}: ${changesWord(lm.applied)} from your ${esc(lm.device)}${lm.conflicts ? `, ${lm.conflicts} kept as this Mac’s version` : ''}.` : ''}</p>` : '';
+  if (isCompanion()) {
+    const dev = deviceLabel(), rec = SYNC.rec, n = rec && !rec.replaced ? syncPending().length : 0;
+    where = rec ? (rec.replaced ? `The data on this ${dev} was replaced, so it no longer matches your Mac’s. Get the latest from iCloud Drive to start fresh.` : `This ${dev} has your Mac’s data from <strong>${esc(whenLabel(rec.macSaved))}</strong>. ${n ? `${changesWord(n)} made here ${n === 1 ? 'isn’t' : 'aren’t'} on your Mac yet.` : 'Everything you’ve changed here has been sent.'}`)
+      : `Saved on this ${dev} only. Open your Mac’s data from iCloud Drive to work with the same numbers in both places.`;
+  }
   return pageHead('Settings', '') + `
   <section class="panel">
-    <header class="panel-head"><h2>Where your data lives</h2><span class="muted small">Nothing ever leaves this Mac</span></header>
+    <header class="panel-head"><h2>Where your data lives</h2><span class="muted small">${isCompanion() ? 'Only on your devices and in your iCloud' : 'Nothing ever leaves this Mac'}</span></header>
     <p>${where}</p>
     <div class="actions wrap">
       ${Store.canPickFolder ? (Store.dir && Store.perm !== 'granted' ? `<button class="btn primary" data-act="reconnect">Reconnect ${esc(Store.fileName)}</button>` : `<button class="btn ${Store.dir ? '' : 'primary'}" data-act="connect-folder">${Store.dir ? 'Choose a different folder…' : 'Choose your Ọrọ̀ folder…'}</button>`) : ''}
-      <button class="btn" data-act="open-file">Open a data file…</button>
+      ${isCompanion() ? `<button class="btn primary" data-act="sync">${SYNC.rec ? 'Sync with your Mac…' : 'Open from iCloud Drive…'}</button>` : `<button class="btn" data-act="open-file">Open a data file…</button>`}
       <button class="btn" data-act="backup">Download a backup</button>
       <button class="btn ghost" data-act="export-csv">Export transactions as CSV</button>
       ${Store.dir || Store.handle ? `<button class="btn ghost" data-act="disconnect-file">Disconnect</button>` : ''}
     </div>
-    <p class="muted small">Tip: choose the Ọrọ̀ folder this app lives in (Documents › Claude › Ọrọ̀). If that folder is synced to iCloud Drive, turn on a passphrase so the copy Apple stores is encrypted.</p>
+    ${isCompanion() ? `<p class="muted small">Your Mac’s data is in <strong>iCloud Drive › Ọrọ̀ › data › oro.json</strong>. Changes you send go to <strong>iCloud Drive › Ọrọ̀ › inbox</strong>, and your Mac adds them the next time Ọrọ̀ is open there. If both places change the same item, your Mac’s version is kept.</p>` : `<p class="muted small">Tip: choose the Ọrọ̀ folder this app lives in (iCloud Drive › Ọrọ̀). Because that folder syncs through iCloud Drive, turn on a passphrase so the copy Apple stores is encrypted.</p>${phoneLine}`}
     <div id="backup-list" class="backup-list"></div>
   </section>
 
@@ -356,7 +363,7 @@ VIEWS.data = () => {
     <p class="muted">${state.accounts.length} accounts, ${n.toLocaleString()} transactions, ${state.holdings.length} holdings, ${state.goals.length} goals${state.meta.sample ? '. This is sample data.' : '.'}</p>
     <div class="actions"><button class="btn" data-act="load-sample">Load sample data</button><button class="btn ghost danger-text" data-act="erase">Erase everything</button></div>
   </section>
-  <p class="muted small center">Ọrọ̀ 2.1 · Runs entirely on this Mac. No accounts, servers or tracking.</p>`;
+  <p class="muted small center">Ọrọ̀ 2.2 · Runs on your own devices. No accounts, servers or tracking.</p>`;
 };
 async function paintBackups() {
   const box = $('#backup-list'); if (!box) return;

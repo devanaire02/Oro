@@ -335,12 +335,13 @@ async function syncFromDiskIfNewer() {
 }
 
 async function setPassphrase(pass) {
-  if (!pass) { Store.key = null; Store.salt = null; Store.pass = null; await persistNow(); return; }
+  if (!pass) { Store.key = null; Store.salt = null; Store.pass = null; await persistNow(); if (SYNC.rec) await syncSave(); return; }
   Store.salt = crypto.getRandomValues(new Uint8Array(16));
   Store.key = await Vault.key(pass, Store.salt);
   Store.pass = pass;
   Store.lastBackup = null; // next save writes a fresh, encrypted backup
   await persistNow();
+  if (SYNC.rec) await syncSave();
 }
 
 /* Folder mode: the recommended setup on a Mac. */

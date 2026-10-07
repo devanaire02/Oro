@@ -251,7 +251,17 @@ function goalProgress(g) {
 /* ---------- attention items ---------- */
 function attentionItems() {
   const items = [];
-  if (!hasFolder() && !Store.handle && state.accounts.length && !state.meta.sample) items.push({ tone: 'warn', text: 'Your data only lives in this browser. Choose your Ọrọ̀ folder so it’s saved as files with daily backups', go: '#/data' });
+  if (isCompanion()) {
+    const dev = deviceLabel();
+    if (!SYNC.rec && state.accounts.length && !state.meta.sample) items.push({ tone: 'warn', text: `This ${dev} isn’t connected to your Mac’s data. Open it from iCloud Drive`, act: 'sync' });
+    else if (SYNC.rec?.replaced) items.push({ tone: 'warn', text: `The data here no longer matches your Mac’s. Get the latest from iCloud Drive`, act: 'sync' });
+    else if (SYNC.rec) {
+      const n = syncPending().length;
+      if (n) items.push({ tone: 'warn', text: `${changesWord(n)} on this ${dev} ${n === 1 ? 'isn’t' : 'aren’t'} on your Mac yet. Send ${n === 1 ? 'it' : 'them'}`, act: 'sync' });
+      if (SYNC.rec.macSaved && daysBetween(SYNC.rec.macSaved.slice(0, 10), today()) >= 3) items.push({ tone: 'info', text: `Your Mac’s data here is from ${whenLabel(SYNC.rec.macSaved)}. Get the latest`, act: 'sync' });
+    }
+  }
+  else if (!hasFolder() && !Store.handle && state.accounts.length && !state.meta.sample) items.push({ tone: 'warn', text: 'Your data only lives in this browser. Choose your Ọrọ̀ folder so it’s saved as files with daily backups', go: '#/data' });
   else if ((Store.dir || Store.handle) && Store.perm !== 'granted') items.push({ tone: 'warn', text: `Ọrọ̀ needs permission again to save to ${Store.fileName}`, go: '#/data' });
   const unc = state.transactions.filter(isUncat).length;
   if (unc) items.push({ tone: 'warn', text: `${unc} transaction${unc > 1 ? 's' : ''} need a category`, go: '#/transactions?cat=_none&m=all' });

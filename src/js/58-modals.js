@@ -44,7 +44,7 @@ function txnModal(id) {
       <label class="field wide"><span>Memo</span><input name="memo" value="${esc(v.memo || '')}"></label>
       <div class="wide" id="split-box"></div>
       <div class="wide attach-box"><span class="field-label">Receipts</span><div id="att-list"></div>
-        <label class="btn small ${hasFolder() ? '' : 'disabled'}" title="${hasFolder() ? 'Saved into receipts/ in your Ọrọ̀ folder' : 'Choose your Ọrọ̀ folder in Settings first'}">Attach a file<input type="file" id="att-input" accept="image/*,application/pdf" hidden ${hasFolder() ? '' : 'disabled'}></label></div>
+        <label class="btn small ${hasFolder() ? '' : 'disabled'}" title="${hasFolder() ? 'Saved into receipts/ in your Ọrọ̀ folder' : isCompanion() ? 'Attach receipts in Ọrọ̀ on your Mac' : 'Choose your Ọrọ̀ folder in Settings first'}">Attach a file<input type="file" id="att-input" accept="image/*,application/pdf" hidden ${hasFolder() ? '' : 'disabled'}></label></div>
       ${t?.rawPayee && t.rawPayee !== t.payee ? `<p class="muted small wide">Bank description: ${esc(t.rawPayee)}</p>` : ''}
       ${t?.reconciled ? '<p class="muted small wide">✓ Reconciled with a statement</p>' : ''}
     </form>`,

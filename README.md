@@ -29,6 +29,18 @@ Click **Import** (or press `I`) and drop a file:
 
 Ọrọ̀ categorizes transactions with your rules plus about 150 known merchants. Fix one by hand and it offers to remember the fix.
 
+## On your iPhone
+
+Ọrọ̀ also runs on your iPhone from **https://devanaire02.github.io/Oro/**. Only the app is published there. Your data never goes to that address; it stays on your devices and in your iCloud Drive.
+
+**Set it up once:** open the address in Safari, tap Share, choose **Add to Home Screen**, then open Ọrọ̀ from its icon and tap **Open from iCloud Drive** → **iCloud Drive › Ọrọ̀ › data › oro.json**.
+
+**Phone → Mac:** changes you make on the phone are saved on the phone right away. To give them to your Mac, tap the line at the top ("3 changes to send to Mac") → **Send to your Mac** → **Save to Files** → **iCloud Drive › Ọrọ̀ › inbox**. The Mac adds them automatically whenever Ọrọ̀ is open there.
+
+**Mac → Phone:** the Mac saves to iCloud Drive as you work. On the phone, tap the line at the top → **Get latest from iCloud Drive** → **oro.json**. Changes you haven't sent yet are kept.
+
+If the same item was changed in both places, the Mac's version is kept and Ọrọ̀ tells you which item. Receipts are attached on the Mac.
+
 ## Going over the month together
 
 Use **Money date** (top right) for a slide-by-slide walkthrough of any month, made for sitting down with your partner. It covers the big picture, money in and out, where it went, budget wins and misses, who spent what, goals, what's coming up, and decisions. Switch the top bar to **Simple** for a lighter view any time.
@@ -50,6 +62,7 @@ Use **Money date** (top right) for a slide-by-slide walkthrough of any month, ma
 
 - If the sidebar says **Reconnect**, click it. Browsers occasionally ask you to re-confirm folder access.
 - To use Ọrọ̀ on another Mac, copy this whole folder. Your data travels in `data/`.
+- `inbox/` is where your iPhone's changes arrive. Processed ones move to `inbox/merged/`.
 - If this folder syncs through iCloud Drive, Apple stores a copy, so turn on the passphrase.
 - Taxes and planning pages are organizers and projections, not tax or investment advice.
 - The Ọrọ̀ wordmark is set in Charis SIL, © SIL International, used under the SIL Open Font License 1.1.

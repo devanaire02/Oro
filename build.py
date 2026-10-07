@@ -2,8 +2,9 @@
 """Build Ọrọ̀.
    dist/Oro.html             single self-contained file (portable)
    mac/Ọrọ̀/                  the Mac install: Ọrọ̀.html + Ọrọ̀.app + app/ (css, js, vendor, icon) + README
+   docs/                     the hosted copy for iPhone and iPad (GitHub Pages serves this folder)
 """
-import os, pathlib, shutil, unicodedata
+import hashlib, json, os, pathlib, shutil, unicodedata
 
 NAME = unicodedata.normalize('NFC', 'Ọrọ̀')   # Ọrọ̀ (file names are written in NFC)
 SLUG = 'oro'
@@ -52,5 +53,54 @@ shutil.copy(root / "launcher" / "Oro", contents / "MacOS" / "Oro")
 os.chmod(contents / "MacOS" / "Oro", 0o755)
 shutil.copy(root / "launcher" / "oro.icns", contents / "Resources" / "oro.icns")
 
+# ---- hosted copy for the iPhone Home Screen (GitHub Pages: main branch, /docs) ----
+web = root / "docs"
+if web.exists(): shutil.rmtree(web)
+(web / "app" / "vendor").mkdir(parents=True)
+(web / "icons").mkdir()
+(web / "app" / f"{SLUG}.css").write_text(css)
+(web / "app" / f"{SLUG}.js").write_text(js)
+(web / "app" / "vendor" / "pdf.min.js").write_text(pdfjs)
+(web / "app" / "vendor" / "pdf.worker.min.js").write_text(worker)
+for png in (root / "assets" / "web-icons").glob("*.png"): shutil.copy(png, web / "icons" / png.name)
+csp_mac = html.split('content="default-src', 1)[1].split('"', 1)[0]
+csp_web = ("'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+           "font-src data:; connect-src 'none'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'")
+head = (f'<meta name="robots" content="noindex, nofollow">\n'
+        f'<link rel="manifest" href="manifest.webmanifest">\n'
+        f'<link rel="apple-touch-icon" href="icons/icon-180.png">\n'
+        f'<meta name="apple-mobile-web-app-capable" content="yes">\n'
+        f'<meta name="mobile-web-app-capable" content="yes">\n'
+        f'<meta name="apple-mobile-web-app-title" content="{NAME}">\n'
+        f'<meta name="apple-mobile-web-app-status-bar-style" content="default">\n'
+        f'<meta name="theme-color" content="#E8EEE5" media="(prefers-color-scheme: light)">\n'
+        f'<meta name="theme-color" content="#0F1619" media="(prefers-color-scheme: dark)">\n')
+page = (html.replace('content="default-src' + csp_mac + '"', 'content="default-src ' + csp_web + '"')
+            .replace("<!--__STYLES__-->", head + f'<link rel="stylesheet" href="app/{SLUG}.css">')
+            .replace("<!--__SCRIPTS__-->", f'<script src="app/{SLUG}.js"></script>'))
+assert csp_web in page
+(web / "index.html").write_text(page)
+(web / "manifest.webmanifest").write_text(json.dumps({
+    "name": NAME, "short_name": NAME, "description": "Household finances that stay on your own devices.",
+    "start_url": "./", "scope": "./", "display": "standalone", "background_color": "#E8EEE5", "theme_color": "#24508C",
+    "icons": [{"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+              {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png"}]}, ensure_ascii=False, indent=1))
+files = ["./", "index.html", f"app/{SLUG}.css", f"app/{SLUG}.js", "app/vendor/pdf.min.js", "app/vendor/pdf.worker.min.js",
+         "manifest.webmanifest", "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png"]
+version = hashlib.sha256((page + css + js).encode()).hexdigest()[:12]
+(web / "sw.js").write_text(f"""/* Ọrọ̀ offline cache: always tries the network first, so updates show up right away; falls back to the cached copy offline. */
+const CACHE = 'oro-{version}';
+const FILES = {json.dumps(files)};
+self.addEventListener('install', e => {{ e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); }});
+self.addEventListener('activate', e => {{ e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); }});
+self.addEventListener('fetch', e => {{
+  const req = e.request;
+  if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
+  e.respondWith(fetch(req).then(res => {{ if (res.ok) {{ const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }} return res; }})
+    .catch(() => caches.match(req, {{ ignoreSearch: true }}).then(r => r || caches.match('index.html'))));
+}});
+""")
+(web / ".nojekyll").write_text("")
+
 size = sum(p.stat().st_size for p in app.rglob('*') if p.is_file()) / 1024
-print(f"single: {(root/'dist'/'Oro.html').stat().st_size/1024:.0f} KB; mac app: {size:.0f} KB, js {len(js)//1024} KB")
+print(f"single: {(root/'dist'/'Oro.html').stat().st_size/1024:.0f} KB; mac app: {size:.0f} KB; web: {sum(p.stat().st_size for p in web.rglob('*') if p.is_file())/1024:.0f} KB; js {len(js)//1024} KB")

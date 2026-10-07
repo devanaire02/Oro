@@ -1,5 +1,10 @@
 /* ================= actions + events + boot ================= */
-function replaceState(next, msg) { state = next; invalidate(); applyTheme(); commit({ silent: true }); render(); if (msg) toast(msg, { label: 'Undo', fn: undo }); }
+function replaceState(next, msg) {
+  state = next; invalidate(); applyTheme();
+  // On a phone, swapping in different data (sample data, erase, a backup) unlinks it from the Mac's copy.
+  if (isCompanion() && SYNC.rec && !SYNC.rec.replaced) { SYNC.rec.replaced = true; syncSave(); }
+  commit({ silent: true }); render(); if (msg) toast(msg, { label: 'Undo', fn: undo });
+}
 const ACTIONS = {
   'import': () => startImport(),
   'add-txn': () => txnModal(),
@@ -13,6 +18,9 @@ const ACTIONS = {
   'money-date': el => startMoneyDate(el?.dataset.mk),
   'privacy': () => { state.settings.privacy = !state.settings.privacy; commit({ silent: true }); render(); },
   'print': () => window.print(),
+  'sync': () => syncSheet(),
+  'sync-open': () => syncPickFile(),
+  'sync-send': () => syncSend(),
   'run-rules': () => {
     let n = 0;
     for (const t of state.transactions) if (!t.categoryId) {
@@ -79,7 +87,7 @@ const ACTIONS = {
     catch (e) { if (e.name !== 'AbortError') toast('Couldn’t open that folder: ' + e.message); return; }
     await connectFolder(dir);
   },
-  'reconnect': async () => { const ok = await reconnect(); render(); toast(ok ? `Saving to ${Store.fileName} again.` : 'Ọrọ̀ still doesn’t have permission to write there.'); },
+  'reconnect': async () => { const ok = await reconnect(); render(); toast(ok ? `Saving to ${Store.fileName} again.` : 'Ọrọ̀ still doesn’t have permission to write there.'); if (ok) syncCheckInbox(); },
   'disconnect-file': async () => { await disconnectStorage(); render(); toast('Disconnected. Your data is still saved in this browser.'); },
   'open-file': async () => {
     const ask = () => promptPass('Unlock data file', 'This file is encrypted. Enter its passphrase.');
@@ -146,12 +154,13 @@ async function connectFolder(dir) {
     if (next && JSON.stringify(next.accounts) !== JSON.stringify(state.accounts)) {
       const theirs = next.meta?.modified ? new Date(next.meta.modified).toLocaleString() : 'an earlier date';
       const useTheirs = !state.accounts.length || await confirmBox('This folder already has Ọrọ̀ data', `It was last saved ${esc(theirs)}. Open it, replacing what’s on screen now? Choose Cancel to keep what’s on screen and save it into the folder instead.`, 'Open the folder’s data');
-      if (useTheirs) { replaceState(next); resetHistory(); toast(`Opened your data from ${Store.fileName}.`); return; }
+      if (useTheirs) { replaceState(next); resetHistory(); toast(`Opened your data from ${Store.fileName}.`); syncCheckInbox(); return; }
     }
   }
   Store.lastBackup = null;
   await persistNow(); render();
   toast(`Saving to ${Store.fileName}: data, daily backups and receipts.`);
+  syncCheckInbox();
 }
 
 function applyTheme() {
@@ -207,6 +216,7 @@ document.addEventListener('click', e => {
     return;
   }
   if (el.id === 'save-status' && d.action === 'reconnect') return ACTIONS.reconnect();
+  if (el.id === 'save-status' && d.action === 'sync') return syncSheet();
   if (el.id === 'menu-btn') { document.body.classList.toggle('nav-open'); return; }
 });
 document.addEventListener('click', e => { if (e.target.closest('.nav a')) document.body.classList.remove('nav-open'); });
@@ -309,7 +319,7 @@ function lockScreen(payload) {
     };
     $('#lock-reset').onclick = async () => {
       if (!confirm('Erase the encrypted copy in this browser? Your Ọrọ̀ folder (if any) is not touched.')) return;
-      try { await IDB.del('state'); } catch (e) { /* ignore */ }
+      try { await IDB.del('state'); await IDB.del('sync'); } catch (e) { /* ignore */ }
       try { localStorage.removeItem('keel.state'); } catch (e) { /* ignore */ }
       state = defaultState(); wrap.remove(); document.body.classList.remove('locked'); resolve();
     };
@@ -322,11 +332,14 @@ async function boot() {
   if (payload && payload.encrypted) await lockScreen(payload);
   else state = migrate(unwrap(payload) || defaultState());
   if (await syncFromDiskIfNewer()) invalidate();
+  if (isCompanion()) await syncLoad();
   applyTheme();
   resetHistory();
   window.addEventListener('hashchange', () => { if ($('#present')) endMoneyDate(); render(); });
   render();
   if (!payload || (state.version || 0) < 2) persist();
   armAutoLock();
+  syncWatch();
+  registerOffline();
 }
 document.addEventListener('DOMContentLoaded', boot);

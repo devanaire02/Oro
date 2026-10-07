@@ -60,6 +60,13 @@ async def main():
             await pg.set_viewport_size({'width': size, 'height': size})
             await pg.set_content(f"<html><body style='margin:0;background:transparent'>{icon_svg(size)}</body></html>")
             out[size] = await pg.screenshot(omit_background=True, clip={'x': 0, 'y': 0, 'width': size, 'height': size})
+        # Full-bleed squares for the iPhone Home Screen and the web manifest (iOS rounds the corners itself)
+        web = root / 'assets' / 'web-icons'; web.mkdir(parents=True, exist_ok=True)
+        for size in (180, 192, 512):
+            await pg.set_viewport_size({'width': size, 'height': size})
+            svg = icon_svg(size).replace("viewBox='0 0 1024 1024'", "viewBox='100 100 824 824'").replace("rx='185'", "rx='0'")
+            await pg.set_content(f"<html><body style='margin:0;background:#24508C'>{svg}</body></html>")
+            (web / f'icon-{size}.png').write_bytes(await pg.screenshot(clip={'x': 0, 'y': 0, 'width': size, 'height': size}))
         await b.close()
     entries = [(b'ic10', out[1024]), (b'ic09', out[512]), (b'ic08', out[256]), (b'ic07', out[128]), (b'ic12', out[64]), (b'ic11', out[32])]
     body = b''.join(t + struct.pack('>I', len(d) + 8) + d for t, d in entries)

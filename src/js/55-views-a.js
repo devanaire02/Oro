@@ -33,6 +33,13 @@ VIEWS.overview = () => {
   const d = new Date();
   const sub = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   if (!state.accounts.length) {
+    if (isCompanion()) return pageHead('Welcome to Ọrọ̀', sub) + `<div class="welcome">
+      <div class="welcome-copy"><h2>Your Mac’s money picture, on your ${deviceLabel()}</h2>
+        <p>Ọrọ̀ on this ${deviceLabel()} works from the data your Mac keeps in iCloud Drive. It stays on your devices and in your iCloud. Nothing is uploaded anywhere else.</p>
+        <ol class="steps"><li><strong>Open your Mac’s data:</strong> choose <strong>iCloud Drive › Ọrọ̀ › data › oro.json</strong>.</li>
+        <li><strong>Review, import or add transactions</strong> here as you go.</li>
+        <li><strong>Send your changes</strong> back to your Mac. They’re added the next time Ọrọ̀ is open there.</li></ol>
+        <div class="actions"><button class="btn primary" data-act="sync-open">Open from iCloud Drive</button><button class="btn ghost" data-act="load-sample">Explore with sample data</button></div></div></div>`;
     return pageHead('Welcome to Ọrọ̀', sub) + `<div class="welcome">
       <div class="welcome-copy"><h2>Your money, on your own machine</h2>
         <p>Ọrọ̀ keeps your budget, net worth, investments, property and plans in one place that never leaves this Mac. Nothing is uploaded, and there’s no subscription.</p>
@@ -135,7 +142,7 @@ function overviewDetailed(sub) {
     </section>
     <section class="panel">
       <header class="panel-head"><h2>Needs attention</h2></header>
-      ${att.length ? `<ul class="attention">${att.map(a => `<li class="${a.tone}"><a href="${a.go}">${esc(a.text)}</a></li>`).join('')}</ul>` : '<p class="muted">Everything is categorized, current and on budget.</p>'}
+      ${att.length ? `<ul class="attention">${att.map(a => `<li class="${a.tone}">${a.act ? `<button class="linklike" data-act="${a.act}">${esc(a.text)}</button>` : `<a href="${a.go}">${esc(a.text)}</a>`}</li>`).join('')}</ul>` : '<p class="muted">Everything is categorized, current and on budget.</p>'}
     </section>
   </div>
   ${goals.length ? `<section class="panel"><header class="panel-head"><h2>Goals</h2><a href="#/planning">All goals</a></header><div class="goal-strip">${goals.map(goalTile).join('')}</div></section>` : ''}`;

@@ -101,13 +101,21 @@ function paintStatus() {
   if (Store.status === 'saving') text = 'Saving…';
   else if (Store.status === 'error') { text = 'Couldn’t save'; tone = 'bad'; }
   else if ((Store.dir || Store.handle) && Store.perm !== 'granted') { text = `Reconnect ${Store.fileName}`; tone = 'warn'; action = 'reconnect'; }
+  else if (isCompanion() && SYNC.rec) {
+    const n = SYNC.rec.replaced ? 0 : syncPending().length;
+    action = 'sync';
+    if (SYNC.rec.replaced) { text = 'Not matched to your Mac'; tone = 'warn'; }
+    else if (n) { text = `${changesWord(n)} to send to Mac`; tone = 'warn'; }
+    else text = `Mac copy · ${shortWhen(SYNC.rec.macSaved)}`;
+  }
+  else if (isCompanion()) { text = `Saved on this ${deviceLabel()} only`; tone = 'warn'; action = 'sync'; }
   else if (Store.dir) text = `Saved to ${Store.fileName} folder`;
   else if (Store.handle) text = `Saved to ${Store.fileName}`;
   else { text = 'Saved in this browser only'; tone = 'warn'; }
   el.className = 'save-status ' + tone;
   el.innerHTML = `<span class="dot"></span><span>${esc(text)}${Store.key ? ' <span class="lock" title="Encrypted with your passphrase">encrypted</span>' : ''}</span>`;
   el.dataset.action = action;
-  el.title = action ? 'Click to give Ọrọ̀ permission to keep saving' : (Store.savedAt ? `Last saved ${Store.savedAt.toLocaleTimeString()}` : '');
+  el.title = action === 'reconnect' ? 'Click to give Ọrọ̀ permission to keep saving' : action === 'sync' ? 'Sync with your Mac' : (Store.savedAt ? `Last saved ${Store.savedAt.toLocaleTimeString()}` : '');
 }
 
 /* ---------- modal ---------- */

@@ -110,6 +110,14 @@ function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h
 
 function downloadFile(name, text, mime = 'application/json') {
   const blob = text instanceof Blob ? text : new Blob([text], { type: mime });
+  // iPhone and iPad: hand the file to the share sheet (Save to Files) instead of a download link
+  if (navigator.maxTouchPoints > 0 && !window.showDirectoryPicker && navigator.share && navigator.canShare) {
+    const file = new File([blob], name, { type: blob.type || mime });
+    if (navigator.canShare({ files: [file] })) { navigator.share({ files: [file] }).catch(e => { if (e.name !== 'AbortError') anchorDownload(blob, name); }); return; }
+  }
+  anchorDownload(blob, name);
+}
+function anchorDownload(blob, name) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
