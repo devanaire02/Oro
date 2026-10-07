@@ -33,6 +33,25 @@ VIEWS.investments = () => {
     }).join('')}</tbody></table>
     ${re ? `<p class="muted small">Counting your property too, real estate is ${pct(re.share, 0)} of everything you own.</p>` : ''}
   </section>
+  ${(() => {
+    const fa = feeAnalysis();
+    const months = Object.keys(state.snapshots).sort().slice(-24);
+    const histAccts = accts.filter(a => months.some(m => state.snapshots[m][a.id]));
+    return `<div class="cols">
+    <section class="panel">
+      <header class="panel-head"><h2>What you pay in fund fees</h2><span class="muted small">${fa.coverage < 0.999 ? `Covers ${pct(fa.coverage, 0)} of holdings` : ''}</span></header>
+      ${fa.value ? `<dl class="kpis three"><div><dt>Weighted expense ratio</dt><dd class="num">${fa.weighted.toFixed(2)}%</dd></div><div><dt>Per year</dt><dd class="num">${money(fa.fees, { cents: false })}</dd></div><div><dt>Over 20 years</dt><dd class="num">${money(fa.drag, { cents: false })}</dd><span class="muted small">Growth lost at 6% a year</span></div></dl>
+      <table class="ledger compact"><thead><tr><th>Fund</th><th class="num">Expense ratio</th><th class="num">Per year</th></tr></thead><tbody>${fa.top.slice(0, 5).map(x => `<tr><th scope="row"><button class="linklike" data-edit-holding="${x.h.id}">${esc(x.h.symbol)}</button> <span class="muted small">${esc(x.h.name || '')}</span></th><td class="num ${x.er >= 0.5 ? 'neg' : ''}">${x.er.toFixed(2)}%</td><td class="num">${money(x.fee, { cents: false })}</td></tr>`).join('')}</tbody></table>
+      ${fa.unknown.length ? `<p class="muted small">No expense ratio on file for ${fa.unknown.slice(0, 4).map(h => esc(h.symbol)).join(', ')}${fa.unknown.length > 4 ? '…' : ''}. Add it in each holding.</p>` : ''}`
+      : '<p class="muted">Add holdings to see the fees inside your funds.</p>'}
+    </section>
+    <section class="panel">
+      <header class="panel-head"><h2>Value over time</h2></header>
+      ${chartHost({ type: 'stack', h: 230, labels: months.map(m => monthLabel(m, true)), series: histAccts.map((a, i) => ({ name: a.name, color: `var(--c${(i % 8) + 1})`, values: months.map(m => state.snapshots[m][a.id] || 0) })), empty: 'History builds as months pass.',
+        tip: i => `<strong>${monthLabel(months[i])}</strong>${histAccts.map(a => `<br>${esc(a.name)} ${money(state.snapshots[months[i]][a.id] || 0, { cents: false })}`).join('')}` })}
+      <p class="legend">${histAccts.map((a, i) => `<span><i style="background:var(--c${(i % 8) + 1})"></i>${esc(a.name)}</span>`).join('')}</p>
+    </section></div>`;
+  })()}
 
   ${accts.map(a => {
     const list = holdingsFor(a.id).sort((x, y) => holdingValue(y) - holdingValue(x));
@@ -92,7 +111,7 @@ VIEWS.property = () => {
           series: [{ values: per.map(x => x.income), color: 'var(--c1)' }, { values: per.map(x => x.opex + x.debt), color: 'var(--c4)' }],
           tip: i => `<strong>${monthLabel(months[i])}</strong><br>Rent ${money(per[i].income, { cents: false })}<br>Costs ${money(per[i].opex + per[i].debt, { cents: false })}<br>Cash flow <span class="${signClass(per[i].cashFlow)}">${money(per[i].cashFlow, { cents: false })}</span>` })}
         <p class="legend"><span><i style="background:var(--c1)"></i>Rent collected</span><span><i style="background:var(--c4)"></i>Operating costs and debt service</span></p>
-        <p class="muted small">Figures come from transactions in the “${esc(g)}” category group. Mortgage payments count as debt service; give operating categories the “Operating expense” role in Data and settings.</p>`;
+        <p class="muted small"><a href="#/taxes">See this property’s Schedule E</a>. Figures come from transactions in the “${esc(g)}” category group. Mortgage payments count as debt service; give operating categories the “Operating expense” role in Data and settings.</p>`;
       }
       return `<section class="panel property">
         <header class="panel-head"><h2><button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button></h2><span class="muted small">${a.rental ? `Rental${a.units ? `, ${a.units} units` : ''}` : 'Residence'}. Value as of ${dateLabel(a.balanceDate, true)}</span></header>
@@ -129,6 +148,7 @@ VIEWS.cashflow = () => {
     <label class="field inline"><span>Warn me below</span><input id="low-cash" data-setting="lowCash" inputmode="decimal" value="${low}" style="width:8em"></label>
   </section>
 
+  ${billCalendar(route().params.cm || thisMonth())}
   <div class="cols">
     <section class="panel">
       <header class="panel-head"><h2>Bills and income</h2><span class="muted small">${state.recurring.length} scheduled</span></header>
@@ -154,6 +174,24 @@ VIEWS.cashflow = () => {
     <p class="legend"><span><i style="background:var(--c1)"></i>Money in</span><span><i style="background:var(--c4)"></i>Money out</span></p>
   </section>`;
 };
+
+function billCalendar(mk) {
+  const first = fromISO(`${mk}-01`), startDow = first.getDay(), dim = +monthEnd(mk).slice(8);
+  const ev = {};
+  for (const r of state.recurring) for (const d of occurrences(r, `${mk}-01`, monthEnd(mk))) (ev[d] = ev[d] || []).push(r);
+  const totalOut = sum(Object.values(ev).flat().filter(r => r.amount < 0).map(r => r.amount)), totalIn = sum(Object.values(ev).flat().filter(r => r.amount > 0).map(r => r.amount));
+  let cells = '';
+  for (let i = 0; i < startDow; i++) cells += '<div class="cal-cell empty"></div>';
+  for (let dd = 1; dd <= dim; dd++) {
+    const iso = `${mk}-${pad2(dd)}`, list = ev[iso] || [];
+    cells += `<div class="cal-cell ${iso === today() ? 'today' : ''} ${iso < today() ? 'past' : ''}"><span class="cal-day">${dd}</span>${list.map(r => `<button class="cal-ev ${r.amount >= 0 ? 'in' : 'out'}" data-edit-rec="${r.id}" title="${esc(r.name)} ${money(r.amount)}"><span>${esc(r.name)}</span><span class="num">${moneyCompact(r.amount)}</span></button>`).join('')}</div>`;
+  }
+  return `<section class="panel calendar">
+    <header class="panel-head"><h2>Bill calendar</h2><div class="month-nav"><button class="icon-btn" data-month="${addMonths(mk, -1)}" data-param="cm" aria-label="Previous month">‹</button><span class="month-label">${monthLabel(mk)}</span><button class="icon-btn" data-month="${addMonths(mk, 1)}" data-param="cm" aria-label="Next month">›</button></div></header>
+    <p class="muted small">${money(totalIn, { cents: false })} scheduled in, ${money(-totalOut, { cents: false })} scheduled out.</p>
+    <div class="cal-grid">${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(x => `<div class="cal-dow">${x}</div>`).join('')}${cells}</div>
+  </section>`;
+}
 
 /* ================= Monthly review ================= */
 VIEWS.review = p => {
@@ -182,13 +220,14 @@ VIEWS.review = p => {
   const unc = txs.filter(t => !t.categoryId).length;
   const stale = activeAccounts().filter(a => !holdingsFor(a.id).length && (!a.balanceDate || a.balanceDate < `${mk}-${pad2(Math.min(25, +monthEnd(mk).slice(8)))}`)).length;
   const marks = state.holdings.filter(h => h.private && daysBetween(h.priceDate || '2000-01-01', monthEnd(mk)) > 90).length;
+  const unrec = activeAccounts().filter(a => a.ledger && txByAccount(a.id).some(t => t.date <= monthEnd(mk)) && (!a.reconciledThrough || a.reconciledThrough < monthEnd(mk))).length;
   const newRep = detectRepeating().filter(r => r.firstSeen.startsWith(mk) || (r.isNew && mk === lm));
   const rentals = activeAccounts().filter(a => a.type === 'realestate' && a.rental);
   const months = [...new Set(state.transactions.map(t => monthKey(t.date)))].sort().reverse();
   const cmp = (now, then) => then ? `<span class="small ${signClass(now - then)}">${money(now - then, { cents: false, sign: true })}</span>` : '';
 
   return pageHead(`${monthLabel(mk)} review`, rv.completedAt ? `Reviewed ${dateLabel(rv.completedAt, true)}` : 'Not reviewed yet',
-    `<label class="field inline"><span class="sr">Month</span><select data-filter="m">${months.map(m => `<option value="${m}" ${m === mk ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}</select></label><button class="btn ghost" data-act="print">Print</button>`) + `
+    `<label class="field inline"><span class="sr">Month</span><select data-filter="m">${months.map(m => `<option value="${m}" ${m === mk ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}</select></label><button class="btn" data-act="money-date" data-mk="${mk}">Present as Money date</button><button class="btn ghost" data-act="print">Print</button>`) + `
   <section class="flows"><table class="ledger flows-table">
     <thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Left over</th><th class="num">Savings rate</th></tr></thead>
     <tbody>
@@ -227,6 +266,10 @@ VIEWS.review = p => {
     </section>
   </div>
 
+  ${members().length > 1 ? (() => { const per = members().map(m => ({ m, f: flowSummary(txs.filter(t => personOf(t) === m.id)) })).filter(x => x.f.spending > 0); const tot = sum(per.map(x => x.f.spending)) || 1; return per.length ? `<section class="panel"><header class="panel-head"><h2>Who spent what</h2><a href="#/reports?r=people&p=custom&from=${mk}-01&to=${monthEnd(mk)}">Details</a></header>
+    <div class="stack tall">${per.map(x => `<span style="width:${x.f.spending / tot * 100}%;background:${memberColor(x.m.id)}"></span>`).join('')}</div>
+    <p class="legend">${per.map(x => `<span><i style="background:${memberColor(x.m.id)}"></i>${esc(x.m.name)} ${money(x.f.spending, { cents: false })} (${pct(x.f.spending / tot, 0)})</span>`).join('')}</p></section>` : ''; })() : ''}
+  ${state.goals.length ? `<section class="panel"><header class="panel-head"><h2>Goals</h2></header><div class="goal-strip">${state.goals.map(goalTile).join('')}</div></section>` : ''}
   ${rentals.length ? `<section class="panel"><header class="panel-head"><h2>Rental property</h2></header><table class="ledger compact"><thead><tr><th></th><th class="num">Rent</th><th class="num">Operating costs</th><th class="num">NOI</th><th class="num">Cash flow</th></tr></thead><tbody>
     ${rentals.map(a => { const r = rentalPnL(a.rentalGroup || 'Rental property', `${mk}-01`, monthEnd(mk)); return `<tr><th scope="row">${esc(a.name)}</th><td class="num">${money(r.income, { cents: false })}</td><td class="num">${money(r.opex, { cents: false })}</td><td class="num">${money(r.noi, { cents: false })}</td><td class="num ${signClass(r.cashFlow)}">${money(r.cashFlow, { cents: false })}</td></tr>`; }).join('')}
   </tbody></table></section>` : ''}
@@ -236,6 +279,7 @@ VIEWS.review = p => {
     <ol class="steps">
       <li class="${unc ? '' : 'done'}"><strong>Categorize every transaction.</strong> ${unc ? `<a href="#/transactions?m=${mk}&cat=_none">${unc} left</a>` : 'Done.'}</li>
       <li class="${stale ? '' : 'done'}"><strong>Update account balances.</strong> ${stale ? `<a href="#/accounts?update=1">${stale} account${stale > 1 ? 's' : ''} not updated since late ${MONTHS[+mk.slice(5) - 1]}</a>` : 'Done.'}</li>
+      <li class="${unrec ? '' : 'done'}"><strong>Reconcile bank and card accounts.</strong> ${unrec ? `<a href="#/accounts">${unrec} not reconciled through ${MONTHS[+mk.slice(5) - 1]}</a>` : 'Done.'}</li>
       <li class="${marks ? '' : 'done'}"><strong>Re-mark private holdings.</strong> ${marks ? `<a href="#/investments">${marks} mark${marks > 1 ? 's are' : ' is'} over 90 days old</a>` : 'Nothing stale.'}</li>
       <li class="${rv.notes ? 'done' : ''}"><strong>Write down what changed and what to do next.</strong>
         <textarea id="review-notes" data-review-notes="${mk}" rows="4" placeholder="Decisions, surprises, things to follow up on">${esc(rv.notes || '')}</textarea></li>
@@ -244,64 +288,3 @@ VIEWS.review = p => {
   </section>`;
 };
 
-/* ================= Data and settings ================= */
-VIEWS.data = () => {
-  const n = state.transactions.length;
-  const groups = groupBy(state.categories, c => c.group);
-  const fileLine = Store.handle
-    ? (Store.perm === 'granted' ? `Every change is also written to <strong>${esc(Store.fileName)}</strong>.` : `Connected to <strong>${esc(Store.fileName)}</strong>, but this browser needs your permission again before it can write to it.`)
-    : 'Not connected to a file yet.';
-  return pageHead('Data and settings', '') + `
-  <section class="panel">
-    <header class="panel-head"><h2>Where your data lives</h2></header>
-    <p>Keel runs entirely in this browser and never sends your data anywhere. Changes are saved automatically in this browser’s private storage on this computer. ${fileLine}</p>
-    <p class="muted">For safety, keep a data file somewhere you back up, such as Documents or an encrypted drive. If you put it in a synced folder (iCloud Drive, OneDrive, Dropbox), that company stores a copy; turn on a passphrase first.</p>
-    <div class="actions wrap">
-      ${Store.canPickFiles ? (Store.handle
-        ? (Store.perm === 'granted' ? `<button class="btn" data-act="disconnect-file">Stop saving to ${esc(Store.fileName)}</button>` : `<button class="btn primary" data-act="reconnect">Reconnect ${esc(Store.fileName)}</button>`)
-        : `<button class="btn primary" data-act="connect-file">Save to a file…</button>`) : ''}
-      <button class="btn" data-act="open-file">Open a data file…</button>
-      <button class="btn" data-act="backup">Download a backup</button>
-      <button class="btn ghost" data-act="export-csv">Export transactions as CSV</button>
-    </div>
-    ${Store.canPickFiles ? '' : '<p class="notice small">This browser can’t keep a live link to a file, so use “Download a backup” to save a copy. Chrome and Edge on a computer can save to a file automatically.</p>'}
-  </section>
-
-  <section class="panel">
-    <header class="panel-head"><h2>Passphrase</h2><span class="muted small">${Store.key ? 'On' : 'Off'}</span></header>
-    <p>${Store.key ? 'Your data is encrypted with AES-256 using your passphrase, in this browser and in your data file. You’ll enter it each time you open Keel.' : 'Add a passphrase to encrypt your data in this browser and in your data file. Anyone who gets the file can’t read it without the passphrase.'}</p>
-    <p class="muted small">There is no way to recover a forgotten passphrase. Write it down somewhere safe.</p>
-    <div class="actions">${Vault.available() ? (Store.key ? `<button class="btn" data-act="change-pass">Change passphrase</button><button class="btn ghost danger-text" data-act="remove-pass">Remove passphrase</button>` : `<button class="btn primary" data-act="set-pass">Add a passphrase</button>`) : '<span class="muted">Encryption isn’t available in this browser.</span>'}</div>
-  </section>
-
-  <section class="panel">
-    <header class="panel-head"><h2>Categorization rules</h2><span class="muted small">${state.rules.length} rule${state.rules.length === 1 ? '' : 's'}</span></header>
-    <p class="muted">When a payee contains the text, it gets that category, both on import and when you run the rules. Keel offers to make a rule whenever you categorize something by hand.</p>
-    ${state.rules.length ? `<div class="scroll-table short"><table class="ledger compact"><thead><tr><th>Payee contains</th><th>Category</th><th class="hide-sm">Rename to</th><th></th></tr></thead><tbody>
-    ${state.rules.map(r => `<tr><td><code>${esc(r.text)}</code></td><td>${esc(catName(r.categoryId))}</td><td class="hide-sm muted">${esc(r.rename || '')}</td><td class="acts"><button class="linklike small" data-edit-rule="${r.id}">Edit</button></td></tr>`).join('')}
-    </tbody></table></div>` : ''}
-    <div class="actions"><button class="btn" data-act="add-rule">Add a rule</button><button class="btn ghost" data-act="run-rules">Apply rules to uncategorized</button></div>
-  </section>
-
-  <section class="panel">
-    <header class="panel-head"><h2>Categories</h2><span class="muted small">${state.categories.length}</span></header>
-    <div class="cat-groups">${Object.entries(groups).map(([g, cs]) => `<div><h3>${esc(g)}</h3><ul class="plain">${cs.map(c => `<li><button class="linklike" data-edit-cat="${c.id}">${esc(c.name)}</button> <span class="muted small">${[c.kind === 'transfer' ? 'transfer' : c.kind === 'income' && !c.rental ? 'income' : '', c.period === 'year' ? 'yearly' : '', c.rental ? RENTAL_ROLES[c.rental].toLowerCase() : ''].filter(Boolean).join(', ')}</span></li>`).join('')}</ul></div>`).join('')}</div>
-    <div class="actions"><button class="btn" data-act="add-cat">Add a category</button></div>
-  </section>
-
-  <section class="panel">
-    <header class="panel-head"><h2>Preferences</h2></header>
-    <div class="form-grid">
-      <label class="field"><span>Appearance</span><select data-setting="theme"><option value="auto" ${state.settings.theme === 'auto' ? 'selected' : ''}>Match my computer</option><option value="light" ${state.settings.theme === 'light' ? 'selected' : ''}>Light</option><option value="dark" ${state.settings.theme === 'dark' ? 'selected' : ''}>Dark</option></select></label>
-      <label class="field"><span>Flag balances older than (days)</span><input data-setting="staleDays" inputmode="numeric" value="${state.settings.staleDays}"></label>
-      <label class="field"><span>Warn when cash may dip below</span><input data-setting="lowCash" inputmode="decimal" value="${state.settings.lowCash}"></label>
-    </div>
-  </section>
-
-  <section class="panel">
-    <header class="panel-head"><h2>Start over</h2></header>
-    <p class="muted">${state.accounts.length} accounts, ${n.toLocaleString()} transactions, ${state.holdings.length} holdings${state.meta.sample ? '. This is sample data.' : '.'}</p>
-    <div class="actions"><button class="btn" data-act="load-sample">Load sample data</button><button class="btn ghost danger-text" data-act="erase">Erase everything</button></div>
-  </section>
-  <p class="muted small center">Keel 1.0. A single file you own. No accounts, servers or tracking.</p>`;
-};

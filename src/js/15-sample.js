@@ -9,20 +9,21 @@ function buildSampleState() {
   const daysAgo = n => addDays(T, -n);
 
   const A = (id, name, type, institution, balance, extra = {}) => s.accounts.push({ id, name, type, institution, balance, balanceDate: daysAgo(Math.floor(r() * 6)), ...extra });
-  A('a-chk', 'Everyday checking', 'checking', 'Lakeshore Bank', 0, { forecast: true });
-  A('a-sav', 'Reserve savings', 'savings', 'Lakeshore Bank', 41250, { forecast: true });
-  A('a-cc', 'Rewards card', 'credit', 'Northline Card', 0);
-  A('a-brk', 'Joint brokerage', 'brokerage', 'Harbor Securities', 0, { cash: 0 });
-  A('a-401', '401(k)', 'retirement', 'Employer plan', 0);
-  A('a-roth', 'Roth IRA', 'retirement', 'Harbor Securities', 0);
-  A('a-529', '529 college plan', 'education', 'State 529 program', 48200, { assetClass: 'US stocks' });
-  A('a-pvt', 'Pre-IPO secondary', 'private', 'Secondary platform', 0);
-  A('a-home', 'Home', 'realestate', 'Estimate', 685000, { balanceDate: daysAgo(40), mortgageId: 'a-mtg' });
-  A('a-mtg', 'Home mortgage', 'mortgage', 'Lakeshore Mortgage', 411860, { rate: 3.125 });
-  A('a-rent', 'Rental duplex', 'realestate', 'Estimate', 540000, { rental: true, rentalGroup: 'Rental property', cashInvested: 135000, mortgageId: 'a-rmtg', units: 2, balanceDate: daysAgo(40) });
-  A('a-rmtg', 'Duplex mortgage', 'mortgage', 'Prairie Loan Servicing', 317940, { rate: 4.25 });
-  A('a-car', 'SUV', 'vehicle', 'Estimate', 33800);
-  A('a-auto', 'Auto loan', 'loan', 'Auto Finance', 18420, { rate: 5.9 });
+  A('a-chk', 'Everyday checking', 'checking', 'Lakeshore Bank', 0, { forecast: true, owner: 'joint' });
+  A('a-sav', 'Reserve savings', 'savings', 'Lakeshore Bank', 41250, { forecast: true, owner: 'joint' });
+  A('a-cc', 'Alex’s rewards card', 'credit', 'Northline Card', 0, { owner: 'you', minPayment: 40, rate: 24.99, last4: '9876' });
+  A('a-cc2', 'Sam’s card', 'credit', 'Lakeshore Bank', 0, { owner: 'partner', minPayment: 35, rate: 21.49 });
+  A('a-brk', 'Joint brokerage', 'brokerage', 'Harbor Securities', 0, { cash: 0, owner: 'joint' });
+  A('a-401', 'Alex’s 401(k)', 'retirement', 'Employer plan', 0, { owner: 'you' });
+  A('a-roth', 'Sam’s Roth IRA', 'retirement', 'Harbor Securities', 0, { owner: 'partner' });
+  A('a-529', '529 college plan', 'education', 'State 529 program', 48200, { assetClass: 'US stocks', owner: 'joint' });
+  A('a-pvt', 'Pre-IPO secondary', 'private', 'Secondary platform', 0, { owner: 'you' });
+  A('a-home', 'Home', 'realestate', 'Estimate', 685000, { balanceDate: daysAgo(40), mortgageId: 'a-mtg', owner: 'joint' });
+  A('a-mtg', 'Home mortgage', 'mortgage', 'Lakeshore Mortgage', 411860, { rate: 3.125, minPayment: 2410, owner: 'joint' });
+  A('a-rent', 'Rental duplex', 'realestate', 'Estimate', 540000, { rental: true, rentalGroup: 'Rental property', cashInvested: 135000, mortgageId: 'a-rmtg', units: 2, balanceDate: daysAgo(40), buildingBasis: 380000, placedInService: '2019-06-15', owner: 'joint' });
+  A('a-rmtg', 'Duplex mortgage', 'mortgage', 'Prairie Loan Servicing', 317940, { rate: 4.25, minPayment: 2180, owner: 'joint' });
+  A('a-car', 'SUV', 'vehicle', 'Estimate', 33800, { owner: 'joint' });
+  A('a-auto', 'Auto loan', 'loan', 'Auto Finance', 18420, { rate: 5.9, minPayment: 535, owner: 'joint' });
 
   const H = (accountId, symbol, name, shares, price, costBasis, assetClass, extra = {}) =>
     s.holdings.push({ id: uid(), accountId, symbol, name, shares, price, costBasis, assetClass, priceDate: daysAgo(1), ...extra });
@@ -52,7 +53,7 @@ function buildSampleState() {
     ['PELOTON', cid('Health', 'Fitness')], ['AMAZON', cid('Lifestyle', 'Shopping')], ['TARGET', cid('Lifestyle', 'Shopping')], ['AMC THEATRES', cid('Lifestyle', 'Entertainment')],
     ['TICKETMASTER', cid('Lifestyle', 'Entertainment')], ['NETFLIX', cid('Lifestyle', 'Subscriptions')], ['SPOTIFY', cid('Lifestyle', 'Subscriptions')],
     ['APPLE COM BILL', cid('Lifestyle', 'Subscriptions')], ['ADOBE', cid('Lifestyle', 'Subscriptions')], ['DELTA AIR', cid('Lifestyle', 'Travel')], ['MARRIOTT', cid('Lifestyle', 'Travel')],
-    ['SUPERCUTS', cid('Lifestyle', 'Personal care')], ['GUARDIAN LIFE', cid('Financial', 'Life and disability insurance')],
+    ['SUPERCUTS', cid('Lifestyle', 'Personal care')], ['SEPHORA', cid('Lifestyle', 'Personal care')], ['TRADER JOE', cid('Food', 'Groceries')], ['FOOD DEPOSITORY', cid('Lifestyle', 'Charitable giving')], ['PARISH GIVING', cid('Lifestyle', 'Charitable giving')], ['LAKESHORE CARD PAYMENT', cid('Transfers', 'Credit card payment')], ['GUARDIAN LIFE', cid('Financial', 'Life and disability insurance')],
     ['RENT UNIT', cid('Rental property', 'Rent received')], ['PRAIRIE LOAN', cid('Rental property', 'Rental mortgage')], ['ACE PLUMBING', cid('Rental property', 'Rental repairs')],
     ['COUNTY TREASURER DUPLEX', cid('Rental property', 'Rental property tax')], ['LANDLORD SHIELD', cid('Rental property', 'Rental insurance')], ['CITY WATER DUPLEX', cid('Rental property', 'Rental utilities')],
     ['TRANSFER TO RESERVE', cid('Transfers', 'Transfer between accounts')], ['TRANSFER FROM CHECKING', cid('Transfers', 'Transfer between accounts')],
@@ -63,13 +64,14 @@ function buildSampleState() {
   const budgets = {
     [cid('Income', 'Paycheck')]: 10500, [cid('Home', 'Mortgage or rent')]: 2410, [cid('Home', 'Utilities')]: 420, [cid('Home', 'Property tax')]: 12400, [cid('Home', 'Home insurance')]: 2100,
     [cid('Home', 'Home maintenance')]: 150, [cid('Transportation', 'Auto payment')]: 535, [cid('Transportation', 'Fuel and charging')]: 220, [cid('Transportation', 'Parking and tolls')]: 40,
-    [cid('Food', 'Groceries')]: 950, [cid('Food', 'Dining out')]: 450, [cid('Food', 'Coffee')]: 80, [cid('Family', 'Childcare')]: 640, [cid('Family', 'Kids activities')]: 250,
+    [cid('Food', 'Groceries')]: 950, [cid('Food', 'Dining out')]: 560, [cid('Food', 'Coffee')]: 80, [cid('Family', 'Childcare')]: 640, [cid('Family', 'Kids activities')]: 250,
     [cid('Family', 'Pets')]: 110, [cid('Health', 'Medical')]: 120, [cid('Health', 'Fitness')]: 225, [cid('Lifestyle', 'Shopping')]: 450, [cid('Lifestyle', 'Entertainment')]: 120,
-    [cid('Lifestyle', 'Subscriptions')]: 140, [cid('Lifestyle', 'Travel')]: 4500, [cid('Lifestyle', 'Gifts and giving')]: 100, [cid('Lifestyle', 'Personal care')]: 60,
+    [cid('Lifestyle', 'Subscriptions')]: 140, [cid('Lifestyle', 'Travel')]: 4500, [cid('Lifestyle', 'Gifts')]: 100, [cid('Lifestyle', 'Charitable giving')]: 150, [cid('Lifestyle', 'Personal care')]: 60,
     [cid('Financial', 'Life and disability insurance')]: 95, [cid('Rental property', 'Rent received')]: 4125, [cid('Rental property', 'Rental mortgage')]: 2180,
     [cid('Rental property', 'Rental repairs')]: 250, [cid('Rental property', 'Rental property tax')]: 7800, [cid('Rental property', 'Rental insurance')]: 1480, [cid('Rental property', 'Rental utilities')]: 90,
   };
   for (const c of s.categories) if (budgets[c.id] != null) c.budget = budgets[c.id];
+  for (const id of [cid('Home', 'Home maintenance'), cid('Rental property', 'Rental repairs'), cid('Food', 'Dining out')]) { const c = s.categories.find(x => x.id === id); c.rollover = true; c.rolloverStart = addMonths(M, -6); }
 
   /* ---- transactions: 13 months ---- */
   const tx = [];
@@ -80,8 +82,8 @@ function buildSampleState() {
   for (; toISO(d) <= T; d.setDate(d.getDate() + 14)) add('a-chk', toISO(d), 'ACME CORP PAYROLL PPD', 4850);
   for (let i = 0; i <= 12; i++) {
     const mk = addMonths(start, i), mo = +mk.slice(5), day = n => `${mk}-${pad2(n)}`;
-    let card = 0;
-    const C = (date, payee, amt) => { add('a-cc', date, payee, -amt); if (date <= T) card += amt; };
+    const card = { 'a-cc': 0, 'a-cc2': 0 };
+    const C = (date, payee, amt, acct = 'a-cc') => { add(acct, date, payee, -amt); if (date <= T) card[acct] += amt; };
     add('a-chk', day(1), 'LAKESHORE MTG PAYMENT', -2410);
     add('a-chk', day(1), 'PRAIRIE LOAN SERVICING', -2180);
     add('a-chk', day(2), 'TRANSFER TO RESERVE SAVINGS', -1000);
@@ -109,41 +111,57 @@ function buildSampleState() {
     if ([4, 5, 6, 9, 10].includes(mo)) add('a-chk', day(6), 'RIVER CITY SOCCER', -125);
     add('a-chk', day(8), 'SWIM ACADEMY', -95);
     // card spending
-    for (let w = 0; w < 5; w++) { const dd = 2 + w * 6 + Math.floor(r() * 3); if (dd <= 28) C(day(dd), pick(['FRESH MARKET #123', 'COSTCO WHSE #0388', 'FRESH MARKET #123']), between(120, 255)); }
+    for (let w = 0; w < 5; w++) { const dd = 2 + w * 6 + Math.floor(r() * 3); if (dd <= 28) { const p = pick(['FRESH MARKET #123', 'COSTCO WHSE #0388', 'TRADER JOE S #551', 'FRESH MARKET #123']); C(day(dd), p, between(120, 255), /TRADER/.test(p) ? 'a-cc2' : 'a-cc'); } }
     for (let k = 0, n = 4 + Math.floor(r() * 3); k < n; k++) C(day(1 + Math.floor(r() * 27)), pick(['TST* LUCA TRATTORIA', 'SQ *TACO NORTE', 'SWEETGREEN 0412', 'TST* LUCA TRATTORIA']), between(28, 145));
-    for (let k = 0, n = 8 + Math.floor(r() * 5); k < n; k++) C(day(1 + Math.floor(r() * 27)), pick(['STARBUCKS STORE 12345', 'DARK MATTER COFFEE']), between(4.75, 8.9));
+    for (let k = 0, n = 8 + Math.floor(r() * 5); k < n; k++) { const p = pick(['STARBUCKS STORE 12345', 'DARK MATTER COFFEE']); C(day(1 + Math.floor(r() * 27)), p, between(4.75, 8.9), /DARK/.test(p) ? 'a-cc2' : 'a-cc'); }
     for (let k = 0; k < 3; k++) C(day(3 + k * 9), 'SHELL OIL 5744', between(48, 74));
     C(day(9), 'NETFLIX.COM', 17.99); C(day(14), 'SPOTIFY USA', 11.99); C(day(20), 'APPLE.COM/BILL', 2.99); C(day(7), 'ADOBE *CREATIVE CLD', 59.99); C(day(11), 'PELOTON MEMBERSHIP', 44);
     C(day(16), 'ORANGETHEORY FITNESS', 179);
     if (i >= 8) C(day(13), 'HULU 877-824-4858', 18.99); // newer subscription, not yet in the forecast
     C(day(19), 'CHEWY.COM', 68.4);
-    for (let k = 0, n = 2 + Math.floor(r() * 3); k < n; k++) C(day(1 + Math.floor(r() * 27)), pick(['AMAZON MKTPLACE PMTS', 'TARGET 00012', 'AMAZON MKTPLACE PMTS']), between(18, 240));
+    for (let k = 0, n = 2 + Math.floor(r() * 3); k < n; k++) { const p = pick(['AMAZON MKTPLACE PMTS', 'TARGET 00012', 'AMAZON MKTPLACE PMTS']); C(day(1 + Math.floor(r() * 27)), p, between(18, 240), /TARGET/.test(p) || r() < 0.3 ? 'a-cc2' : 'a-cc'); }
     if (r() < 0.5) C(day(1 + Math.floor(r() * 27)), pick(['AMC THEATRES 0611', 'TICKETMASTER']), between(38, 160));
     if (r() < 0.4) C(day(1 + Math.floor(r() * 27)), 'NORTHSHORE CLINIC COPAY', between(30, 90));
     if (r() < 0.3) C(day(1 + Math.floor(r() * 27)), 'HOME DEPOT 1922', between(40, 310));
     if (r() < 0.6) C(day(1 + Math.floor(r() * 27)), 'PARK CHICAGO', between(8, 32));
     C(day(21), 'SUPERCUTS 4410', 42);
+    C(day(9 + Math.floor(r() * 12)), 'SEPHORA 0118', between(28, 96), 'a-cc2');
+    add('a-chk', day(10), 'CHICAGO FOOD DEPOSITORY', -50);
+    if (mo === 12) add('a-chk', day(20), 'ST JAMES PARISH GIVING', -1200);
+    if (r() < 0.5) C(day(1 + Math.floor(r() * 27)), 'TST* LUCA TRATTORIA', between(40, 120), 'a-cc2');
     if (mo === 7) { C(day(6), 'DELTA AIR LINES', 1840); C(day(12), 'MARRIOTT LINCOLN PARK', 1265); }
     if (mo === 12) { C(day(18), 'DELTA AIR LINES', 920); C(day(10), 'AMAZON MKTPLACE PMTS', 610); }
     if (mo === 11 && r() < 1) C(day(24), 'PAWS VET CLINIC', 285);
     // pay card next month
     const payDate = `${addMonths(mk, 1)}-25`;
-    add('a-chk', payDate, 'NORTHLINE CARD PAYMENT', -round2(card));
-    add('a-cc', payDate, 'PAYMENT THANK YOU', round2(card));
+    add('a-chk', payDate, 'NORTHLINE CARD PAYMENT', -round2(card['a-cc']));
+    add('a-cc', payDate, 'PAYMENT THANK YOU', round2(card['a-cc']));
+    add('a-chk', `${addMonths(mk, 1)}-21`, 'LAKESHORE CARD PAYMENT', -round2(card['a-cc2']));
+    add('a-cc2', `${addMonths(mk, 1)}-21`, 'PAYMENT THANK YOU', round2(card['a-cc2']));
   }
   // a few fresh ones this month with no rule yet
   const fresh = [['DOORDASH*BURGER DISTRICT', -46.18], ['WALGREENS #4411', -23.67], ['BEST BUY 00123', -189.99], ['UBER *TRIP', -27.4]];
   fresh.forEach(([p, amt], k) => { const dt = addDays(T, -(k + 1)); if (monthKey(dt) === M) add('a-cc', dt, p, amt, { fresh: true }); });
 
   s.transactions = tx.sort((a, b) => b.date.localeCompare(a.date));
-  state = s; // rules need the live state
-  for (const t of s.transactions) { if (!t.fresh) { const rr = matchRule(t.payee); t.categoryId = rr ? rr.categoryId : null; } else { t.categoryId = null; delete t.fresh; } t.payee = prettyPayee(t.payee); }
+  state = s; invalidate(); // rules need the live state
+  for (const t of s.transactions) { if (!t.fresh) { const rr = matchRule(t.payee); t.categoryId = rr ? rr.categoryId : null; } else { t.categoryId = null; delete t.fresh; } t.rawPayee = t.payee; t.payee = prettyPayee(t.payee); }
+  // splits, tags and per-person overrides
+  for (const t of s.transactions) {
+    if (/COSTCO/.test(t.rawPayee)) { const g = round2(t.amount * 0.75); t.splits = [{ categoryId: cid('Food', 'Groceries'), amount: g, memo: 'Food' }, { categoryId: cid('Lifestyle', 'Shopping'), amount: round2(t.amount - g), memo: 'Household' }]; t.categoryId = '__split'; }
+    if (/DELTA|MARRIOTT/.test(t.rawPayee)) t.tags = [t.date.slice(5, 7) === '12' ? 'holidays' : 'summer-trip'];
+    if (/CLINIC/.test(t.rawPayee)) t.tags = ['hsa-eligible'];
+    if (/SOCCER|SWIM/.test(t.rawPayee)) t.person = 'joint';
+  }
 
   // ledger-style balances for checking and card from flows
   const chkFlow = sum(tx.filter(t => t.accountId === 'a-chk').map(t => t.amount));
   acctById('a-chk').balance = round2(9800 + chkFlow - sum(tx.filter(t => t.accountId === 'a-chk' && t.date < start + '-01').map(t => t.amount)));
   acctById('a-chk').balance = round2(Math.max(6200, Math.min(acctById('a-chk').balance, 24000)));
-  acctById('a-cc').balance = round2(-sum(tx.filter(t => t.accountId === 'a-cc' && monthKey(t.date) === M && t.amount < 0).map(t => t.amount)));
+  for (const id of ['a-cc', 'a-cc2']) acctById(id).balance = round2(-sum(tx.filter(t => t.accountId === id && monthKey(t.date) === M && t.amount < 0).map(t => t.amount)));
+  for (const a of s.accounts) if (ACCOUNT_TYPES[a.type].ledger) { a.ledger = true; a.anchorBalance = a.balance; a.anchorDate = T; a.balanceDate = T; }
+  acctById('a-chk').reconciledThrough = monthEnd(addMonths(M, -1));
+  invalidate();
 
   /* ---- recurring (cash-flow forecast) ---- */
   const nextDom = dom => { let dt = `${M}-${pad2(dom)}`; if (dt <= T) dt = `${addMonths(M, 1)}-${pad2(dom)}`; return dt; };
@@ -181,7 +199,7 @@ function buildSampleState() {
       else if (a.type === 'vehicle') v = v + 380 * i;
       else if (a.type === 'savings') v = v - 1120 * i;
       else if (a.type === 'checking') v = v * (0.85 + r() * 0.35);
-      else if (a.type === 'credit') v = between(2600, 4300);
+      else if (a.type === 'credit') v = a.id === 'a-cc' ? between(2200, 3600) : between(700, 1500);
       v = Math.max(0, round2(v));
       snap[a.id] = ACCOUNT_TYPES[a.type].side === 'liability' ? -v : v;
     }
@@ -189,6 +207,16 @@ function buildSampleState() {
   }
   for (let i = 2; i <= 4; i++) s.reviews[addMonths(M, -i)] = { completedAt: daysAgo(30 * i - 22), notes: i === 2 ? 'Water heater replaced at the duplex. Pushed travel budget up for the summer trip.' : '' };
   s.settings.targets = { 'Cash': 5, 'US stocks': 55, 'International stocks': 20, 'Bonds': 15, 'Private & alternatives': 5 };
+  s.settings.members = [{ id: 'joint', name: 'Joint' }, { id: 'you', name: 'Alex' }, { id: 'partner', name: 'Sam' }];
+  s.goals = [
+    { id: uid(), name: 'Emergency fund', target: 50000, accountId: 'a-sav', targetDate: `${+T.slice(0, 4) + 1}-06-30`, monthly: 1200 },
+    { id: uid(), name: 'New roof for the duplex', target: 18000, saved: 7500, targetDate: `${+T.slice(0, 4) + 1}-09-01`, monthly: 1000 },
+    { id: uid(), name: 'College, oldest', target: 120000, accountId: 'a-529', targetDate: '2036-08-15', monthly: 500 },
+    { id: uid(), name: 'Home projects fund', target: 3000, categoryId: cid('Home', 'Home maintenance'), targetDate: `${+T.slice(0, 4) + 1}-04-01` },
+  ];
+  Object.assign(s.plan, { age: 41, retireAge: 60, payrollSavings: 23000, otherIncome: 42000, otherIncomeAge: 67 });
+  const yr = +T.slice(0, 4);
+  s.tax = { 'a-rent': { [yr - 1]: { interest: 13480 }, [yr]: { interest: 13050 } } };
   s.meta.sample = true;
   return s;
 }

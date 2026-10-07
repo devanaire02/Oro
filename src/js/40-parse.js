@@ -48,7 +48,31 @@ function guessTxnMapping(h) {
     credit: pickCol(h, [/^credit$|^credits?$|deposit|inflow|payments?$/i], /card/i),
     category: pickCol(h, [/^category$/i, /category/i]),
     memo: pickCol(h, [/^memo$|^notes?$/i]),
+    account: pickCol(h, [/^account( name)?$/i], /number|type|mask|id$/i),
+    tags: pickCol(h, [/^tags?$|^labels?$/i]),
+    ttype: pickCol(h, [/^transaction type$/i]),
   };
+}
+
+/* ---------- QIF (Quicken Interchange Format) ---------- */
+function looksLikeQIF(text) { return /^\s*!(Type|Account|Option)/im.test(text.slice(0, 500)); }
+function parseQIF(text) {
+  const out = []; let cur = {}, acct = '', inAcct = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trimEnd(); if (!line) continue;
+    if (line.startsWith('!Account')) { inAcct = true; continue; }
+    if (line.startsWith('!')) { inAcct = false; continue; }
+    const c = line[0], v = line.slice(1).trim();
+    if (inAcct) { if (c === 'N') acct = v; if (c === '^') inAcct = false; continue; }
+    if (c === '^') { if (cur.date && isFinite(cur.amount)) out.push({ ...cur, srcAccount: acct }); cur = {}; continue; }
+    if (c === 'D') { const m = v.replace(/'/g, '/').replace(/\s/g, '').match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/); if (m) { let y = +m[3]; if (y < 100) y += y < 70 ? 2000 : 1900; cur.date = `${y}-${pad2(m[1])}-${pad2(m[2])}`; } else cur.date = parseDateFlexible(v); }
+    else if (c === 'T' || c === 'U') cur.amount = parseAmount(v);
+    else if (c === 'P') cur.payee = v;
+    else if (c === 'M') cur.memo = v;
+    else if (c === 'L') cur.bankCategory = v.replace(/^\[.*\]$/, '');
+    else if (c === 'N' && !cur.payee) cur.num = v;
+  }
+  return out.map(t => ({ date: t.date, amount: round2(t.amount), payee: t.payee || (t.num ? `Check #${t.num}` : 'Unknown'), memo: t.memo || '', bankCategory: t.bankCategory || '', fitid: '', srcAccount: t.srcAccount || '' }));
 }
 
 /* ---------- OFX / QFX / QBO ---------- */
@@ -136,18 +160,24 @@ function guessAssetClass(symbol, name) {
 /* ---------- PDF statements (best effort, fully local) ---------- */
 let _pdfjs = null;
 function loadPdfJs() {
-  if (_pdfjs) return _pdfjs;
-  for (const id of ['vendor-pdfworker', 'vendor-pdfjs']) {
-    const src = document.getElementById(id);
-    if (!src) throw new Error('The PDF reader isn’t bundled in this copy of Keel.');
-    const s = document.createElement('script'); s.textContent = src.textContent; document.head.appendChild(s);
-  }
-  _pdfjs = window.pdfjsLib;
-  if (!_pdfjs) throw new Error('The PDF reader failed to start.');
-  return _pdfjs;
+  if (_pdfjs) return Promise.resolve(_pdfjs);
+  return (async () => {
+    // Single-file build carries the reader inline; the Mac folder build loads it from app/vendor on first use.
+    for (const [id, file] of [['vendor-pdfworker', 'pdf.worker.min.js'], ['vendor-pdfjs', 'pdf.min.js']]) {
+      const inline = document.getElementById(id);
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        if (inline) { s.textContent = inline.textContent; document.head.appendChild(s); res(); }
+        else { s.src = `app/vendor/${file}`; s.onload = res; s.onerror = () => rej(new Error('Keel couldn’t load its PDF reader from the app folder.')); document.head.appendChild(s); }
+      });
+    }
+    _pdfjs = window.pdfjsLib;
+    if (!_pdfjs) throw new Error('The PDF reader failed to start.');
+    return _pdfjs;
+  })();
 }
 async function pdfToLines(buffer) {
-  const pdfjs = loadPdfJs();
+  const pdfjs = await loadPdfJs();
   const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer), isEvalSupported: false, disableFontFace: true, useSystemFonts: false }).promise;
   const lines = [];
   for (let p = 1; p <= doc.numPages; p++) {
