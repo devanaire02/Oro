@@ -132,6 +132,7 @@ function openPalette() {
   wrap.className = 'modal-wrap palette-wrap'; wrap.id = 'modal';
   wrap.innerHTML = `<div class="palette" role="dialog" aria-label="Search or jump to"><input id="pal-q" placeholder="Search pages, actions, accounts, transactions…" autocomplete="off" aria-label="Search"><ul id="pal-list" role="listbox"></ul><p class="pal-foot muted small">↑↓ to move · Enter to open · Esc to close</p></div>`;
   document.body.appendChild(wrap);
+  holdPage(true); fitModal();
   wrap.addEventListener('mousedown', e => { if (e.target === wrap) closeModal(); });
   const inp = $('#pal-q');
   const paint = () => {

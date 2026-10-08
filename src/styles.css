@@ -655,6 +655,7 @@ body.presenting { overflow: hidden; }
    Up to 860px wide (iPhone, iPad portrait): a tab bar at the bottom replaces the sidebar, search and the eye move to the header.
    Up to 640px (iPhone): tables that need it become stacked rows, filters fold away, dialogs open as sheets from the bottom. */
 .tabbar, .side-tools, .filters-sm, .tx-acct-sm, .cat-pill-text { display: none; }
+body.page-held { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden; }
 .cat-pill { display: contents; }
 html { -webkit-tap-highlight-color: transparent; }
 a, button, select, label, summary { touch-action: manipulation; }

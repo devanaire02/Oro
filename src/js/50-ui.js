@@ -157,6 +157,7 @@ function openModal({ title, body, actions, wide, id }) {
       <div class="modal-body">${body}</div>
       <footer class="modal-foot">${actions || ''}</footer></div>`;
   document.body.appendChild(wrap);
+  holdPage(true); fitModal();
   wrap.addEventListener('mousedown', e => { if (e.target === wrap) closeModal(); });
   // on a touch screen, don't pop the keyboard up until a field is tapped (the passphrase box is the exception)
   setTimeout(() => { const f = isTouch() ? wrap.querySelector('input[type=password][autofocus]') : wrap.querySelector('[autofocus], input:not([type=checkbox]):not([type=file]), select, textarea'); if (f) f.focus(); }, 30);
@@ -165,6 +166,7 @@ function openModal({ title, body, actions, wide, id }) {
 function setModalActions(html) { const f = $('#modal .modal-foot'); if (f) f.innerHTML = html; }
 function closeModal(silent) {
   const m = $('#modal'); if (m) m.remove();
+  holdPage(false);
   if (!silent && _modalResolve) { const r = _modalResolve; _modalResolve = null; r(null); }
 }
 function confirmBox(title, text, okLabel = 'Continue', danger) {
@@ -261,9 +263,23 @@ function deltaChip(now, then, opts = {}) {
 }
 function formData(root) {
   const o = {};
-  $$('[name]', root).forEach(el => { o[el.name] = el.type === 'checkbox' ? el.checked : el.value; });
+  $$('[name]', root).forEach(el => { o[el.dataset.key || el.name] = el.type === 'checkbox' ? el.checked : el.value; });
   return o;
 }
+/* iPhone and iPad: while a dialog is open, hold the page behind it still and keep the dialog inside the part of the
+   screen the keyboard doesn't cover. Otherwise iOS scrolls the page under the dialog and draws the cursor in the wrong place. */
+function holdPage(on) {
+  const b = document.body;
+  if (!isTouch()) return;
+  if (on && !b.classList.contains('page-held')) { b.dataset.heldY = String(window.scrollY); b.style.top = `-${window.scrollY}px`; b.classList.add('page-held'); }
+  else if (!on && b.classList.contains('page-held')) { const y = +b.dataset.heldY || 0; b.classList.remove('page-held'); b.style.top = ''; window.scrollTo(0, y); }
+}
+function fitModal() {
+  const w = $('#modal'), vv = window.visualViewport;
+  if (!w || !vv || !isTouch()) return;
+  w.style.top = `${vv.offsetTop}px`; w.style.height = `${vv.height}px`; w.style.bottom = 'auto';
+}
+if (window.visualViewport) { visualViewport.addEventListener('resize', fitModal); visualViewport.addEventListener('scroll', fitModal); }
 function emptyState(title, text, actions) {
   return `<div class="empty"><h2>${esc(title)}</h2><p>${text}</p><div class="actions">${actions || ''}</div></div>`;
 }

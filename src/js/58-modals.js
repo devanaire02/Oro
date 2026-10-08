@@ -151,7 +151,7 @@ function acctModal(id, presetType) {
   openModal({
     title: a ? 'Edit account' : 'Add account',
     body: `<form id="f" class="form-grid" data-type="${v.type}">
-      <label class="field wide"><span>Name</span><input name="name" value="${esc(v.name)}" placeholder="e.g. Joint checking" required autofocus></label>
+      <label class="field wide"><span>Account name</span><input name="acct-label" data-key="name" value="${esc(v.name)}" placeholder="e.g. Joint checking" autocomplete="off" required autofocus></label>
       <label class="field"><span>Type</span><select name="type" id="acct-type">${BUCKETS.map(b => `<optgroup label="${esc(b.label)}">${b.types.map(t => `<option value="${t}" ${t === v.type ? 'selected' : ''}>${ACCOUNT_TYPES[t].label}</option>`).join('')}</optgroup>`).join('')}</select></label>
       <label class="field"><span>Institution</span><input name="institution" value="${esc(v.institution || '')}" placeholder="Optional"></label>
       ${members().length > 1 ? `<label class="field"><span>Owner</span><select name="owner">${memberOptions(v.owner || 'joint')}</select></label>` : ''}
@@ -292,7 +292,7 @@ function holdingModal(id, presetAcct) {
     body: `<form id="f" class="form-grid">
       <label class="field"><span>Account</span><select name="accountId">${invAccts.map(a => `<option value="${a.id}" ${a.id === v.accountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
       <label class="field"><span>Symbol or short name</span><input name="symbol" value="${esc(v.symbol)}" required autofocus></label>
-      <label class="field wide"><span>Description</span><input name="name" value="${esc(v.name || '')}"></label>
+      <label class="field wide"><span>Description</span><input name="desc-label" data-key="name" value="${esc(v.name || '')}" autocomplete="off"></label>
       <label class="field"><span>Shares or units</span><input name="shares" inputmode="decimal" value="${v.shares}"></label>
       <label class="field"><span>Price per share</span><input name="price" inputmode="decimal" value="${v.price}"></label>
       <label class="field"><span>Total cost basis</span><input name="costBasis" inputmode="decimal" value="${v.costBasis ?? ''}" placeholder="Optional"></label>
@@ -322,7 +322,7 @@ function recModal(id, preset) {
   openModal({
     title: r ? 'Edit bill or income' : 'Add a bill or paycheck',
     body: `<form id="f" class="form-grid">
-      <label class="field wide"><span>Name</span><input name="name" value="${esc(v.name)}" required autofocus></label>
+      <label class="field wide"><span>Bill or paycheck</span><input name="rec-label" data-key="name" value="${esc(v.name)}" autocomplete="off" required autofocus></label>
       <label class="field"><span>Amount</span><input name="amount" inputmode="decimal" value="${v.amount}" placeholder="-1,250.00"><small class="muted">Negative for bills, positive for income</small></label>
       <label class="field"><span>How often</span><select name="freq">${Object.entries(FREQS).map(([k, l]) => `<option value="${k}" ${k === v.freq ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="field"><span>Next date</span><input type="date" name="nextDate" value="${v.nextDate}"></label>
@@ -348,7 +348,7 @@ function goalModal(id) {
   openModal({
     title: g ? `Edit ${g.name}` : 'Add a goal',
     body: `<form id="f" class="form-grid">
-      <label class="field wide"><span>Goal</span><input name="name" value="${esc(v.name)}" placeholder="e.g. Emergency fund, Italy 2027, New car" required autofocus></label>
+      <label class="field wide"><span>Goal</span><input name="goal-label" data-key="name" autocomplete="off" value="${esc(v.name)}" placeholder="e.g. Emergency fund, Italy 2027, New car" required autofocus></label>
       <label class="field"><span>Target amount</span><input name="target" inputmode="decimal" value="${v.target}"></label>
       <label class="field"><span>Target date</span><input type="date" name="targetDate" value="${v.targetDate || ''}"></label>
       <label class="field"><span>Track progress with</span><select name="src" id="g-src"><option value="manual" ${src === 'manual' ? 'selected' : ''}>An amount I update</option><option value="account" ${src === 'account' ? 'selected' : ''}>An account’s balance</option><option value="category" ${src === 'category' ? 'selected' : ''}>A rollover budget category</option></select></label>
@@ -383,8 +383,9 @@ function catModal(id) {
   openModal({
     title: c ? `Edit ${c.name}` : 'Add a category',
     body: `<form id="f" class="form-grid">
-      <label class="field"><span>Name</span><input name="name" value="${esc(v.name)}" required autofocus></label>
-      <label class="field"><span>Group</span><input name="group" list="grp" value="${esc(v.group)}" placeholder="e.g. Lifestyle"><datalist id="grp">${groups.map(g => `<option value="${esc(g)}">`).join('')}</datalist></label>
+      <label class="field"><span>Category name</span><input name="cat-label" data-key="name" value="${esc(v.name)}" autocomplete="off" autocapitalize="sentences" required autofocus></label>
+      <label class="field"><span>Group</span><select name="groupPick" id="grp-pick">${v.group ? '' : '<option value="" selected disabled>Choose a group</option>'}${groups.map(g => `<option ${g === v.group ? 'selected' : ''}>${esc(g)}</option>`).join('')}<option value="__new">New group…</option></select></label>
+      <label class="field" id="grp-new" hidden><span>New group name</span><input name="groupNew" autocomplete="off" autocapitalize="words" placeholder="e.g. Kids"></label>
       <label class="field"><span>Kind</span><select name="kind"><option value="expense" ${v.kind === 'expense' ? 'selected' : ''}>Spending</option><option value="income" ${v.kind === 'income' ? 'selected' : ''}>Income</option><option value="transfer" ${v.kind === 'transfer' ? 'selected' : ''}>Transfer (left out of spending)</option></select></label>
       <label class="field"><span>Budget</span><input name="budget" inputmode="decimal" value="${v.budget || ''}" placeholder="0"></label>
       <label class="field"><span>Budget period</span><select name="period"><option value="month" ${v.period !== 'year' ? 'selected' : ''}>Per month</option><option value="year" ${v.period === 'year' ? 'selected' : ''}>Per year</option></select></label>
@@ -395,9 +396,18 @@ function catModal(id) {
     </form>`,
     actions: `${c ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${c ? 'Save' : 'Add category'}</button>`,
   });
+  const pick = $('#grp-pick');
+  pick.onchange = () => {
+    const isNew = pick.value === '__new';
+    $('#grp-new').hidden = !isNew;
+    if (isNew) { $('#grp-new input').focus(); return; }
+    const kinds = [...new Set(state.categories.filter(x => x.group === pick.value).map(x => x.kind))];   // Income group → Income kind, and so on
+    if (kinds.length === 1 && !c) $('#f [name=kind]').value = kinds[0];
+  };
   $('#save').onclick = () => {
     const d = formData($('#f'));
-    if (!d.name.trim() || !d.group.trim()) return toast('Fill in a name and group.');
+    d.group = d.groupPick === '__new' ? (d.groupNew || '') : (d.groupPick || '');
+    if (!d.name.trim() || !d.group.trim()) return toast(d.name.trim() ? 'Choose a group, or make a new one.' : 'Give the category a name.');
     const rec = { name: d.name.trim(), group: d.group.trim(), kind: d.kind, budget: round2(parseAmount(d.budget || '0') || 0), period: d.period, rental: d.rental || undefined, taxTag: d.taxTag || undefined, rollover: d.rollover || undefined };
     if (rec.rollover && !(c && c.rollover)) rec.rolloverStart = thisMonth();
     if (rec.rental === 'income' && !(c && c.schedE)) rec.schedE = '3';
