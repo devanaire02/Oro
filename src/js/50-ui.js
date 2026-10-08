@@ -219,6 +219,8 @@ function acctOptions(sel, filter, emptyLabel) {
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
+// the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
+const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
 /* A quiet sign-off at the foot of the overview. */
 function colophon() { return `<footer class="colophon"><span class="wordmark">Ọrọ̀</span> is ${ORO_MEANING}. <em>${ORO_TAGLINE}</em></footer>`; }
 function pageHead(title, sub, actions = '') {

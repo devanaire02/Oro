@@ -79,4 +79,5 @@ Use **Money date** (top right) for a slide-by-slide walkthrough of any month, ma
 - `inbox/` is where your iPhone's changes arrive. Processed ones move to `inbox/merged/`.
 - If this folder syncs through iCloud Drive, Apple stores a copy, so turn on the passphrase.
 - Taxes and planning pages are organizers and projections, not tax or investment advice.
-- The Ọrọ̀ wordmark is set in Charis SIL, © SIL International, used under the SIL Open Font License 1.1.
+- **Look:** Ọrọ̀ opens in forest, ivory and brass. To switch to the original blue ledger, or to force light or dark, use **Settings › Appearance and privacy**. Each device keeps its own choice.
+- Ọrọ̀ is set in Charis SIL (© SIL International) and Instrument Sans (© The Instrument Sans Project Authors), both used under the SIL Open Font License 1.1 and built into the app, so nothing is downloaded.

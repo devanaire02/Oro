@@ -212,7 +212,7 @@ function defaultState() {
   return {
     version: 2,
     meta: { created: now, modified: now },
-    settings: { theme: 'auto', lowCash: 2500, staleDays: 35, targets: {}, privacy: false, autoLock: 15, keepBackups: 30, members: [{ id: 'joint', name: 'Joint' }, { id: 'you', name: 'You' }, { id: 'partner', name: 'Partner' }] },
+    settings: { theme: 'auto', look: 'ng', lowCash: 2500, staleDays: 35, targets: {}, privacy: false, autoLock: 15, keepBackups: 30, members: [{ id: 'joint', name: 'Joint' }, { id: 'you', name: 'You' }, { id: 'partner', name: 'Partner' }] },
     accounts: [], transactions: [], categories: defaultCategories(), rules: [],
     holdings: [], recurring: [], snapshots: {}, reviews: {}, goals: [], plan: defaultPlan(), tax: {},
   };
@@ -3119,6 +3119,8 @@ function acctOptions(sel, filter, emptyLabel) {
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
+// the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
+const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
 /* A quiet sign-off at the foot of the overview. */
 function colophon() { return `<footer class="colophon"><span class="wordmark">Ọrọ̀</span> is ${ORO_MEANING}. <em>${ORO_TAGLINE}</em></footer>`; }
 function pageHead(title, sub, actions = '') {
@@ -3425,7 +3427,12 @@ VIEWS.transactions = p => {
   const shown = list.slice(0, limit);
   const months = [...new Set(state.transactions.map(t => monthKey(t.date)))].sort().reverse();
   if (!months.includes(thisMonth())) months.unshift(thisMonth());
-  const inflow = sum(list.filter(t => t.amount > 0).map(t => t.amount)), outflow = sum(list.filter(t => t.amount < 0).map(t => t.amount));
+  // Totals leave out transfers (credit card payments, moves between your own accounts), like Overview and Cash flow do
+  let inflow = 0, outflow = 0, moved = 0, nMoved = 0;
+  for (const t of list) for (const l of txLines(t)) {
+    if (isTransferCat(l.categoryId)) { moved += l.amount; nMoved++; } else if (l.amount > 0) inflow += l.amount; else outflow += l.amount;
+  }
+  inflow = round2(inflow); outflow = round2(outflow); moved = round2(moved);
   const opts = catOptions(null, true);
   const unc = state.transactions.filter(isUncat).length;
   const tags = allTags();
@@ -3465,7 +3472,7 @@ VIEWS.transactions = p => {
       <td class="hide-sm muted">${esc(acctById(t.accountId)?.name || '—')}</td>
       <td class="num tx-amt ${signClass(t.amount)}">${money(t.amount)}</td></tr>`;
     }).join('')}</tbody>
-    <tfoot><tr><td colspan="${multi ? 4 : 3}" class="tx-foot-pad"></td><td class="hide-sm"></td><td class="muted">Money in<br>Money out<br><strong>Net</strong></td><td class="num total">${money(inflow)}<br>${money(outflow)}<br><strong class="${signClass(inflow + outflow)}">${money(inflow + outflow)}</strong></td></tr></tfoot>
+    <tfoot><tr><td colspan="${multi ? 4 : 3}" class="tx-foot-pad"></td><td class="hide-sm"></td><td class="muted">Money in<br>Money out<br><strong>Net</strong>${nMoved ? '<br><span class="small">Transfers (not counted)</span>' : ''}</td><td class="num total">${money(inflow)}<br>${money(outflow)}<br><strong class="${signClass(inflow + outflow)}">${money(round2(inflow + outflow))}</strong>${nMoved ? `<br><span class="small muted">${money(moved, { sign: true })}</span>` : ''}</td></tr></tfoot>
   </table></div>
   ${list.length > limit ? `<p class="center"><button class="btn ghost" data-more="${limit + 250}">Show ${Math.min(250, list.length - limit)} more</button></p>` : ''}`
   : emptyState(state.transactions.length ? 'Nothing matches these filters' : 'No transactions yet',
@@ -4188,7 +4195,8 @@ VIEWS.data = () => {
   <section class="panel">
     <header class="panel-head"><h2>Appearance and privacy</h2></header>
     <div class="form-grid">
-      <label class="field"><span>Theme</span><select data-setting="theme"><option value="auto" ${state.settings.theme === 'auto' ? 'selected' : ''}>Match my Mac</option><option value="light" ${state.settings.theme === 'light' ? 'selected' : ''}>Light</option><option value="dark" ${state.settings.theme === 'dark' ? 'selected' : ''}>Dark</option></select></label>
+      <label class="field"><span>Theme</span><select data-setting="look">${[['ng', 'Ọrọ̀: forest, ivory and brass'], ['classic', 'Classic: blue ledger']].map(([v, l]) => `<option value="${v}" ${(state.settings.look === 'classic' ? 'classic' : 'ng') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="field"><span>Light or dark</span><select data-setting="theme">${[['auto', isTouch() ? 'Match this device' : 'Match my Mac'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<option value="${v}" ${(state.settings.theme || 'auto') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="check"><input type="checkbox" data-setting-bool="privacy" ${state.settings.privacy ? 'checked' : ''}> ${isTouch() ? 'Hide amounts until I tap them' : 'Hide amounts until I hover (⇧P)'}</label>
       <label class="field"><span>Flag balances older than (days)</span><input data-setting="staleDays" inputmode="numeric" value="${state.settings.staleDays}"></label>
       <label class="field"><span>Warn when cash may dip below</span><input data-setting="lowCash" inputmode="decimal" value="${state.settings.lowCash}"></label>
@@ -4740,7 +4748,7 @@ function paintSlide() {
   for (const k in ChartSpecs) delete ChartSpecs[k];
   const n = MD.slides.length, s = MD.slides[MD.i];
   el.innerHTML = `
-    <header class="present-top"><span class="brand" title="Ọrọ̀ is Yoruba for wealth">Ọrọ̀</span><span class="present-title">Money date · ${monthLabel(MD.mk)}</span>
+    <header class="present-top"><span class="brand" title="Ọrọ̀ is Yoruba for wealth">${BRAND_MARK}</span><span class="present-title">Money date · ${monthLabel(MD.mk)}</span>
       <span class="present-prog">${MD.slides.map((_, k) => `<i class="${k === MD.i ? 'on' : k < MD.i ? 'done' : ''}"></i>`).join('')}</span>
       <button class="icon-btn" data-md="close" aria-label="Exit Money date">×</button></header>
     <section class="slide" aria-live="polite">${s.html()}</section>
@@ -4884,7 +4892,7 @@ function lockNow() {
   closeModal(true);
   const wrap = document.createElement('div');
   wrap.className = 'lock-screen';
-  wrap.innerHTML = `<form class="lock-card" id="relock"><div class="brand big">Ọrọ̀</div><p class="brand-tag">${ORO_MEANING} · ${ORO_TAGLINE}</p><p>Ọrọ̀ locked after a period of inactivity.</p>
+  wrap.innerHTML = `<form class="lock-card" id="relock"><div class="brand big">${BRAND_MARK}</div><p class="brand-tag">${ORO_MEANING} · ${ORO_TAGLINE}</p><p>Ọrọ̀ locked after a period of inactivity.</p>
     <label class="field"><span>Passphrase</span><input type="password" id="relock-pass" autocomplete="current-password" autofocus></label>
     <p class="notice bad small" id="relock-err" hidden>That passphrase didn’t work.</p><button class="btn primary" type="submit">Unlock</button></form>`;
   document.body.appendChild(wrap);
@@ -5069,9 +5077,13 @@ async function connectFolder(dir) {
   syncCheckInbox();
 }
 
+const THEME_COLORS = { ng: ['#F6F3EA', '#0C1713'], classic: ['#E8EEE5', '#0F1619'] };   // browser bar colors: light, dark
 function applyTheme() {
-  const t = state.settings?.theme || 'auto';
-  if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  const t = state?.settings?.theme || 'auto', look = state?.settings?.look === 'classic' ? 'classic' : 'ng', root = document.documentElement;
+  if (t === 'auto') delete root.dataset.theme; else root.dataset.theme = t;
+  root.dataset.look = look;
+  for (const m of document.querySelectorAll('meta[name="theme-color"]'))
+    m.content = THEME_COLORS[look][(t === 'auto' ? /dark/.test(m.media) : t === 'dark') ? 1 : 0];
 }
 function updateBulk() {
   const n = $$('.tx-cb:checked').length, b = $('#bulk');
@@ -5145,7 +5157,7 @@ document.addEventListener('change', e => {
   if (d.target) { const v = parseFloat(el.value); if (el.value.trim() === '' || !isFinite(v)) delete state.settings.targets[d.target]; else state.settings.targets[d.target] = clamp(v, 0, 100); commit({ silent: true }); setTimeout(render, 0); return; }
   if (d.setting) {
     const k = d.setting; let v = el.value;
-    if (k !== 'theme') { v = parseAmount(v); if (!isFinite(v)) return; }
+    if (k !== 'theme' && k !== 'look') { v = parseAmount(v); if (!isFinite(v)) return; }
     state.settings[k] = v; applyTheme(); armAutoLock(); commit({ silent: true }); setTimeout(render, 0); return;
   }
   if (d.settingBool) { state.settings[d.settingBool] = el.checked; commit({ silent: true }); setTimeout(render, 0); return; }
@@ -5203,7 +5215,7 @@ function lockScreen(payload) {
     const wrap = document.createElement('div');
     wrap.className = 'lock-screen';
     wrap.innerHTML = `<form class="lock-card" id="lock-form">
-      <div class="brand big">Ọrọ̀</div>
+      <div class="brand big">${BRAND_MARK}</div>
       <p class="brand-tag">${ORO_MEANING} · ${ORO_TAGLINE}</p>
       <p>Your data is encrypted. Enter your passphrase to open it.</p>
       <label class="field"><span>Passphrase</span><input type="password" id="lock-pass" autocomplete="current-password" autofocus></label>
@@ -5261,7 +5273,7 @@ document.addEventListener('DOMContentLoaded', boot);
 
 const SYNC = { rec: null, cacheKey: null, cacheOps: [], busy: false, prepared: null, warnedLocked: false };
 const SYNC_SKIP_TOP = new Set(['meta', 'version', 'snapshots']);
-const SYNC_SKIP_SETTINGS = new Set(['theme', 'privacy', 'autoLock']);
+const SYNC_SKIP_SETTINGS = new Set(['theme', 'look', 'privacy', 'autoLock']);
 const isCompanion = () => !Store.canPickFolder;
 function deviceLabel() {
   const u = navigator.userAgent || '';

@@ -7,7 +7,7 @@
 
 const SYNC = { rec: null, cacheKey: null, cacheOps: [], busy: false, prepared: null, warnedLocked: false };
 const SYNC_SKIP_TOP = new Set(['meta', 'version', 'snapshots']);
-const SYNC_SKIP_SETTINGS = new Set(['theme', 'privacy', 'autoLock']);
+const SYNC_SKIP_SETTINGS = new Set(['theme', 'look', 'privacy', 'autoLock']);
 const isCompanion = () => !Store.canPickFolder;
 function deviceLabel() {
   const u = navigator.userAgent || '';

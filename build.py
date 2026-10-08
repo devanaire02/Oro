@@ -4,7 +4,7 @@
    mac/Ọrọ̀/                  the Mac install: Ọrọ̀.html + Ọrọ̀.app + app/ (css, js, vendor, icon) + README
    docs/                     the hosted copy for iPhone and iPad (GitHub Pages serves this folder)
 """
-import hashlib, json, os, pathlib, shutil, unicodedata
+import base64, hashlib, json, os, pathlib, re, shutil, unicodedata, urllib.parse
 
 NAME = unicodedata.normalize('NFC', 'Ọrọ̀')   # Ọrọ̀ (file names are written in NFC)
 SLUG = 'oro'
@@ -19,6 +19,13 @@ vend = root / "vendor" / "package" / "build"
 pdfjs = (vend / "pdf.min.js").read_text()
 worker = (vend / "pdf.worker.min.js").read_text()
 safe = lambda s: s.replace("</script", "<\\/script").replace("</SCRIPT", "<\\/SCRIPT")
+
+# Inline the theme fonts (assets/fonts) and the Ọ mark (assets/mark.svg, drawn by tools/make_icon.py): nothing is fetched at run time
+mark = "data:image/svg+xml," + urllib.parse.quote((root / "assets" / "mark.svg").read_text())
+font = lambda m: "data:font/woff2;base64," + base64.b64encode((root / "assets" / "fonts" / f"{m.group(1)}.woff2").read_bytes()).decode()
+css = re.sub(r"__FONT_([a-z0-9-]+)__", font, css).replace("__MARK_SVG__", mark)
+html = html.replace("__MARK_SVG__", mark)
+assert "__" + "FONT" not in css and "__MARK" not in css + html
 
 # ---- single file ----
 single = (html.replace("<!--__STYLES__-->", f"<style>\n{css}\n</style>")
@@ -73,8 +80,8 @@ head = (f'<meta name="robots" content="noindex, nofollow">\n'
         f'<meta name="mobile-web-app-capable" content="yes">\n'
         f'<meta name="apple-mobile-web-app-title" content="{NAME}">\n'
         f'<meta name="apple-mobile-web-app-status-bar-style" content="default">\n'
-        f'<meta name="theme-color" content="#E8EEE5" media="(prefers-color-scheme: light)">\n'
-        f'<meta name="theme-color" content="#0F1619" media="(prefers-color-scheme: dark)">\n')
+        f'<meta name="theme-color" content="#F6F3EA" media="(prefers-color-scheme: light)">\n'
+        f'<meta name="theme-color" content="#0C1713" media="(prefers-color-scheme: dark)">\n')
 page = (html.replace('content="default-src' + csp_mac + '"', 'content="default-src ' + csp_web + '"')
             .replace("<!--__STYLES__-->", head + f'<link rel="stylesheet" href="app/{SLUG}.css">')
             .replace("<!--__SCRIPTS__-->", f'<script src="app/{SLUG}.js"></script>'))
@@ -82,7 +89,7 @@ assert csp_web in page
 (web / "index.html").write_text(page)
 (web / "manifest.webmanifest").write_text(json.dumps({
     "name": NAME, "short_name": NAME, "description": "Ọrọ̀ is Yoruba for wealth. Know your wealth. Keep it close.",
-    "start_url": "./", "scope": "./", "display": "standalone", "background_color": "#E8EEE5", "theme_color": "#24508C",
+    "start_url": "./", "scope": "./", "display": "standalone", "background_color": "#F6F3EA", "theme_color": "#0B5D3B",
     "icons": [{"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
               {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png"}]}, ensure_ascii=False, indent=1))
 files = ["./", "index.html", f"app/{SLUG}.css", f"app/{SLUG}.js", "app/vendor/pdf.min.js", "app/vendor/pdf.worker.min.js",

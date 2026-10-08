@@ -170,9 +170,13 @@ async function connectFolder(dir) {
   syncCheckInbox();
 }
 
+const THEME_COLORS = { ng: ['#F6F3EA', '#0C1713'], classic: ['#E8EEE5', '#0F1619'] };   // browser bar colors: light, dark
 function applyTheme() {
-  const t = state.settings?.theme || 'auto';
-  if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  const t = state?.settings?.theme || 'auto', look = state?.settings?.look === 'classic' ? 'classic' : 'ng', root = document.documentElement;
+  if (t === 'auto') delete root.dataset.theme; else root.dataset.theme = t;
+  root.dataset.look = look;
+  for (const m of document.querySelectorAll('meta[name="theme-color"]'))
+    m.content = THEME_COLORS[look][(t === 'auto' ? /dark/.test(m.media) : t === 'dark') ? 1 : 0];
 }
 function updateBulk() {
   const n = $$('.tx-cb:checked').length, b = $('#bulk');
@@ -246,7 +250,7 @@ document.addEventListener('change', e => {
   if (d.target) { const v = parseFloat(el.value); if (el.value.trim() === '' || !isFinite(v)) delete state.settings.targets[d.target]; else state.settings.targets[d.target] = clamp(v, 0, 100); commit({ silent: true }); setTimeout(render, 0); return; }
   if (d.setting) {
     const k = d.setting; let v = el.value;
-    if (k !== 'theme') { v = parseAmount(v); if (!isFinite(v)) return; }
+    if (k !== 'theme' && k !== 'look') { v = parseAmount(v); if (!isFinite(v)) return; }
     state.settings[k] = v; applyTheme(); armAutoLock(); commit({ silent: true }); setTimeout(render, 0); return;
   }
   if (d.settingBool) { state.settings[d.settingBool] = el.checked; commit({ silent: true }); setTimeout(render, 0); return; }
@@ -304,7 +308,7 @@ function lockScreen(payload) {
     const wrap = document.createElement('div');
     wrap.className = 'lock-screen';
     wrap.innerHTML = `<form class="lock-card" id="lock-form">
-      <div class="brand big">Ọrọ̀</div>
+      <div class="brand big">${BRAND_MARK}</div>
       <p class="brand-tag">${ORO_MEANING} · ${ORO_TAGLINE}</p>
       <p>Your data is encrypted. Enter your passphrase to open it.</p>
       <label class="field"><span>Passphrase</span><input type="password" id="lock-pass" autocomplete="current-password" autofocus></label>

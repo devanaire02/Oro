@@ -231,7 +231,12 @@ VIEWS.transactions = p => {
   const shown = list.slice(0, limit);
   const months = [...new Set(state.transactions.map(t => monthKey(t.date)))].sort().reverse();
   if (!months.includes(thisMonth())) months.unshift(thisMonth());
-  const inflow = sum(list.filter(t => t.amount > 0).map(t => t.amount)), outflow = sum(list.filter(t => t.amount < 0).map(t => t.amount));
+  // Totals leave out transfers (credit card payments, moves between your own accounts), like Overview and Cash flow do
+  let inflow = 0, outflow = 0, moved = 0, nMoved = 0;
+  for (const t of list) for (const l of txLines(t)) {
+    if (isTransferCat(l.categoryId)) { moved += l.amount; nMoved++; } else if (l.amount > 0) inflow += l.amount; else outflow += l.amount;
+  }
+  inflow = round2(inflow); outflow = round2(outflow); moved = round2(moved);
   const opts = catOptions(null, true);
   const unc = state.transactions.filter(isUncat).length;
   const tags = allTags();
@@ -271,7 +276,7 @@ VIEWS.transactions = p => {
       <td class="hide-sm muted">${esc(acctById(t.accountId)?.name || '—')}</td>
       <td class="num tx-amt ${signClass(t.amount)}">${money(t.amount)}</td></tr>`;
     }).join('')}</tbody>
-    <tfoot><tr><td colspan="${multi ? 4 : 3}" class="tx-foot-pad"></td><td class="hide-sm"></td><td class="muted">Money in<br>Money out<br><strong>Net</strong></td><td class="num total">${money(inflow)}<br>${money(outflow)}<br><strong class="${signClass(inflow + outflow)}">${money(inflow + outflow)}</strong></td></tr></tfoot>
+    <tfoot><tr><td colspan="${multi ? 4 : 3}" class="tx-foot-pad"></td><td class="hide-sm"></td><td class="muted">Money in<br>Money out<br><strong>Net</strong>${nMoved ? '<br><span class="small">Transfers (not counted)</span>' : ''}</td><td class="num total">${money(inflow)}<br>${money(outflow)}<br><strong class="${signClass(inflow + outflow)}">${money(round2(inflow + outflow))}</strong>${nMoved ? `<br><span class="small muted">${money(moved, { sign: true })}</span>` : ''}</td></tr></tfoot>
   </table></div>
   ${list.length > limit ? `<p class="center"><button class="btn ghost" data-more="${limit + 250}">Show ${Math.min(250, list.length - limit)} more</button></p>` : ''}`
   : emptyState(state.transactions.length ? 'Nothing matches these filters' : 'No transactions yet',
