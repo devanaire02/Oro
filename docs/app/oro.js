@@ -3908,17 +3908,40 @@ async function paintBackups() {
 }
 
 /* ================= edit dialogs ================= */
-function ruleKeyFor(payee) {
-  const words = normPayee(payee).split(' ').filter(Boolean);
-  if (!words.length) return '';
-  return words[0].length >= 5 ? words[0] : words.slice(0, 2).join(' ');
+/* The merchant part of a bank description: skip leading clutter (POS, SQ, TST…), stop at store codes,
+   PENDING, .COM and similar, and drop a trailing state. "FITNESS FORMULA CLUB" stays whole. */
+const RULE_LEAD = new Set(['POS', 'DEBIT', 'PURCHASE', 'CHECKCARD', 'CHECK', 'CARD', 'SQ', 'TST', 'PP', 'ACH', 'RECURRING', 'PREAUTHORIZED', 'PENDING', 'THE', 'VISA']);
+const RULE_STOP = new Set(['PENDING', 'COM', 'WWW', 'NET', 'ORG', 'HTTPS', 'HTTP', 'PPD', 'WEB', 'ID', 'CCD', 'ACH', 'RECURRING', 'PMT']);
+function ruleWords(payee) {
+  const all = normPayee(payee).split(' ').filter(Boolean);
+  let i = 0;
+  while (i < all.length && (RULE_LEAD.has(all[i]) || all[i].length < 2)) i++;
+  const run = [];
+  for (; i < all.length && run.length < 4; i++) { const w = all[i]; if (w.length < 2 || RULE_STOP.has(w)) break; run.push(w); }
+  if (run.length > 1 && US_STATES.has(run[run.length - 1])) run.pop();
+  return run;
+}
+/* Default text for a new rule: the merchant name. When other transactions share the start of it
+   (other visits or other locations), keep just the shared part so they all match. */
+function ruleKeyFor(payee, selfId) {
+  const mine = ruleWords(payee);
+  if (!mine.length) return '';
+  let shared = Infinity;
+  for (const t of state.transactions) {
+    if (t.id === selfId) continue;
+    const w = ruleWords(t.rawPayee || t.payee);
+    let n = 0;
+    while (n < mine.length && n < w.length && w[n] === mine[n]) n++;
+    if (n >= 2) shared = Math.min(shared, n);
+  }
+  return mine.slice(0, shared !== Infinity ? shared : Math.min(3, mine.length)).join(' ');
 }
 function offerRule(t, catId) {
   if (!catId || catId === '__split') return;
   const src = t.rawPayee || t.payee;
   const existing = matchRule(src);
   if (existing && existing.categoryId === catId) return;
-  const key = existing ? existing.text : ruleKeyFor(src); if (!key) return;
+  const key = existing ? existing.text : ruleKeyFor(src, t.id); if (!key) return;
   const others = state.transactions.filter(x => x.id !== t.id && isUncat(x) && !isSplit(x) && ruleMatches({ text: key }, x.rawPayee || x.payee)).length;
   toast(`Always file “${key}” under ${catName(catId)}?${others ? ` ${others} more uncategorized look${others === 1 ? 's' : ''} like it.` : ''}`, {
     label: existing ? 'Update the rule…' : 'Make a rule…',
