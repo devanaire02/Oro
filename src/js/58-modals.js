@@ -165,7 +165,15 @@ function acctModal(id, presetType) {
       <label class="field when-debt"><span>Interest rate (%)</span><input name="rate" inputmode="decimal" value="${v.rate ?? ''}"></label>
       <label class="field when-debt"><span>Minimum payment</span><input name="minPayment" inputmode="decimal" value="${v.minPayment ?? ''}"></label>
       <div class="when-property wide form-grid">
-        <label class="field"><span>Mortgage</span><select name="mortgageId"><option value="">None</option>${loans.map(l => `<option value="${l.id}" ${l.id === v.mortgageId ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></label>
+        <label class="field"><span>Mortgage</span><select name="mortgageId" id="mort-pick"><option value="">None</option>${loans.map(l => `<option value="${l.id}" ${l.id === v.mortgageId ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}<option value="__new">Add a mortgage…</option></select></label>
+        <div class="new-mort wide form-grid" id="new-mort" hidden>
+          <label class="field"><span>Lender</span><input name="mort-lender" data-key="mortLender" placeholder="e.g. Chase" autocomplete="off"></label>
+          <label class="field"><span>Amount owed</span><input name="mort-owed" data-key="mortOwed" inputmode="decimal" placeholder="From your latest statement"></label>
+          <label class="field"><span>As of</span><input type="date" name="mort-date" data-key="mortDate" value="${today()}"></label>
+          <label class="field"><span>Interest rate (%)</span><input name="mort-rate" data-key="mortRate" inputmode="decimal" placeholder="e.g. 6.25"></label>
+          <label class="field"><span>Monthly payment</span><input name="mort-payment" data-key="mortPayment" inputmode="decimal" placeholder="Optional"></label>
+          <p class="muted small wide">Adds the mortgage under Accounts › Liabilities, linked to this property, so its equity and net worth count the loan. Keep importing the payments from your bank; there’s no need to import the mortgage statement. Update what you owe from the statement now and then.</p>
+        </div>
         <label class="check"><input type="checkbox" name="rental" ${v.rental ? 'checked' : ''}> This is a rental property</label>
         <label class="field"><span>Rental category group</span><select name="rentalGroup">${(rentalGroups.length ? rentalGroups : ['Rental property']).map(g => `<option ${g === v.rentalGroup ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select></label>
         <label class="field"><span>Cash invested</span><input name="cashInvested" inputmode="decimal" value="${v.cashInvested ?? ''}" placeholder="Down payment plus improvements"></label>
@@ -183,9 +191,19 @@ function acctModal(id, presetType) {
     const l = $('#bal-label'); if (l) l.textContent = T.side === 'liability' ? 'Amount owed' : 'Balance or value';
     f.querySelector('[name=forecast]').checked = !!T.forecast; f.querySelector('[name=ledger]').checked = !!T.ledger;
   };
+  $('#mort-pick').onchange = e => { $('#new-mort').hidden = e.target.value !== '__new'; fitModal(); };
   $('#save').onclick = () => {
     const d = formData(f);
     if (!d.name.trim()) return toast('Give the account a name.');
+    let newMort = null;
+    if (d.type === 'realestate' && d.mortgageId === '__new') {
+      const owed = parseAmount(d.mortOwed || '');
+      if (!isFinite(owed) || !owed) return toast('Enter how much is owed on the mortgage.');
+      const rate = parseFloat(d.mortRate), pay = parseAmount(d.mortPayment || '');
+      newMort = { id: uid(), name: `${d.name.trim()} mortgage`, type: 'mortgage', institution: (d.mortLender || '').trim(), owner: 'owner' in d ? d.owner : (a?.owner || v.owner || 'joint'),
+        balance: round2(Math.abs(owed)), balanceDate: d.mortDate || today(), rate: isFinite(rate) ? rate : null, minPayment: isFinite(pay) && pay ? round2(Math.abs(pay)) : null, forecast: false, ledger: false };
+      d.mortgageId = newMort.id;
+    }
     const rec = { name: d.name.trim(), type: d.type, institution: d.institution.trim(), last4: d.last4.trim(), notes: d.notes, forecast: d.forecast, ledger: d.ledger && !hasHoldings };
     if ('owner' in d) rec.owner = d.owner;
     if (ACCOUNT_TYPES[d.type].bucket === 'invest') rec.assetClass = d.assetClass;
@@ -200,8 +218,10 @@ function acctModal(id, presetType) {
       if (changed) { target.balance = val; target.balanceDate = d.balanceDate || today(); if (target.ledger) { target.anchorBalance = val; target.anchorDate = d.balanceDate || today(); } }
     }
     if (!a) state.accounts.push(target);
+    if (newMort) state.accounts.push(newMort);
     closeModal(); commit();
-    if (!a) toast(`Added ${rec.name}.`);
+    if (newMort) toast(`${a ? 'Saved' : 'Added'} ${rec.name} and added ${newMort.name} under Liabilities.`);
+    else if (!a) toast(`Added ${rec.name}.`);
   };
   if (a) {
     $('#arch').onclick = () => { a.archived = !a.archived; closeModal(); commit(); toast(a.archived ? `${a.name} archived. Its history stays in your net worth chart.` : `${a.name} restored.`); };
