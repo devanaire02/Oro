@@ -30,7 +30,16 @@ Click **Import** (or press `I`) and drop a file:
 - **Brokerage holdings:** the Positions CSV from Fidelity, Schwab or Vanguard, or an investment QFX.
 - **Moving from another app:** YNAB, Monarch, Mint, Copilot or Tiller CSV exports, or Quicken QIF. All accounts come over at once, with categories, tags and notes.
 
-Ọrọ̀ categorizes transactions with your rules plus about 150 known merchants. Fix one by hand and it offers to remember the fix.
+Ọrọ̀ categorizes transactions on your device, in this order:
+
+1. Your rules.
+2. How you categorized the same merchant before.
+3. A built-in list of about 2,000 merchants (national chains plus Chicago favorites).
+4. The merchant category code, when the file has one (some QFX files include it).
+5. The bank's own category column (Chase, Capital One, Discover, Amex and Apple Card CSVs have one).
+6. Words in the name, such as GRILL, TAQUERIA, PHARMACY or DENTAL, plus restaurant payment processors like Toast (TST*).
+
+Fix one by hand and it offers to remember the fix. On Transactions, **Auto-categorize** runs all of this again on anything still uncategorized.
 
 ## On your iPhone
 

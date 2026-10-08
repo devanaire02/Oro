@@ -334,11 +334,11 @@ VIEWS.data = () => {
 
   <section class="panel">
     <header class="panel-head"><h2>Categorization rules</h2><span class="muted small">${state.rules.length} rule${state.rules.length === 1 ? '' : 's'}</span></header>
-    <p class="muted">When a payee contains the text, it gets that category (and optionally a person), on import and when you run the rules. Ọrọ̀ also knows about 150 common merchants out of the box.</p>
+    <p class="muted">When a payee contains the text, it gets that category (and optionally a person), on import and when you auto-categorize. Your rules always win. After them Ọrọ̀ uses how you categorized the same merchant before, a built-in list of about 2,000 merchants, the merchant code some banks include, the bank’s own category, and finally words in the name like GRILL, PHARMACY or DENTAL. All of it runs on your device.</p>
     ${state.rules.length ? `<div class="scroll-table short"><table class="ledger compact"><thead><tr><th>Payee contains</th><th>Category</th><th class="hide-sm">Person</th><th class="hide-sm">Rename to</th><th></th></tr></thead><tbody>
     ${state.rules.map(r => `<tr><td><code>${esc(r.text)}</code></td><td>${esc(catName(r.categoryId))}</td><td class="hide-sm muted">${r.person ? esc(memberName(r.person)) : ''}</td><td class="hide-sm muted">${esc(r.rename || '')}</td><td class="acts"><button class="linklike small" data-edit-rule="${r.id}">Edit</button></td></tr>`).join('')}
     </tbody></table></div>` : ''}
-    <div class="actions"><button class="btn" data-act="add-rule">Add a rule</button><button class="btn ghost" data-act="run-rules">Apply rules to uncategorized</button></div>
+    <div class="actions"><button class="btn" data-act="add-rule">Add a rule</button><button class="btn ghost" data-act="run-rules">Auto-categorize uncategorized</button></div>
   </section>
 
   <section class="panel">

@@ -23,12 +23,15 @@ const ACTIONS = {
   'sync-send': () => syncSend(),
   'run-rules': () => {
     let n = 0;
-    for (const t of state.transactions) if (!t.categoryId) {
+    const hist = categoryHistory();
+    for (const t of state.transactions) if (!t.categoryId && !(t.splits && t.splits.length)) {
       const r = matchRule(t.rawPayee || t.payee);
       if (r) { t.categoryId = r.categoryId; if (r.rename) t.payee = r.rename; if (r.person) t.person = r.person; n++; }
-      else { const b = builtinCategory(t.rawPayee || t.payee, t.amount); if (b) { t.categoryId = b; n++; } }
+      else { const a = autoCategory(t.rawPayee || t.payee, t.amount, { mcc: t.mcc }, hist); if (a) { t.categoryId = a.id; n++; } }
     }
-    commit(); toast(n ? `Categorized ${n} transaction${n > 1 ? 's' : ''}.` : 'No uncategorized transactions matched a rule.', n ? { label: 'Undo', fn: undo } : null);
+    if (n) commit();
+    const left = state.transactions.filter(isUncat).length;
+    toast(n ? `Categorized ${n.toLocaleString()} transaction${n > 1 ? 's' : ''}.${left ? ` ${left.toLocaleString()} still need you.` : ''}` : 'Nothing new to categorize. Pick a category for one and Ọrọ̀ will offer to remember it.', n ? { label: 'Undo', fn: undo } : null);
   },
   'load-sample': async () => {
     if (state.accounts.length && !await confirmBox('Load sample data', 'This replaces everything in Ọrọ̀ with a fictional household. You can undo it right after.', 'Replace with sample data', true)) return;

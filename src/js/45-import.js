@@ -130,7 +130,7 @@ function csvMappedRows() {
     } else { amount = parseAmount(r[m.amount]); if (!isFinite(amount)) continue; }
     if (useType) amount = Math.abs(amount) * ((r[m.ttype] || '').toLowerCase() === 'debit' ? -1 : 1);
     if (IMP.flip) amount = -amount;
-    out.push({ date, payee: (r[m.payee] || '').trim(), amount: round2(amount), memo: m.memo >= 0 ? r[m.memo] : '', bankCategory: m.category >= 0 ? (r[m.category] || '').trim() : '', tags: m.tags >= 0 ? parseTags(r[m.tags]) : [], srcAccount: IMP.useAcctCol && m.account >= 0 ? (r[m.account] || '').trim() : '', fitid: '' });
+    out.push({ date, payee: (r[m.payee] || '').trim(), amount: round2(amount), memo: m.memo >= 0 ? r[m.memo] : '', bankCategory: m.category >= 0 ? (r[m.category] || '').trim() : '', mcc: m.mcc >= 0 ? (r[m.mcc] || '').trim() : '', tags: m.tags >= 0 ? parseTags(r[m.tags]) : [], srcAccount: IMP.useAcctCol && m.account >= 0 ? (r[m.account] || '').trim() : '', fitid: '' });
   }
   return out;
 }
@@ -151,6 +151,7 @@ function rowAccountId(r) { return IMP.multi ? (IMP.acctMap[r.srcAccount || ''] |
 function buildTxRows(list) {
   IMP.rawList = list;
   const seenByAcct = {};
+  const hist = categoryHistory(), transferId = categoryIdByName('Transfer between accounts'), cardPayId = categoryIdByName('Credit card payment');
   IMP.txRows = list.map(t => {
     const acctId = rowAccountId(t);
     const acct = acctId && !acctId.startsWith('__') ? acctById(acctId) : null;
@@ -165,11 +166,13 @@ function buildTxRows(list) {
     else if (existing.some(e => Math.abs(e.amount - t.amount) < 0.005 && Math.abs(daysBetween(e.date, t.date)) <= 3 && (normPayee(e.rawPayee || e.payee).split(' ')[0] === normPayee(t.payee).split(' ')[0] || !e.importId))) status = 'maybe';
     const rule = matchRule(t.payee);
     const named = findCategoryByName(t.bankCategory);
-    let categoryId = rule ? rule.categoryId : named ? named.id : (builtinCategory(t.payee, t.amount) || categoryFromBank(t.bankCategory));
+    const auto = rule || named ? null : autoCategory(t.payee, t.amount, { mcc: t.mcc, bankCategory: t.bankCategory }, hist);
+    let categoryId = rule ? rule.categoryId : named ? named.id : (auto ? auto.id : null);
     const type = acct ? acct.type : (IMP.multi ? guessTypeFromName(t.srcAccount || '') : IMP.newDefaults?.type);
-    if (!categoryId && type === 'credit' && t.amount > 0 && /payment|thank you|autopay|pymt/i.test(t.payee)) categoryId = state.categories.find(c => c.name === 'Credit card payment')?.id || null;
+    // money coming into a credit card is almost always a payment
+    if (type === 'credit' && t.amount > 0 && cardPayId && (!categoryId || categoryId === transferId) && /payment|thank you|autopay|pymt|transfer from|ach deposit/i.test(t.payee)) categoryId = cardPayId;
     const willCreate = !categoryId && IMP.createCats && t.bankCategory && !/^(uncategori[sz]ed|none|transfer.*|.*ready to assign|to be budgeted|split.*)$/i.test(t.bankCategory);
-    return { ...t, importId, status, include: status === 'new', categoryId: categoryId || '', newCat: willCreate ? t.bankCategory : '', rename: rule?.rename, person: rule?.person };
+    return { ...t, importId, status, include: status === 'new', categoryId: categoryId || '', guess: auto && categoryId === auto.id ? auto.how : '', newCat: willCreate ? t.bankCategory : '', rename: rule?.rename, person: rule?.person };
   }).sort((a, b) => b.date.localeCompare(a.date));
   IMP._seen = {};
 }
@@ -291,7 +294,7 @@ function renderReviewStep(box) {
         <td class="nowrap">${dateLabel(r.date, true)}</td>
         <td>${esc(prettyPayee(r.payee))}<div class="muted small">${esc(r.payee)}${r.tags?.length ? ' · ' + r.tags.map(x => '#' + esc(x)).join(' ') : ''}</div></td>
         ${IMP.multi ? `<td class="muted small">${esc(r.srcAccount)}</td>` : ''}
-        <td>${r.newCat && !r.categoryId ? `<span class="tag soft" title="Will be created">New: ${esc(r.newCat)}</span>` : `<select data-cat="${i}">${opts.replace(`value="${r.categoryId}"`, `value="${r.categoryId}" selected`)}</select>`}</td>
+        <td>${r.newCat && !r.categoryId ? `<span class="tag soft" title="Will be created">New: ${esc(r.newCat)}</span>` : `<select data-cat="${i}"${r.guess && r.categoryId ? ` title="${esc(GUESS_WHY[r.guess] || '')}"` : ''}>${opts.replace(`value="${r.categoryId}"`, `value="${r.categoryId}" selected`)}</select>`}</td>
         <td class="num ${signClass(r.amount)}">${IMP.source !== 'ofx' ? `<button class="linklike num" data-flip="${i}" title="Flip sign">${money(r.amount)}</button>` : money(r.amount)}</td>
         <td>${r.status === 'dup' ? '<span class="tag">Already imported</span>' : r.status === 'maybe' ? '<span class="tag">Possible duplicate</span>' : ''}</td></tr>`).join('')}
     </tbody></table>${rows.length > 1500 ? `<p class="muted small">Showing the first 1,500 rows for review; all ${rows.length.toLocaleString()} will import.</p>` : ''}</div>`;
@@ -301,7 +304,7 @@ function renderReviewStep(box) {
     const t = e.target;
     if (t.dataset.amap != null) { IMP.acctMap[Object.keys(IMP.acctMap)[+t.dataset.amap]] = t.value; return rebuild(); }
     if (t.dataset.row != null) { rows[+t.dataset.row].include = t.checked; t.closest('tr').classList.toggle('off', !t.checked); updateImportCount(); }
-    if (t.dataset.cat != null) rows[+t.dataset.cat].categoryId = t.value;
+    if (t.dataset.cat != null) { rows[+t.dataset.cat].categoryId = t.value; rows[+t.dataset.cat].guess = ''; }
     if (t.id === 'imp-bal') IMP.setBal = t.checked;
   };
   $('#imp-table').onclick = e => {
@@ -424,6 +427,7 @@ function applyTxItem(it) {
     const t = { id: uid(), date: r.date, accountId: acct.id, payee: r.rename || prettyPayee(r.payee), rawPayee: r.payee, amount: r.amount, categoryId: r.categoryId || null, memo: r.memo || '', importId: r.importId };
     if (r.tags?.length) t.tags = r.tags;
     if (r.person) t.person = r.person;
+    if (r.mcc) t.mcc = String(r.mcc).slice(0, 6);
     state.transactions.push(t); added++;
     if (!t.categoryId) unc++;
   }

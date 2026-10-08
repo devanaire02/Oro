@@ -46,7 +46,8 @@ function guessTxnMapping(h) {
     amount: pickCol(h, [/^amount$/i, /transaction amount|amount \(?usd|^amt$/i, /amount/i], /balance|original/i),
     debit: pickCol(h, [/^debit|withdrawal|outflow|charges?$/i]),
     credit: pickCol(h, [/^credit$|^credits?$|deposit|inflow|payments?$/i], /card/i),
-    category: pickCol(h, [/^category$/i, /category/i]),
+    category: pickCol(h, [/^category$/i, /category/i], /code|mcc|sic/i),
+    mcc: pickCol(h, [/^mcc$|^mcc code$|merchant category code|^sic$|^sic code$/i]),
     memo: pickCol(h, [/^memo$|^notes?$/i]),
     account: pickCol(h, [/^account( name)?$/i], /number|type|mask|id$/i),
     tags: pickCol(h, [/^tags?$|^labels?$/i]),
@@ -100,6 +101,7 @@ function parseOFX(text) {
     payee: (ofxTag(b, 'CHECKNUM') && /^(CHECK|CHK)\b/i.test(ofxTag(b, 'NAME') || 'CHECK')) ? `Check #${ofxTag(b, 'CHECKNUM')}` : (ofxTag(b, 'NAME') || ofxTag(b, 'PAYEE') || ofxTag(b, 'MEMO')),
     memo: ofxTag(b, 'MEMO'),
     fitid: ofxTag(b, 'FITID'),
+    mcc: ofxTag(b, 'SIC') || ofxTag(b, 'MCC'),
     type: ofxTag(b, 'TRNTYPE'),
   })).filter(t => t.date && isFinite(t.amount));
   const ledger = ofxBlocks(text, 'LEDGERBAL')[0];
@@ -266,65 +268,4 @@ function pdfSignedAmount(r, isCard) {
   if (isCard) return r.explicitNeg ? r.abs : (r.section > 0 ? r.abs : -r.abs);
   if (r.explicitNeg) return -r.abs;
   return r.section > 0 ? r.abs : -r.abs;
-}
-
-/* Built-in merchant dictionary: a starting point before you've made any rules. [pattern, category, direction] */
-const BUILTIN_MERCHANTS = [
-  [/PAYROLL|DIR(ECT)? ?DEP|SALARY/, 'Paycheck', 'in'],
-  [/INTEREST (PAID|EARNED|PAYMENT)|DIVIDEND/, 'Interest and dividends', 'in'],
-  [/PAYMENT THANK YOU|AUTOPAY|AUTO PAY|CARD PAYMENT|CRD PMT|CREDIT CRD|EPAYMENT|E PAYMENT|MOBILE PMT|ONLINE PAYMENT THANK/, 'Credit card payment'],
-  [/ONLINE TRANSFER|TRANSFER (TO|FROM)|XFER/, 'Transfer between accounts'],
-  [/\bMTG\b|MORTGAGE|HOME LOAN|LOAN SERVICING|MR COOPER|ROCKET MORTGAGE|LOANCARE|DOVENMUEHLE/, 'Mortgage or rent', 'out'],
-  [/AUTO (FINANCE|LOAN|PMT|PAYMENT)|TOYOTA (FIN|MOTOR CREDIT)|HONDA FIN|ALLY (AUTO|PAYMT)|GM FINANCIAL|FORD CREDIT|TESLA FINANCE|CAR PAYMENT/, 'Auto payment', 'out'],
-  [/FIDELITY|SCHWAB|VANGUARD|E TRADE|ETRADE|ROBINHOOD|BETTERMENT|WEALTHFRONT|MERRILL|TD AMERITRADE|INTERACTIVE BROKERS/, 'Savings and investing', 'out'],
-  [/UBER EATS|UBEREATS|DOORDASH|GRUBHUB|POSTMATES|CAVIAR|SEAMLESS/, 'Dining out'],
-  [/STARBUCKS|DUNKIN|PEET|DUTCH BROS|BLUE BOTTLE|INTELLIGENTSIA|TIM HORTONS|COFFEE|ESPRESSO/, 'Coffee'],
-  [/WHOLE ?FOODS|WHOLEFDS|JEWEL|MARIANO|TRADER JOE|\bALDI\b|KROGER|SAFEWAY|PUBLIX|WEGMANS|\bH ?E ?B\b|MEIJER|FOOD LION|GIANT EAGLE|SPROUTS|INSTACART|FRESH THYME|COSTCO|SAMS CLUB|STOP & SHOP|HY VEE|WINCO|RALPHS|ALBERTSONS|\bVONS\b|SHOPRITE|GROCER|SUPERMARKET|FRESH MARKET/, 'Groceries'],
-  [/MCDONALD|CHIPOTLE|PANERA|CHICK FIL|SUBWAY|DOMINO|PIZZA|SWEETGREEN|SHAKE SHACK|WENDY|BURGER|TACO|RESTAURANT|GRILL|TRATTORIA|PORTILLO|GIORDANO|MALNATI|FIVE GUYS|\bCAVA\b|POTBELLY|JIMMY JOHN|POPEYES|OLIVE GARDEN|SUSHI|RAMEN|KITCHEN|BISTRO|TAVERN|\bPUB\b|BREWING|BAKERY|DELI\b/, 'Dining out'],
-  [/\bUBER\b|\bLYFT\b|METRA|\bCTA\b|VENTRA|AMTRAK|\bMTA\b|CITI BIKE|DIVVY|LIME\b|BIRD APP/, 'Transit and rideshare'],
-  [/COMED|NICOR|PEOPLES GAS|NORTHERN GAS|CON ED|PG ?& ?E|DUKE ENERGY|XFINITY|COMCAST|SPECTRUM|VERIZON|AT&T|\bATT\b|T MOBILE|TMOBILE|WATER DEPT|WATER UTIL|ELECTRIC|ENERGY|EDISON|DOMINION|GEORGIA POWER|\bFPL\b|NATIONAL GRID|EVERSOURCE|FIBER|INTERNET|WASTE MANAGEMENT|REPUBLIC SERVICES/, 'Utilities'],
-  [/\bSHELL\b|EXXON|MOBIL|CHEVRON|\bBP\b|MARATHON PETRO|SPEEDWAY|CITGO|SUNOCO|VALERO|\bARCO\b|PHILLIPS 66|CIRCLE K|\bWAWA\b|SHEETZ|QUIKTRIP|CASEYS|SUPERCHARGER|CHARGEPOINT|ELECTRIFY AMERICA|EVGO|FUEL/, 'Fuel and charging'],
-  [/PARKING|PARKMOBILE|SPOTHERO|PARK CHICAGO|I ?PASS|E ?Z ?PASS|TOLLWAY|\bTOLL|SUNPASS|FASTRAK/, 'Parking and tolls'],
-  [/JIFFY LUBE|VALVOLINE|FIRESTONE|DISCOUNT TIRE|AUTOZONE|O REILLY|PEP BOYS|MIDAS|CAR WASH|DMV|SECRETARY OF STATE/, 'Auto maintenance'],
-  [/NETFLIX|SPOTIFY|HULU|DISNEY ?PLUS|\bHBO|MAX COM|PARAMOUNT|PEACOCK|YOUTUBE|APPLE COM BILL|ICLOUD|GOOGLE STORAGE|GOOGLE ONE|AUDIBLE|KINDLE|NYTIMES|NY TIMES|\bWSJ\b|DROPBOX|ADOBE|MICROSOFT|PATREON|SIRIUSXM|OPENAI|CHATGPT|ANTHROPIC|SUBSTACK|AMAZON PRIME|PRIME VIDEO/, 'Subscriptions'],
-  [/PELOTON|ORANGETHEORY|EQUINOX|LIFE ?TIME|PLANET FITNESS|CRUNCH|LA FITNESS|ANYTIME FITNESS|CLASSPASS|SOULCYCLE|\bF45\b|\bYMCA\b|XSPORT|GYM\b/, 'Fitness'],
-  [/WALGREENS|\bCVS\b|RITE AID|PHARMACY|CLINIC|HOSPITAL|MEDICAL|\bMED\b|DENTAL|DENTIST|ORTHODONT|OPTOM|LABCORP|QUEST DIAG|ADVOCATE|KAISER|MYCHART|URGENT CARE|PEDIATRIC|PHYSICIAN|THERAP/, 'Medical'],
-  [/DELTA AIR|UNITED AIR|AMERICAN AIR|SOUTHWEST|JETBLUE|ALASKA AIR|SPIRIT AIR|FRONTIER AIR|AIRBNB|VRBO|MARRIOTT|HILTON|HYATT|\bIHG\b|HOLIDAY INN|EXPEDIA|BOOKING COM|HOTELS COM|HERTZ|\bAVIS\b|ENTERPRISE RENT|NATIONAL CAR|TSA PRE|CLEAR ME|AIRLINE|HOTEL|RESORT/, 'Travel'],
-  [/\bAMC\b|REGAL|CINEMARK|TICKETMASTER|LIVE NATION|STUBHUB|SEATGEEK|FANDANGO|STEAM ?GAMES|PLAYSTATION|XBOX|NINTENDO|THEATER|THEATRE|MUSEUM|BOWL/, 'Entertainment'],
-  [/CHEWY|PETCO|PETSMART|\bVET\b|VETERINAR|BANFIELD|\bROVER\b/, 'Pets'],
-  [/SUPERCUTS|GREAT CLIPS|SALON|BARBER|\bULTA\b|SEPHORA|\bSPA\b|MASSAGE|NAIL/, 'Personal care'],
-  [/DAYCARE|CHILDCARE|AFTERCARE|PRESCHOOL|KINDERCARE|BRIGHT HORIZONS|BABYSIT|NANNY/, 'Childcare'],
-  [/SOCCER|SWIM|GYMNAST|DANCE|MARTIAL|KARATE|LITTLE LEAGUE|\bCAMP\b|TUTOR|KUMON|MATHNASIUM|HOCKEY|BASEBALL|BASKETBALL/, 'Kids activities'],
-  [/TUITION|SCHOOL|SCHOLASTIC|UNIVERSITY|COLLEGE/, 'School'],
-  [/HOME DEPOT|LOWES|MENARDS|ACE HARDWARE|TRUE VALUE|SHERWIN|HARDWARE|PLUMB|HVAC|ROOFING|LANDSCAP|LAWN/, 'Home maintenance'],
-  [/GOFUNDME|DONAT|CHARITY|RED CROSS|UNITED WAY|CHURCH|TITHE|FOUNDATION/, 'Gifts and giving'],
-  [/\bIRS\b|US TREASURY|DEPT OF REV|DEPARTMENT OF REVENUE|TAX PAYMENT|FRANCHISE TAX/, 'Taxes'],
-  [/OVERDRAFT|SERVICE FEE|MONTHLY FEE|MAINTENANCE FEE|ATM FEE|FOREIGN TRANSACTION|LATE FEE|INTEREST CHARGE|ANNUAL FEE/, 'Bank fees'],
-  [/AMAZON|AMZN|TARGET|WALMART|WAL MART|BEST BUY|HOMEGOODS|TJ ?MAXX|MARSHALLS|NORDSTROM|MACY|KOHLS|ETSY|EBAY|APPLE STORE|IKEA|WAYFAIR|OLD NAVY|\bGAP\b|ZARA|UNIQLO|NIKE|LULULEMON|CRATE|POTTERY BARN|WILLIAMS SONOMA|BED BATH|DICKS SPORTING|REI\b/, 'Shopping'],
-];
-function builtinCategory(payee, amount) {
-  const p = ' ' + normPayee(payee) + ' ';
-  for (const [re, name, dir] of BUILTIN_MERCHANTS) {
-    if (dir === 'in' && !(amount > 0)) continue;
-    if (dir === 'out' && !(amount < 0)) continue;
-    if (re.test(p)) { const c = state.categories.find(c => c.name === name); if (c) return c.id; }
-  }
-  return null;
-}
-
-/* Bank-provided category names → Ọrọ̀ categories */
-const BANK_CATEGORY_MAP = [
-  [/grocer|supermarket/i, 'Groceries'], [/food|dining|restaurant|bar\b/i, 'Dining out'], [/coffee/i, 'Coffee'],
-  [/gas|fuel|automotive fuel/i, 'Fuel and charging'], [/auto(motive)?|car service/i, 'Auto maintenance'], [/parking|toll/i, 'Parking and tolls'],
-  [/utilit|bills/i, 'Utilities'], [/travel|airline|airfare|lodging|hotel|rental car/i, 'Travel'], [/entertain/i, 'Entertainment'],
-  [/health|medical|pharmac|doctor/i, 'Medical'], [/fitness|gym/i, 'Fitness'], [/personal/i, 'Personal care'],
-  [/shopping|merchandise|retail/i, 'Shopping'], [/home|household/i, 'Home maintenance'], [/education|school|tuition/i, 'School'],
-  [/gift|donat|charit/i, 'Gifts and giving'], [/fee|adjustment/i, 'Bank fees'], [/pet/i, 'Pets'], [/subscription|streaming/i, 'Subscriptions'],
-  [/insurance/i, 'Life and disability insurance'], [/tax/i, 'Taxes'],
-];
-function categoryFromBank(name) {
-  if (!name) return null;
-  for (const [re, target] of BANK_CATEGORY_MAP) if (re.test(name)) { const c = state.categories.find(c => c.name === target); if (c) return c.id; }
-  const exact = state.categories.find(c => c.name.toLowerCase() === name.toLowerCase());
-  return exact ? exact.id : null;
 }
