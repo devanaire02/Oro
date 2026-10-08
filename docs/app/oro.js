@@ -2975,7 +2975,8 @@ function render() {
   drawCharts($('#main'));
   if (focusSel) {
     const el = $(focusSel, $('#main'));
-    if (el && el.focus) { el.focus(); if (el.setSelectionRange && /text|search/.test(el.type)) { const n = el.value.length; el.setSelectionRange(n, n); } }
+    // On iPhone and iPad, focusing a dropdown opens its picker again, so dropdowns aren't refocused there
+    if (el && el.focus && !(isTouch() && el.tagName === 'SELECT')) { el.focus(); if (el.setSelectionRange && /text|search/.test(el.type)) { const n = el.value.length; el.setSelectionRange(n, n); } }
   }
   paintStatus();
   if (page === 'data') paintBackups();
