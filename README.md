@@ -4,13 +4,14 @@ Your household finances on your own Mac: budget, net worth, investments, propert
 
 ## Open it
 
-- **Double-click `Ọrọ̀.app`.** It opens Ọrọ̀ in its own window using Chrome, Edge or Brave, whichever you have. You can drag it to your Dock.
-- Or open `Ọrọ̀.html` in Chrome, Edge or Brave directly.
-- Use a Chromium-based browser. Safari and Firefox can show Ọrọ̀ but can't save into this folder.
+- **Double-click Ọrọ̀ in your Applications folder** (you can drag it to the Dock). It opens this folder's `Ọrọ̀.html` in its own window using Chrome, Edge or Brave.
+- Or open `Ọrọ̀.html` here with Chrome, Edge or Brave (right-click › Open With).
+- The copy of `Ọrọ̀.app` inside this iCloud folder may say it can't be opened, because iCloud Drive doesn't keep it runnable. Use the one in Applications.
+- Use a Chromium-based browser on the Mac. Safari and Firefox can show Ọrọ̀ but can't save into this folder.
 
 ## First-time setup (2 minutes)
 
-1. Open **Settings › Where your data lives** and click **Choose your Ọrọ̀ folder…**. Pick this folder (Documents › Claude › Ọrọ̀) and allow Ọrọ̀ to edit files there.
+1. Open **Settings › Where your data lives** and click **Choose your Ọrọ̀ folder…**. Pick this folder (iCloud Drive › Ọrọ̀) and allow Ọrọ̀ to edit files there. If Chrome offers **Allow on every visit**, choose it.
 2. Ọrọ̀ creates these folders inside it:
    - `data/oro.json`: your data, saved on every change.
    - `backups/`: one copy per day, kept for 30 days plus one per month for a year.

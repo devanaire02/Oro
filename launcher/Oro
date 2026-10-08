@@ -2,8 +2,15 @@
 # Opens Ọrọ̀ in its own window using a Chromium-based browser (needed for saving into this folder).
 APP_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 ROOT="$(dirname "$APP_DIR")"
-HTML="$ROOT/Ọrọ̀.html"
-[ -f "$HTML" ] || HTML="$(ls "$ROOT"/*.html 2>/dev/null | head -n 1)"
+# Next to this app (inside the Ọrọ̀ folder), or, when installed in Applications, the Ọrọ̀ folder in iCloud Drive.
+HTML=""
+for CAND in "$ROOT/Ọrọ̀.html" "$HOME/Library/Mobile Documents/com~apple~CloudDocs/Ọrọ̀/Ọrọ̀.html" "$HOME/Documents/Claude/Ọrọ̀/Ọrọ̀.html"; do
+  if [ -f "$CAND" ]; then HTML="$CAND"; break; fi
+done
+if [ -z "$HTML" ]; then
+  osascript -e 'display alert "Ọrọ̀ couldn’t find its folder" message "Expected iCloud Drive › Ọrọ̀ › Ọrọ̀.html. If you moved the Ọrọ̀ folder, open Ọrọ̀.html from its new place with Chrome."' >/dev/null 2>&1
+  exit 1
+fi
 # Build a file:// URL with the path percent-encoded (the name has Yoruba diacritics; the folder may have spaces).
 URL="$(osascript -l JavaScript -e 'function run(a){return "file://"+encodeURI(a[0]).replace(/#/g,"%23").replace(/\?/g,"%3F")}' "$HTML" 2>/dev/null)"
 [ -n "$URL" ] || URL="file://$(printf '%s' "$HTML" | sed -e 's/%/%25/g' -e 's/ /%20/g' -e 's/#/%23/g')"
