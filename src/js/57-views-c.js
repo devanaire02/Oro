@@ -363,7 +363,7 @@ VIEWS.data = () => {
     <p class="muted">${state.accounts.length} accounts, ${n.toLocaleString()} transactions, ${state.holdings.length} holdings, ${state.goals.length} goals${state.meta.sample ? '. This is sample data.' : '.'}</p>
     <div class="actions"><button class="btn" data-act="load-sample">Load sample data</button><button class="btn ghost danger-text" data-act="erase">Erase everything</button></div>
   </section>
-  <p class="muted small center">Ọrọ̀ 2.2 · Runs on your own devices. No accounts, servers or tracking.</p>`;
+  <p class="muted small center about-line"><span class="wordmark">Ọrọ̀</span> is ${ORO_MEANING}. <em>${ORO_TAGLINE}</em><br>Version 2.2 · Runs on your own devices. No accounts, servers or tracking.</p>`;
 };
 async function paintBackups() {
   const box = $('#backup-list'); if (!box) return;

@@ -297,6 +297,7 @@ function lockScreen(payload) {
     wrap.className = 'lock-screen';
     wrap.innerHTML = `<form class="lock-card" id="lock-form">
       <div class="brand big">Ọrọ̀</div>
+      <p class="brand-tag">${ORO_MEANING} · ${ORO_TAGLINE}</p>
       <p>Your data is encrypted. Enter your passphrase to open it.</p>
       <label class="field"><span>Passphrase</span><input type="password" id="lock-pass" autocomplete="current-password" autofocus></label>
       <p class="notice bad small" id="lock-err" hidden>That passphrase didn’t work.</p>

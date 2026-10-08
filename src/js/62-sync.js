@@ -14,7 +14,7 @@ function deviceLabel() {
   if (/iPhone/.test(u)) return 'iPhone';
   if (/iPad/.test(u) || (/Macintosh/.test(u) && navigator.maxTouchPoints > 1)) return 'iPad';
   if (/Android/.test(u)) return 'phone';
-  return 'other device';
+  return 'device';
 }
 const shortWhen = iso => { if (!iso) return '—'; const d = new Date(iso); return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };
 const whenLabel = iso => iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'an unknown date';

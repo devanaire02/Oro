@@ -1946,18 +1946,19 @@ function newAccountFields(prefix, def = {}) {
 }
 const guessTypeFromName = n => /card|visa|amex|american express|mastercard|discover|sapphire|freedom/i.test(n) ? 'credit' : /saving|reserve|money market|hysa/i.test(n) ? 'savings' : /loan|mortgage/i.test(n) ? 'loan' : 'checking';
 
-async function handleImportFile(file) {
-  const box = $('#imp'); if (box) box.innerHTML = `<p class="muted pad">Reading ${esc(file.name)}…</p>`;
+async function handleImportFile(file, opts = {}) {
+  const box = $('#imp'); if (box && !opts.silent) box.innerHTML = `<p class="muted pad">Reading ${esc(file.name)}…</p>`;
   IMP.fileName = file.name;
   const ext = (file.name.split('.').pop() || '').toLowerCase();
   const fours = [...file.name.matchAll(/(?<!\d)(\d{4})(?!\d)/g)].map(m => m[1]);
-  const last4 = fours.find(f => activeAccounts().some(a => a.last4 === f)) || fours[fours.length - 1];
+  const last4 = fours.find(f => activeAccounts().some(a => a.last4 === f)) || fours.filter(f => !isYearLike(f)).pop() || '';
+  IMP.fileLast4 = last4;
   try {
     if (ext === 'pdf') {
       const lines = await pdfToLines(await readFileAsBuffer(file));
       const { rows, period, last4: textLast4, isCard } = parseStatementLines(lines);
       if (!rows.length) throw new Error('Ọrọ̀ couldn’t find transaction lines in that PDF. If it’s a scanned image, or an unusual layout, download the OFX/QFX or CSV version from your bank instead.');
-      IMP.source = 'pdf'; IMP.period = period; IMP.pdfRows = rows;
+      IMP.source = 'pdf'; IMP.period = period; IMP.pdfRows = rows; if (textLast4) IMP.fileLast4 = textLast4;
       IMP.accountId = guessAccount(textLast4) || guessAccount(last4);
       if (!IMP.accountId) IMP.newDefaults = { type: isCard ? 'credit' : 'checking' };
       IMP.step = 'review'; buildTxRowsFromPdf();
@@ -1965,7 +1966,7 @@ async function handleImportFile(file) {
       const text = await readFileAsText(file);
       if (looksLikeOFX(text) || ['ofx', 'qfx', 'qbo'].includes(ext)) {
         const o = parseOFX(text);
-        IMP.source = 'ofx'; IMP.ofx = o;
+        IMP.source = 'ofx'; IMP.ofx = o; if (o.last4) IMP.fileLast4 = o.last4;
         if (o.positions.length) {
           IMP.kind = 'positions'; IMP.step = 'positions';
           IMP.positions = o.positions.map(p => ({ ...p, assetClass: guessAssetClass(p.symbol, p.name), include: true }));
@@ -2008,7 +2009,7 @@ async function handleImportFile(file) {
   } catch (e) {
     IMP.error = e.message || String(e); IMP.step = 'pick';
   }
-  renderImport();
+  if (!opts.silent) renderImport();
 }
 function guessAccount(last4, inv) {
   if (last4) { const a = activeAccounts().find(a => a.last4 === last4); if (a) return a.id; }
@@ -2101,9 +2102,9 @@ function renderImport() {
     box.innerHTML = `
       ${IMP.error ? `<div class="notice bad">${esc(IMP.error)}</div>` : ''}
       <label class="drop" id="imp-drop">
-        <input type="file" id="imp-file" accept=".csv,.ofx,.qfx,.qbo,.qif,.pdf,.txt">
-        <span class="drop-title">Drop a statement or export here</span>
-        <span class="muted">or click to choose a file. OFX, QFX, QBO, QIF, CSV or PDF.</span>
+        <input type="file" id="imp-file" accept=".csv,.ofx,.qfx,.qbo,.qif,.pdf,.txt" multiple>
+        <span class="drop-title">Drop statements or exports here</span>
+        <span class="muted">or click to choose. One file or the whole month’s downloads at once. OFX, QFX, QBO, QIF, CSV or PDF.</span>
         <span class="drop-note">Read on this Mac. Nothing is uploaded.</span>
       </label>
       <div class="help-grid">
@@ -2112,16 +2113,22 @@ function renderImport() {
         <div><h4>Moving from another app</h4><p>Exports from <strong>YNAB, Monarch, Mint, Copilot, Tiller</strong> (CSV) or <strong>Quicken</strong> (QIF) bring every account at once, with categories, tags and notes. PDF statements work as a last resort.</p></div>
       </div>`;
     const inp = $('#imp-file'), drop = $('#imp-drop');
-    inp.onchange = () => inp.files[0] && handleImportFile(inp.files[0]);
+    inp.onchange = () => importFiles([...inp.files]);
     drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
     drop.ondragleave = () => drop.classList.remove('over');
-    drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) handleImportFile(f); };
+    drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); importFiles([...e.dataTransfer.files]); };
     setModalActions('<button class="btn ghost" data-close>Cancel</button>');
     return;
   }
   if (s === 'map') return renderMapStep(box);
   if (s === 'review') return renderReviewStep(box);
   if (s === 'positions') return renderPositionsStep(box);
+  if (s === 'batch') return renderBatchStep(box);
+}
+function importFiles(files) {
+  if (!files.length) return;
+  if (files.length === 1) return handleImportFile(files[0]);
+  startBatch(files);
 }
 function colSelect(id, val, allowNone) {
   return `<select id="${id}">${allowNone ? `<option value="-1">None</option>` : ''}${IMP.headers.map((h, i) => `<option value="${i}" ${i === val ? 'selected' : ''}>${esc(h || `Column ${i + 1}`)}</option>`).join('')}</select>`;
@@ -2260,7 +2267,7 @@ function guessInvType(src) { return /401|403|ira|roth|rollover|retire|457|sep/i.
 
 /* ---- actions ---- */
 function importAction(act) {
-  if (act === 'back') { if (IMP.step === 'review' && IMP.source === 'csv') IMP.step = 'map'; else IMP = { step: 'pick', kind: 'txns' }; return renderImport(); }
+  if (act === 'back') { if (IMP.step === 'review' && IMP.source === 'csv' && !IMP.fromBatch) IMP.step = 'map'; else if (IMP.fromBatch) { IMP = IMP.fromBatch; IMP.step = 'batch'; } else IMP = { step: 'pick', kind: 'txns' }; return renderImport(); }
   if (act === 'to-review') {
     stashNewAcct();
     const list = csvMappedRows();
@@ -2276,6 +2283,7 @@ function importAction(act) {
   }
   if (act === 'commit') return commitTxImport();
   if (act === 'commit-pos') return commitPositions();
+  if (act.startsWith('b')) return batchAction(act);
 }
 function makeAccount(name, type, inst) {
   const T = ACCOUNT_TYPES[type] || ACCOUNT_TYPES.checking;
@@ -2284,29 +2292,36 @@ function makeAccount(name, type, inst) {
   state.accounts.push(a);
   return a;
 }
-function commitTxImport() {
-  // resolve destination accounts
+/* What's missing before an import can be saved ('' when ready). */
+function txItemProblem(it) {
+  if (it.multi) { for (const [src, v] of Object.entries(it.acctMap)) if (!v) return `Choose where “${src || 'unnamed'}” goes.`; return ''; }
+  if (!it.accountId) return 'Choose which account these transactions belong to.';
+  if (it.accountId === '__new' && !((it.newDefaults || {}).name || '').trim()) return 'Give the new account a name.';
+  return '';
+}
+/* Next time a file like this arrives, match it to the same account. */
+function rememberImportSource(acct, it) {
+  if (!acct) return;
+  if (!acct.last4 && it.fileLast4 && !state.accounts.some(x => x !== acct && x.last4 === it.fileLast4)) acct.last4 = it.fileLast4;
+  const stem = fileStem(it.fileName);
+  if (stem) acct.importStems = [stem, ...(acct.importStems || []).filter(s => s !== stem)].slice(0, 5);
+}
+/* Adds an import's checked rows to state (the caller commits). */
+function applyTxItem(it) {
   const dest = {}, fresh = [];
-  if (IMP.multi) {
-    for (const [src, v] of Object.entries(IMP.acctMap)) {
-      if (!v) return toast(`Choose where “${src || 'unnamed'}” goes.`);
+  if (it.multi) {
+    for (const [src, v] of Object.entries(it.acctMap)) {
       if (v === '__new') { const a = makeAccount(src || 'Imported account', guessTypeFromName(src)); a.importName = src; dest[src] = a; fresh.push(a); }
       else { dest[src] = acctById(v); dest[src].importName = dest[src].importName || src; }
     }
   } else {
-    if (!IMP.accountId) { toast('Choose which account these transactions belong to.'); $('#imp-acct')?.focus(); return; }
-    let acct = acctById(IMP.accountId);
-    if (IMP.accountId === '__new') {
-      stashNewAcct();
-      const d = IMP.newDefaults || {};
-      if (!(d.name || '').trim()) { toast('Give the new account a name.'); $('#imp-new-name')?.focus(); return; }
-      acct = makeAccount(d.name.trim(), d.type || 'checking', d.inst); fresh.push(acct);
-    }
+    let acct = acctById(it.accountId);
+    if (it.accountId === '__new') { const d = it.newDefaults || {}; acct = makeAccount(d.name.trim(), d.type || 'checking', d.inst); fresh.push(acct); }
     dest[''] = acct;
   }
-  // create categories from other apps' exports
+  // categories from other apps' exports
   const created = {};
-  const rows = IMP.txRows.filter(r => r.include);
+  const rows = it.txRows.filter(r => r.include);
   for (const r of rows) if (!r.categoryId && r.newCat) {
     if (!created[r.newCat]) {
       const parts = r.newCat.split(/\s*[:>]\s*/);
@@ -2317,41 +2332,58 @@ function commitTxImport() {
     }
     r.categoryId = created[r.newCat];
   }
+  const have = {};
+  let added = 0, skipped = 0, unc = 0;
   for (const r of rows) {
-    const acct = IMP.multi ? dest[r.srcAccount || ''] : dest[''];
+    const acct = it.multi ? dest[r.srcAccount || ''] : dest[''];
+    if (r.importId) {
+      const ids = have[acct.id] || (have[acct.id] = new Set(state.transactions.filter(t => t.accountId === acct.id && t.importId).map(t => t.importId)));
+      if (ids.has(r.importId)) { skipped++; continue; }   // e.g. two overlapping downloads in one batch
+      ids.add(r.importId);
+    }
     const t = { id: uid(), date: r.date, accountId: acct.id, payee: r.rename || prettyPayee(r.payee), rawPayee: r.payee, amount: r.amount, categoryId: r.categoryId || null, memo: r.memo || '', importId: r.importId };
     if (r.tags?.length) t.tags = r.tags;
     if (r.person) t.person = r.person;
-    state.transactions.push(t);
+    state.transactions.push(t); added++;
+    if (!t.categoryId) unc++;
   }
   state.transactions.sort((a, b) => b.date.localeCompare(a.date));
   const single = dest[''];
-  if (single && IMP.ofx?.last4) single.last4 = IMP.ofx.last4;
-  const bal = IMP.ofx?.balance;
-  if (single && bal && isFinite(bal.amount) && IMP.setBal !== false) setBalance(single, round2(Math.abs(bal.amount) * (bal.amount < 0 && !isLiability(single) ? -1 : 1)), bal.date || today());
+  if (single && it.ofx?.last4) single.last4 = it.ofx.last4;
+  if (single) rememberImportSource(single, it);
+  const bal = it.ofx?.balance;
+  if (single && bal && isFinite(bal.amount) && it.setBal !== false) setBalance(single, round2(Math.abs(bal.amount) * (bal.amount < 0 && !isLiability(single) ? -1 : 1)), bal.date || today());
   // accounts created by import start at zero on the earliest date so imported history doesn't move today's balance unexpectedly
   for (const a of Object.values(dest)) if (a.ledger && a.anchorDate === '0000-00-00') { a.anchorDate = today(); a.anchorBalance = 0; a.balanceDate = today(); }
-  const unc = rows.filter(r => !r.categoryId).length, nAcct = Object.keys(dest).length, nCats = Object.keys(created).length;
+  return { added, skipped, unc, dest, fresh, created, bal };
+}
+function commitTxImport() {
+  stashNewAcct();
+  const problem = txItemProblem(IMP);
+  if (problem) { toast(problem); (IMP.accountId === '__new' ? $('#imp-new-name') : $('#imp-acct'))?.focus(); return; }
+  const r = applyTxItem(IMP);
+  const nAcct = Object.keys(r.dest).length, nCats = Object.keys(r.created).length, single = r.dest[''];
   closeModal(); IMP = null;
   commit();
-  toast(`Imported ${rows.length.toLocaleString()} transaction${rows.length === 1 ? '' : 's'}${nAcct > 1 ? ` into ${nAcct} accounts` : single ? ` into ${single.name}` : ''}.${nCats ? ` Created ${nCats} categor${nCats === 1 ? 'y' : 'ies'}.` : ''}${unc ? ` ${unc} need a category.` : ''}`,
-    unc ? { label: 'Categorize', fn: () => go(`#/transactions?cat=_none&m=all`) } : { label: 'Undo', fn: undo });
-  if (fresh.some(a => a.ledger && !a.anchorBalance && !bal)) setTimeout(() => toast('Set each new account’s current balance (Accounts › Update balances) so its balance tracks from here.'), 400);
+  toast(`Imported ${r.added.toLocaleString()} transaction${r.added === 1 ? '' : 's'}${nAcct > 1 ? ` into ${nAcct} accounts` : single ? ` into ${single.name}` : ''}.${nCats ? ` Created ${nCats} categor${nCats === 1 ? 'y' : 'ies'}.` : ''}${r.unc ? ` ${r.unc} need a category.` : ''}`,
+    r.unc ? { label: 'Categorize', fn: () => go(`#/transactions?cat=_none&m=all`) } : { label: 'Undo', fn: undo });
+  if (r.fresh.some(a => a.ledger && !a.anchorBalance && !r.bal)) setTimeout(() => toast('Set each new account’s current balance (Accounts › Update balances) so its balance tracks from here.'), 400);
 }
-function commitPositions() {
-  const P = IMP.positions.filter(p => p.include);
+/* Writes a positions file into holdings (the caller commits). */
+function applyPositionsItem(it) {
+  const P = it.positions.filter(p => p.include);
   const targets = {};
-  for (const [src, val] of Object.entries(IMP.srcMap)) {
+  for (const [src, val] of Object.entries(it.srcMap)) {
     if (val === '__new') {
-      const a = { id: uid(), name: (IMP.srcNames?.[src] ?? (src || 'Brokerage')).trim() || 'Brokerage', type: IMP.srcTypes?.[src] || guessInvType(src), institution: '', balance: 0, balanceDate: today(), importName: src, owner: UI.lens || 'joint' };
-      if (IMP.ofx?.last4) a.last4 = IMP.ofx.last4;
+      const a = { id: uid(), name: (it.srcNames?.[src] ?? (src || 'Brokerage')).trim() || 'Brokerage', type: it.srcTypes?.[src] || guessInvType(src), institution: '', balance: 0, balanceDate: today(), importName: src, owner: UI.lens || 'joint' };
+      if (it.ofx?.last4) a.last4 = it.ofx.last4;
       state.accounts.push(a); targets[src] = a.id;
     } else { targets[src] = val; const a = acctById(val); if (a && src) a.importName = src; }
   }
   const touched = new Set(Object.values(targets));
   const old = {};
   for (const h of state.holdings) if (touched.has(h.accountId)) old[h.accountId + '|' + h.symbol] = h;
-  if (IMP.replace !== false) state.holdings = state.holdings.filter(h => !touched.has(h.accountId) || h.private);
+  if (it.replace !== false) state.holdings = state.holdings.filter(h => !touched.has(h.accountId) || h.private);
   for (const p of P) {
     const accountId = targets[p.srcAccount || ''] || targets[Object.keys(targets)[0]];
     const prev = old[accountId + '|' + p.symbol];
@@ -2360,9 +2392,238 @@ function commitPositions() {
     if (existing) Object.assign(existing, rec); else state.holdings.push({ id: uid(), ...rec });
   }
   for (const id of touched) { const a = acctById(id); if (a) a.balanceDate = today(); }
+  return { count: P.length, accounts: [...touched] };
+}
+function commitPositions() {
+  const r = applyPositionsItem(IMP);
   closeModal(); IMP = null;
   commit();
-  toast(`Updated ${P.length} holding${P.length === 1 ? '' : 's'} in ${touched.size} account${touched.size === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
+  toast(`Updated ${r.count} holding${r.count === 1 ? '' : 's'} in ${r.accounts.length} account${r.accounts.length === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
+}
+
+/* ================= batch import: the month's downloads in one go =================
+   Each file is read the same way as a single import, matched to its account (account number,
+   the file's name pattern from last time, or overlap with transactions already there),
+   and everything is reviewed on one screen. */
+
+const isYearLike = s => /^(19|20)\d\d$/.test(s);
+const MONTH_WORDS = /(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec)/g;
+/* A file name with dates and copy numbers removed: "Chase9876_Activity20261005.CSV" → "chase9876-activity". */
+function fileStem(name) {
+  let s = String(name || '').toLowerCase().replace(/\.[a-z0-9]{2,4}$/, '');
+  s = s.replace(/\(\d+\)/g, ' ').replace(/\d{5,}/g, ' ').replace(/(?<!\d)\d{1,2}[-_.]\d{1,2}(?:[-_.]\d{2,4})?(?!\d)/g, ' ')
+       .replace(/(?<!\d)(?:19|20)\d\d(?!\d)/g, ' ').replace(MONTH_WORDS, ' ');
+  s = s.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const generic = /^((export|exported|transactions?|download|statement|statements|activity|history|data|file|untitled|accounts?|ofx|qfx|csv|qbo|pdf|bank|my)(-|$))+$/;
+  return s.length < 4 || generic.test(s + '-') ? '' : s;
+}
+function matchByStem(name) {
+  const st = fileStem(name); if (!st) return '';
+  const a = txnAccounts().find(a => (a.importStems || []).includes(st));
+  return a ? a.id : '';
+}
+/* The account whose existing transactions this file clearly overlaps (downloads usually overlap last month's). */
+function matchByOverlap(list) {
+  const keyOf = (t, sign) => (t.fitid ? 'fit:' + t.fitid : 'h:' + hashStr(`${t.date}|${round2(t.amount * sign)}|${normPayee(t.payee)}`));
+  const keys = list.map(t => keyOf(t, 1)), flippedKeys = list.map(t => keyOf(t, -1));
+  let best = null, bestN = 0, second = 0;
+  for (const a of txnAccounts()) {
+    const ids = new Set(state.transactions.filter(t => t.accountId === a.id && t.importId).map(t => (t.importId.startsWith('h:') ? t.importId.replace(/:\d+$/, '') : t.importId)));
+    if (!ids.size) continue;
+    for (const [ks, flipped] of [[keys, false], [flippedKeys, true]]) {
+      const n = ks.filter(k => ids.has(k)).length;
+      if (n > bestN) { second = bestN; bestN = n; best = { id: a.id, flipped }; } else if (n > second) second = n;
+    }
+  }
+  return best && bestN >= 2 && bestN >= second * 2 ? best : null;
+}
+function withItem(it, fn) { const saved = IMP; IMP = it; try { return fn(); } finally { IMP = saved; } }
+function rebuildItem(it) { withItem(it, () => { if (it.source === 'pdf') buildTxRowsFromPdf(); else buildTxRows(it.rawList); }); }
+function itemAcctType(it) { return it.accountId === '__new' ? (it.newDefaults?.type || 'checking') : acctById(it.accountId)?.type; }
+function suggestAccountName(it, type) {
+  if (it.csvAcctName) return it.csvAcctName;
+  const label = ACCOUNT_TYPES[type]?.label || 'Account';
+  const skip = /^(activity|transactions?|statements?|stmt|export|checking|savings|card|credit|debit|bank|account|acct|history|download|\d+)$/;
+  const brand = fileStem(it.fileName).split('-').map(w => w.replace(/\d+/g, '')).filter(w => w.length > 1 && !skip.test(w)).map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
+  return `${brand ? brand + ' ' : ''}${label}${it.fileLast4 ? ' ' + it.fileLast4 : ''}`.trim();
+}
+/* Some bank CSVs start with lines like "Account Name : Household Checking" and "Account Number : XXXX4421". */
+function csvPreamble(it) {
+  for (const r of (it.csv || []).slice(0, Math.min(it.headerRow || 0, 12))) {
+    const line = r.join(' ');
+    const name = /account\s*name\s*[:=]\s*(.+)$/i.exec(line), num = /account\s*(?:number|no\.?|#)\s*[:=]\s*\S*?(\d{4})\b/i.exec(line);
+    if (name) it.csvAcctName = name[1].trim().slice(0, 60);
+    if (num) it.fileLast4 = num[1];
+  }
+  // card exports mark purchases as "Sale"
+  const m = it.map || {}, ti = (it.headers || []).findIndex(h => /^type$/i.test(String(h).trim()));
+  if (ti >= 0 && (it.csv || []).slice((it.headerRow || 0) + 1, (it.headerRow || 0) + 40).some(r => /^sale$/i.test(String(r[ti] || '').trim()))) it.looksLikeCard = true;
+  return m;
+}
+const accountsWithLast4 = l4 => (l4 ? txnAccounts().filter(a => a.last4 === l4) : []);
+/* Card files sometimes list purchases as positive; flip them so money out is negative. */
+function autoFlipForCard(it) {
+  if (it.source !== 'csv' || itemAcctType(it) !== 'credit') return;
+  const rows = it.txRows.filter(r => !/payment|thank you|autopay|pymt/i.test(r.payee));
+  const pos = rows.filter(r => r.amount > 0).length, neg = rows.filter(r => r.amount < 0).length;
+  if (pos >= 2 && pos > neg * 1.5) { it.rawList = it.rawList.map(r => ({ ...r, amount: -r.amount })); it.flipped = !it.flipped; it.autoFlipped = true; rebuildItem(it); }
+}
+
+async function analyzeBatchFile(file) {
+  const saved = IMP;
+  IMP = { step: 'pick', kind: 'txns' };
+  try {
+    await handleImportFile(file, { silent: true });
+    const it = IMP;
+    Object.assign(it, { file, include: true });
+    if (it.error) { it.problem = it.error; it.include = false; return it; }
+    if (it.step === 'positions') return it;
+    if (it.step === 'map') {
+      if (it.useAcctCol) { it.solo = 'This file holds several accounts, like an export from another app. Import it on its own.'; it.include = false; return it; }
+      const list = csvMappedRows();
+      if (!list.length) { it.solo = 'Ọrọ̀ couldn’t tell which columns hold the date and amount. Import it on its own to choose them.'; it.include = false; return it; }
+      it.multi = false; it.step = 'review'; it.rawList = list;
+    }
+    if (it.multi) { it.solo = 'This file holds several accounts. Import it on its own.'; it.include = false; return it; }
+    if (!it.rawList && it.source !== 'pdf') it.rawList = it.ofx?.txns?.map(t => ({ ...t, bankCategory: '' })) || it.qif || [];
+    // which account?
+    if (it.source === 'csv') { csvPreamble(it); if (!it.accountId) it.accountId = guessAccount(it.fileLast4); }
+    const sameNumber = accountsWithLast4(it.fileLast4), stemId = matchByStem(it.fileName);
+    if (it.source === 'ofx' && sameNumber.length === 1) { it.accountId = sameNumber[0].id; it.matchedBy = `number ending ${it.fileLast4}`; }
+    else if (stemId) { it.accountId = stemId; it.matchedBy = 'same kind of file as last time'; }
+    else if (sameNumber.length === 1) { it.accountId = sameNumber[0].id; it.matchedBy = `number ending ${it.fileLast4}`; }
+    else {
+      it.accountId = '';
+      const m = matchByOverlap(it.source === 'pdf' ? withItem(it, () => (buildTxRowsFromPdf(), it.rawList)) : it.rawList);
+      if (m) {
+        it.accountId = m.id; it.matchedBy = 'overlaps transactions already there';
+        if (m.flipped) { if (it.source === 'pdf') it.flipAll = !it.flipAll; else it.rawList = it.rawList.map(r => ({ ...r, amount: -r.amount })); it.flipped = true; it.autoFlipped = true; }
+      }
+    }
+    if (!it.accountId && sameNumber.length > 1) { it.accountId = sameNumber[0].id; it.matchedBy = `number ending ${it.fileLast4} (more than one account has it; check this)`; }
+    if (!it.accountId) {
+      const type = it.newDefaults?.type || (it.looksLikeCard ? 'credit' : guessTypeFromName(it.fileName));
+      it.accountId = '__new'; it.newDefaults = { name: suggestAccountName(it, type), type, inst: '' };
+    }
+    rebuildItem(it);
+    autoFlipForCard(it);
+    return it;
+  } finally { IMP = saved; }
+}
+
+async function startBatch(files) {
+  IMP = { step: 'batch', items: [], reading: files.length };
+  const box = $('#imp');
+  for (let i = 0; i < files.length; i++) {
+    if (box) box.innerHTML = `<p class="muted pad">Reading ${i + 1} of ${files.length}: ${esc(files[i].name)}…</p>`;
+    setModalActions('<button class="btn ghost" data-close>Cancel</button>');
+    IMP.items.push(await analyzeBatchFile(files[i]));
+    if (!IMP || IMP.step !== 'batch') return; // closed while reading
+  }
+  IMP.reading = 0;
+  renderImport();
+}
+
+function batchCounts(it) {
+  const rows = it.txRows || [];
+  return { add: rows.filter(r => r.include).length, dup: rows.filter(r => r.status === 'dup').length, maybe: rows.filter(r => r.status === 'maybe').length, maybeIn: rows.filter(r => r.status === 'maybe' && r.include).length, unc: rows.filter(r => r.include && !r.categoryId).length };
+}
+function renderBatchStep(box) {
+  const items = IMP.items;
+  let nTx = 0, nPosFiles = 0;
+  const cards = items.map((it, k) => {
+    const head = `<header class="batch-head"><label class="check"><input type="checkbox" data-binc="${k}" ${it.include ? 'checked' : ''} ${it.problem || it.solo ? 'disabled' : ''}> <strong>${esc(it.fileName)}</strong></label>`;
+    if (it.problem || it.solo) return `<section class="batch-item off">${head}<span class="muted small">Not included</span></header>
+      <p class="notice ${it.problem ? 'bad' : ''} small">${esc(it.problem || it.solo)}</p>${it.solo ? `<button class="btn small" data-imp="bsolo-${k}">Import this file on its own</button>` : ''}</section>`;
+    if (it.kind === 'positions') {
+      const P = it.positions.filter(p => p.include), total = sum(P.map(p => p.value));
+      if (it.include) nPosFiles++;
+      const srcs = Object.keys(it.srcMap);
+      return `<section class="batch-item ${it.include ? '' : 'off'}">${head}<span class="muted small">Holdings · ${P.length} position${P.length === 1 ? '' : 's'} · ${money(total, { cents: false })}</span></header>
+        ${srcs.map((src, j) => `<div class="batch-row"><label class="field"><span>${esc(src || 'Into')}</span><select data-bsrc="${k}|${j}">${invAccountOptions(it.srcMap[src])}</select></label>
+          ${it.srcMap[src] === '__new' ? `<label class="field"><span>New account name</span><input data-bsrcname="${k}|${j}" value="${esc(it.srcNames?.[src] ?? (src || 'Brokerage'))}"></label>` : ''}</div>`).join('')}
+        <p class="muted small">Replaces the current holdings in ${srcs.length === 1 ? 'that account' : 'those accounts'} with this snapshot.</p></section>`;
+    }
+    const c = batchCounts(it), rows = it.txRows || [], dates = rows.map(r => r.date).sort();
+    if (it.include) nTx += c.add;
+    const kind = { ofx: 'QFX/OFX', csv: 'CSV', pdf: 'PDF statement', qif: 'QIF' }[it.source] || 'File';
+    const bal = it.ofx?.balance;
+    return `<section class="batch-item ${it.include ? '' : 'off'}">${head}
+        <span class="muted small">${kind}${dates.length ? ` · ${dateLabel(dates[0], true)} to ${dateLabel(dates[dates.length - 1], true)}` : ''}</span></header>
+      <div class="batch-row">
+        <label class="field"><span>Into</span><select data-bacct="${k}">${txnAccountOptions(it.accountId)}</select></label>
+        <span class="muted small batch-why">${it.accountId === '__new' ? 'No match yet. Ọrọ̀ will remember this file next time.' : it.matchedBy ? `Matched: ${esc(it.matchedBy)}` : ''}</span>
+      </div>
+      ${it.accountId === '__new' ? `<div class="batch-new">${newAccountFields(`b${k}-new`, it.newDefaults || {})}</div>` : ''}
+      <p class="batch-counts"><strong>${c.add.toLocaleString()} new</strong>${c.dup ? ` · ${c.dup} already in Ọrọ̀` : ''}${c.unc ? ` · ${c.unc} need a category` : ''}${it.autoFlipped ? ' · <span class="tag soft">signs flipped: this file listed purchases as positive</span>' : ''}</p>
+      <div class="toolbar">
+        ${c.maybe ? `<label class="check small"><input type="checkbox" data-bmaybe="${k}" ${c.maybeIn ? 'checked' : ''}> Also add ${c.maybe} possible duplicate${c.maybe === 1 ? '' : 's'}</label>` : ''}
+        ${bal && isFinite(bal.amount) ? `<label class="check small"><input type="checkbox" data-bbal="${k}" ${it.setBal !== false ? 'checked' : ''}> Set balance to ${money(Math.abs(bal.amount))} as of ${dateLabel(bal.date, true)}</label>` : ''}
+        ${it.source !== 'ofx' ? `<button class="btn small ghost" data-imp="bflip-${k}">Flip signs</button>` : ''}
+      </div>
+      ${c.add ? `<details><summary class="small">Preview</summary><table class="ledger compact"><tbody>${rows.filter(r => r.include).slice(0, 8).map(r => `<tr><td class="nowrap">${dateLabel(r.date, true)}</td><td>${esc(prettyPayee(r.payee))}</td><td class="muted small">${r.categoryId ? esc(catName(r.categoryId)) : 'Uncategorized'}</td><td class="num ${signClass(r.amount)}">${money(r.amount)}</td></tr>`).join('')}</tbody></table>${c.add > 8 ? `<p class="muted small">and ${c.add - 8} more</p>` : ''}</details>` : ''}
+    </section>`;
+  }).join('');
+  const nFiles = items.filter(it => it.include && !it.problem && !it.solo).length;
+  box.innerHTML = `<p class="lede">${items.length} files. Check where each one goes, then import them together. Duplicates are skipped automatically.</p><div class="batch-list">${cards}</div>`;
+  box.onchange = e => {
+    const el = e.target, d = el.dataset;
+    const at = s => s.split('|').map(Number);
+    if (d.binc != null) { items[+d.binc].include = el.checked; return renderImport(); }
+    if (d.bacct != null) {
+      const it = items[+d.bacct]; it.accountId = el.value; it.matchedBy = el.value && el.value !== '__new' ? 'chosen by you' : '';
+      if (el.value === '__new' && !it.newDefaults?.name) { const type = guessTypeFromName(it.fileName); it.newDefaults = { name: suggestAccountName(it, type), type, inst: '' }; }
+      if (it.autoFlipped) { it.rawList = it.rawList.map(r => ({ ...r, amount: -r.amount })); it.flipped = !it.flipped; it.autoFlipped = false; }
+      rebuildItem(it); autoFlipForCard(it); return renderImport();
+    }
+    const nm = /^b(\d+)-new-(name|type|inst)$/.exec(el.id || '');
+    if (nm) { const it = items[+nm[1]]; it.newDefaults = { ...(it.newDefaults || {}), [nm[2]]: el.value }; if (nm[2] === 'type') { rebuildItem(it); renderImport(); } return; }
+    if (d.bmaybe != null) { const it = items[+d.bmaybe]; it.txRows.forEach(r => { if (r.status === 'maybe') r.include = el.checked; }); return renderImport(); }
+    if (d.bbal != null) { items[+d.bbal].setBal = el.checked; return; }
+    if (d.bsrc != null) { const [k, j] = at(d.bsrc), it = items[k]; it.srcMap[Object.keys(it.srcMap)[j]] = el.value; return renderImport(); }
+    if (d.bsrcname != null) { const [k, j] = at(d.bsrcname), it = items[k]; (it.srcNames = it.srcNames || {})[Object.keys(it.srcMap)[j]] = el.value; return; }
+  };
+  const parts = [];
+  if (nTx) parts.push(`${nTx.toLocaleString()} transaction${nTx === 1 ? '' : 's'}`);
+  if (nPosFiles) parts.push(`${nPosFiles} holdings file${nPosFiles === 1 ? '' : 's'}`);
+  setModalActions(`<button class="btn ghost" data-imp="back">Start over</button><button class="btn primary" data-imp="bcommit" ${nFiles ? '' : 'disabled'}>${parts.length ? `Import ${parts.join(' and ')}` : 'Nothing to import'}</button>`);
+}
+
+function batchAction(act) {
+  const k = +act.split('-')[1];
+  if (act.startsWith('bflip-')) {
+    const it = IMP.items[k];
+    if (it.source === 'pdf') { it.flipAll = !it.flipAll; } else it.rawList = it.rawList.map(r => ({ ...r, amount: -r.amount }));
+    it.flipped = !it.flipped; it.autoFlipped = false;
+    rebuildItem(it); return renderImport();
+  }
+  if (act.startsWith('bsolo-')) { const file = IMP.items[k].file; IMP = { step: 'pick', kind: 'txns' }; return handleImportFile(file); }
+  if (act === 'bcommit') return commitBatch();
+}
+
+function commitBatch() {
+  const items = IMP.items.filter(it => it.include && !it.problem && !it.solo);
+  for (const it of items) {
+    if (it.kind === 'positions') continue;
+    const problem = txItemProblem(it);
+    if (problem) return toast(`${it.fileName}: ${problem}`);
+  }
+  let added = 0, skipped = 0, unc = 0, holdings = 0, bal = false;
+  const accts = new Set(), posAccts = new Set(), fresh = [];
+  for (const it of items) {
+    if (it.kind === 'positions') { const r = applyPositionsItem(it); holdings += r.count; r.accounts.forEach(a => posAccts.add(a)); continue; }
+    const r = applyTxItem(it);
+    added += r.added; skipped += r.skipped; unc += r.unc; if (r.bal) bal = true;
+    Object.values(r.dest).forEach(a => accts.add(a.id)); fresh.push(...r.fresh);
+  }
+  closeModal(); IMP = null;
+  commit();
+  const bits = [];
+  if (added || accts.size) bits.push(`Imported ${added.toLocaleString()} transaction${added === 1 ? '' : 's'} into ${accts.size} account${accts.size === 1 ? '' : 's'}`);
+  if (posAccts.size) bits.push(`${bits.length ? 'updated' : 'Updated'} ${holdings} holding${holdings === 1 ? '' : 's'} in ${posAccts.size} account${posAccts.size === 1 ? '' : 's'}`);
+  toast(`${bits.join(' and ')}.${skipped ? ` Skipped ${skipped} already there.` : ''}${unc ? ` ${unc} need a category.` : ''}`,
+    unc ? { label: 'Categorize', fn: () => go('#/transactions?cat=_none&m=all') } : { label: 'Undo', fn: undo });
+  if (fresh.some(a => a.ledger && !a.anchorBalance && !bal)) setTimeout(() => toast('Set each new account’s current balance (Accounts › Update balances) so its balance tracks from here.'), 400);
 }
 
 /* ================= shared UI: router, shell, modal, toast, visual helpers ================= */
@@ -2554,6 +2815,9 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
+const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
+/* A quiet sign-off at the foot of the overview. */
+function colophon() { return `<footer class="colophon"><span class="wordmark">Ọrọ̀</span> is ${ORO_MEANING}. <em>${ORO_TAGLINE}</em></footer>`; }
 function pageHead(title, sub, actions = '') {
   return `<header class="page-head"><div><h1>${esc(title).replace(/Ọrọ̀/g, '<span class="wordmark">Ọrọ̀</span>')}</h1>${sub ? `<p class="sub">${sub}</p>` : ''}</div><div class="actions">${actions}</div></header>`;
 }
@@ -2647,21 +2911,21 @@ VIEWS.overview = () => {
   const sub = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   if (!state.accounts.length) {
     if (isCompanion()) return pageHead('Welcome to Ọrọ̀', sub) + `<div class="welcome">
-      <div class="welcome-copy"><h2>Your Mac’s money picture, on your ${deviceLabel()}</h2>
-        <p>Ọrọ̀ on this ${deviceLabel()} works from the data your Mac keeps in iCloud Drive. It stays on your devices and in your iCloud. Nothing is uploaded anywhere else.</p>
+      <div class="welcome-copy"><p class="welcome-kicker"><span class="wordmark">Ọrọ̀</span> is ${ORO_MEANING}.</p><h2>${ORO_TAGLINE}</h2>
+        <p>On this ${deviceLabel()}, Ọrọ̀ works from the data your Mac keeps in iCloud Drive, so it stays on your devices and in your iCloud. Nothing is uploaded anywhere else.</p>
         <ol class="steps"><li><strong>Open your Mac’s data:</strong> choose <strong>iCloud Drive › Ọrọ̀ › data › oro.json</strong>.</li>
         <li><strong>Review, import or add transactions</strong> here as you go.</li>
         <li><strong>Send your changes</strong> back to your Mac. They’re added the next time Ọrọ̀ is open there.</li></ol>
         <div class="actions"><button class="btn primary" data-act="sync-open">Open from iCloud Drive</button><button class="btn ghost" data-act="load-sample">Explore with sample data</button></div></div></div>`;
     return pageHead('Welcome to Ọrọ̀', sub) + `<div class="welcome">
-      <div class="welcome-copy"><h2>Your money, on your own machine</h2>
-        <p>Ọrọ̀ keeps your budget, net worth, investments, property and plans in one place that never leaves this Mac. Nothing is uploaded, and there’s no subscription.</p>
+      <div class="welcome-copy"><p class="welcome-kicker"><span class="wordmark">Ọrọ̀</span> is ${ORO_MEANING}.</p><h2>${ORO_TAGLINE}</h2>
+        <p>Your budget, net worth, investments, property and plans in one place that never leaves your own devices. Nothing is uploaded, and there’s no subscription.</p>
         <ol class="steps"><li><strong>Choose your Ọrọ̀ folder</strong> so everything is saved as files with daily backups. <button class="linklike" data-act="connect-folder">Choose folder</button></li>
         <li><strong>Add your accounts</strong>, or import a statement from your bank, card or brokerage.</li>
         <li><strong>Set a few budgets and goals</strong>, then use Money date to go over the month together.</li></ol>
         <div class="actions"><button class="btn primary" data-act="add-account">Add an account</button><button class="btn" data-act="import">Import a file</button><button class="btn ghost" data-act="load-sample">Explore with sample data</button></div></div></div>`;
   }
-  return UI.mode === 'simple' ? overviewSimple(sub) : overviewDetailed(sub);
+  return (UI.mode === 'simple' ? overviewSimple(sub) : overviewDetailed(sub)) + colophon();
 };
 
 function spendByGroup(txs) {
@@ -3637,7 +3901,7 @@ VIEWS.data = () => {
     <p class="muted">${state.accounts.length} accounts, ${n.toLocaleString()} transactions, ${state.holdings.length} holdings, ${state.goals.length} goals${state.meta.sample ? '. This is sample data.' : '.'}</p>
     <div class="actions"><button class="btn" data-act="load-sample">Load sample data</button><button class="btn ghost danger-text" data-act="erase">Erase everything</button></div>
   </section>
-  <p class="muted small center">Ọrọ̀ 2.2 · Runs on your own devices. No accounts, servers or tracking.</p>`;
+  <p class="muted small center about-line"><span class="wordmark">Ọrọ̀</span> is ${ORO_MEANING}. <em>${ORO_TAGLINE}</em><br>Version 2.2 · Runs on your own devices. No accounts, servers or tracking.</p>`;
 };
 async function paintBackups() {
   const box = $('#backup-list'); if (!box) return;
@@ -4078,7 +4342,7 @@ function paintSlide() {
   for (const k in ChartSpecs) delete ChartSpecs[k];
   const n = MD.slides.length, s = MD.slides[MD.i];
   el.innerHTML = `
-    <header class="present-top"><span class="brand">Ọrọ̀</span><span class="present-title">Money date · ${monthLabel(MD.mk)}</span>
+    <header class="present-top"><span class="brand" title="Ọrọ̀ is Yoruba for wealth">Ọrọ̀</span><span class="present-title">Money date · ${monthLabel(MD.mk)}</span>
       <span class="present-prog">${MD.slides.map((_, k) => `<i class="${k === MD.i ? 'on' : k < MD.i ? 'done' : ''}"></i>`).join('')}</span>
       <button class="icon-btn" data-md="close" aria-label="Exit Money date">×</button></header>
     <section class="slide" aria-live="polite">${s.html()}</section>
@@ -4146,7 +4410,8 @@ function buildSlides(mk) {
   slides.push({ title: 'Decisions', html: () => `<div class="slide-narrow"><h2 class="slide-h2">What we decided</h2>
       <p class="slide-lede">Write down anything you agreed to change. It’s saved with ${M}’s review.</p>
       <textarea data-review-notes="${mk}" rows="7" placeholder="e.g. Move $300 a month from dining out to the roof fund">${esc(state.reviews[mk]?.notes || '')}</textarea>
-      <div class="actions"><button class="btn primary" data-md="done">Mark ${M} as reviewed</button></div></div>` });
+      <div class="actions"><button class="btn primary" data-md="done">Mark ${M} as reviewed</button></div>
+      <p class="slide-sign"><span class="wordmark">Ọrọ̀</span> · ${ORO_TAGLINE}</p></div>` });
   return slides;
 }
 function mdAction(a) {
@@ -4220,7 +4485,7 @@ function lockNow() {
   closeModal(true);
   const wrap = document.createElement('div');
   wrap.className = 'lock-screen';
-  wrap.innerHTML = `<form class="lock-card" id="relock"><div class="brand big">Ọrọ̀</div><p>Ọrọ̀ locked after a period of inactivity.</p>
+  wrap.innerHTML = `<form class="lock-card" id="relock"><div class="brand big">Ọrọ̀</div><p class="brand-tag">${ORO_MEANING} · ${ORO_TAGLINE}</p><p>Ọrọ̀ locked after a period of inactivity.</p>
     <label class="field"><span>Passphrase</span><input type="password" id="relock-pass" autocomplete="current-password" autofocus></label>
     <p class="notice bad small" id="relock-err" hidden>That passphrase didn’t work.</p><button class="btn primary" type="submit">Unlock</button></form>`;
   document.body.appendChild(wrap);
@@ -4532,6 +4797,7 @@ function lockScreen(payload) {
     wrap.className = 'lock-screen';
     wrap.innerHTML = `<form class="lock-card" id="lock-form">
       <div class="brand big">Ọrọ̀</div>
+      <p class="brand-tag">${ORO_MEANING} · ${ORO_TAGLINE}</p>
       <p>Your data is encrypted. Enter your passphrase to open it.</p>
       <label class="field"><span>Passphrase</span><input type="password" id="lock-pass" autocomplete="current-password" autofocus></label>
       <p class="notice bad small" id="lock-err" hidden>That passphrase didn’t work.</p>
@@ -4595,7 +4861,7 @@ function deviceLabel() {
   if (/iPhone/.test(u)) return 'iPhone';
   if (/iPad/.test(u) || (/Macintosh/.test(u) && navigator.maxTouchPoints > 1)) return 'iPad';
   if (/Android/.test(u)) return 'phone';
-  return 'other device';
+  return 'device';
 }
 const shortWhen = iso => { if (!iso) return '—'; const d = new Date(iso); return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };
 const whenLabel = iso => iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'an unknown date';

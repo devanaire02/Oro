@@ -16,7 +16,7 @@ function paintSlide() {
   for (const k in ChartSpecs) delete ChartSpecs[k];
   const n = MD.slides.length, s = MD.slides[MD.i];
   el.innerHTML = `
-    <header class="present-top"><span class="brand">Ọrọ̀</span><span class="present-title">Money date · ${monthLabel(MD.mk)}</span>
+    <header class="present-top"><span class="brand" title="Ọrọ̀ is Yoruba for wealth">Ọrọ̀</span><span class="present-title">Money date · ${monthLabel(MD.mk)}</span>
       <span class="present-prog">${MD.slides.map((_, k) => `<i class="${k === MD.i ? 'on' : k < MD.i ? 'done' : ''}"></i>`).join('')}</span>
       <button class="icon-btn" data-md="close" aria-label="Exit Money date">×</button></header>
     <section class="slide" aria-live="polite">${s.html()}</section>
@@ -84,7 +84,8 @@ function buildSlides(mk) {
   slides.push({ title: 'Decisions', html: () => `<div class="slide-narrow"><h2 class="slide-h2">What we decided</h2>
       <p class="slide-lede">Write down anything you agreed to change. It’s saved with ${M}’s review.</p>
       <textarea data-review-notes="${mk}" rows="7" placeholder="e.g. Move $300 a month from dining out to the roof fund">${esc(state.reviews[mk]?.notes || '')}</textarea>
-      <div class="actions"><button class="btn primary" data-md="done">Mark ${M} as reviewed</button></div></div>` });
+      <div class="actions"><button class="btn primary" data-md="done">Mark ${M} as reviewed</button></div>
+      <p class="slide-sign"><span class="wordmark">Ọrọ̀</span> · ${ORO_TAGLINE}</p></div>` });
   return slides;
 }
 function mdAction(a) {
@@ -158,7 +159,7 @@ function lockNow() {
   closeModal(true);
   const wrap = document.createElement('div');
   wrap.className = 'lock-screen';
-  wrap.innerHTML = `<form class="lock-card" id="relock"><div class="brand big">Ọrọ̀</div><p>Ọrọ̀ locked after a period of inactivity.</p>
+  wrap.innerHTML = `<form class="lock-card" id="relock"><div class="brand big">Ọrọ̀</div><p class="brand-tag">${ORO_MEANING} · ${ORO_TAGLINE}</p><p>Ọrọ̀ locked after a period of inactivity.</p>
     <label class="field"><span>Passphrase</span><input type="password" id="relock-pass" autocomplete="current-password" autofocus></label>
     <p class="notice bad small" id="relock-err" hidden>That passphrase didn’t work.</p><button class="btn primary" type="submit">Unlock</button></form>`;
   document.body.appendChild(wrap);

@@ -26,18 +26,19 @@ function newAccountFields(prefix, def = {}) {
 }
 const guessTypeFromName = n => /card|visa|amex|american express|mastercard|discover|sapphire|freedom/i.test(n) ? 'credit' : /saving|reserve|money market|hysa/i.test(n) ? 'savings' : /loan|mortgage/i.test(n) ? 'loan' : 'checking';
 
-async function handleImportFile(file) {
-  const box = $('#imp'); if (box) box.innerHTML = `<p class="muted pad">Reading ${esc(file.name)}…</p>`;
+async function handleImportFile(file, opts = {}) {
+  const box = $('#imp'); if (box && !opts.silent) box.innerHTML = `<p class="muted pad">Reading ${esc(file.name)}…</p>`;
   IMP.fileName = file.name;
   const ext = (file.name.split('.').pop() || '').toLowerCase();
   const fours = [...file.name.matchAll(/(?<!\d)(\d{4})(?!\d)/g)].map(m => m[1]);
-  const last4 = fours.find(f => activeAccounts().some(a => a.last4 === f)) || fours[fours.length - 1];
+  const last4 = fours.find(f => activeAccounts().some(a => a.last4 === f)) || fours.filter(f => !isYearLike(f)).pop() || '';
+  IMP.fileLast4 = last4;
   try {
     if (ext === 'pdf') {
       const lines = await pdfToLines(await readFileAsBuffer(file));
       const { rows, period, last4: textLast4, isCard } = parseStatementLines(lines);
       if (!rows.length) throw new Error('Ọrọ̀ couldn’t find transaction lines in that PDF. If it’s a scanned image, or an unusual layout, download the OFX/QFX or CSV version from your bank instead.');
-      IMP.source = 'pdf'; IMP.period = period; IMP.pdfRows = rows;
+      IMP.source = 'pdf'; IMP.period = period; IMP.pdfRows = rows; if (textLast4) IMP.fileLast4 = textLast4;
       IMP.accountId = guessAccount(textLast4) || guessAccount(last4);
       if (!IMP.accountId) IMP.newDefaults = { type: isCard ? 'credit' : 'checking' };
       IMP.step = 'review'; buildTxRowsFromPdf();
@@ -45,7 +46,7 @@ async function handleImportFile(file) {
       const text = await readFileAsText(file);
       if (looksLikeOFX(text) || ['ofx', 'qfx', 'qbo'].includes(ext)) {
         const o = parseOFX(text);
-        IMP.source = 'ofx'; IMP.ofx = o;
+        IMP.source = 'ofx'; IMP.ofx = o; if (o.last4) IMP.fileLast4 = o.last4;
         if (o.positions.length) {
           IMP.kind = 'positions'; IMP.step = 'positions';
           IMP.positions = o.positions.map(p => ({ ...p, assetClass: guessAssetClass(p.symbol, p.name), include: true }));
@@ -88,7 +89,7 @@ async function handleImportFile(file) {
   } catch (e) {
     IMP.error = e.message || String(e); IMP.step = 'pick';
   }
-  renderImport();
+  if (!opts.silent) renderImport();
 }
 function guessAccount(last4, inv) {
   if (last4) { const a = activeAccounts().find(a => a.last4 === last4); if (a) return a.id; }
@@ -181,9 +182,9 @@ function renderImport() {
     box.innerHTML = `
       ${IMP.error ? `<div class="notice bad">${esc(IMP.error)}</div>` : ''}
       <label class="drop" id="imp-drop">
-        <input type="file" id="imp-file" accept=".csv,.ofx,.qfx,.qbo,.qif,.pdf,.txt">
-        <span class="drop-title">Drop a statement or export here</span>
-        <span class="muted">or click to choose a file. OFX, QFX, QBO, QIF, CSV or PDF.</span>
+        <input type="file" id="imp-file" accept=".csv,.ofx,.qfx,.qbo,.qif,.pdf,.txt" multiple>
+        <span class="drop-title">Drop statements or exports here</span>
+        <span class="muted">or click to choose. One file or the whole month’s downloads at once. OFX, QFX, QBO, QIF, CSV or PDF.</span>
         <span class="drop-note">Read on this Mac. Nothing is uploaded.</span>
       </label>
       <div class="help-grid">
@@ -192,16 +193,22 @@ function renderImport() {
         <div><h4>Moving from another app</h4><p>Exports from <strong>YNAB, Monarch, Mint, Copilot, Tiller</strong> (CSV) or <strong>Quicken</strong> (QIF) bring every account at once, with categories, tags and notes. PDF statements work as a last resort.</p></div>
       </div>`;
     const inp = $('#imp-file'), drop = $('#imp-drop');
-    inp.onchange = () => inp.files[0] && handleImportFile(inp.files[0]);
+    inp.onchange = () => importFiles([...inp.files]);
     drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
     drop.ondragleave = () => drop.classList.remove('over');
-    drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) handleImportFile(f); };
+    drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); importFiles([...e.dataTransfer.files]); };
     setModalActions('<button class="btn ghost" data-close>Cancel</button>');
     return;
   }
   if (s === 'map') return renderMapStep(box);
   if (s === 'review') return renderReviewStep(box);
   if (s === 'positions') return renderPositionsStep(box);
+  if (s === 'batch') return renderBatchStep(box);
+}
+function importFiles(files) {
+  if (!files.length) return;
+  if (files.length === 1) return handleImportFile(files[0]);
+  startBatch(files);
 }
 function colSelect(id, val, allowNone) {
   return `<select id="${id}">${allowNone ? `<option value="-1">None</option>` : ''}${IMP.headers.map((h, i) => `<option value="${i}" ${i === val ? 'selected' : ''}>${esc(h || `Column ${i + 1}`)}</option>`).join('')}</select>`;
@@ -340,7 +347,7 @@ function guessInvType(src) { return /401|403|ira|roth|rollover|retire|457|sep/i.
 
 /* ---- actions ---- */
 function importAction(act) {
-  if (act === 'back') { if (IMP.step === 'review' && IMP.source === 'csv') IMP.step = 'map'; else IMP = { step: 'pick', kind: 'txns' }; return renderImport(); }
+  if (act === 'back') { if (IMP.step === 'review' && IMP.source === 'csv' && !IMP.fromBatch) IMP.step = 'map'; else if (IMP.fromBatch) { IMP = IMP.fromBatch; IMP.step = 'batch'; } else IMP = { step: 'pick', kind: 'txns' }; return renderImport(); }
   if (act === 'to-review') {
     stashNewAcct();
     const list = csvMappedRows();
@@ -356,6 +363,7 @@ function importAction(act) {
   }
   if (act === 'commit') return commitTxImport();
   if (act === 'commit-pos') return commitPositions();
+  if (act.startsWith('b')) return batchAction(act);
 }
 function makeAccount(name, type, inst) {
   const T = ACCOUNT_TYPES[type] || ACCOUNT_TYPES.checking;
@@ -364,29 +372,36 @@ function makeAccount(name, type, inst) {
   state.accounts.push(a);
   return a;
 }
-function commitTxImport() {
-  // resolve destination accounts
+/* What's missing before an import can be saved ('' when ready). */
+function txItemProblem(it) {
+  if (it.multi) { for (const [src, v] of Object.entries(it.acctMap)) if (!v) return `Choose where “${src || 'unnamed'}” goes.`; return ''; }
+  if (!it.accountId) return 'Choose which account these transactions belong to.';
+  if (it.accountId === '__new' && !((it.newDefaults || {}).name || '').trim()) return 'Give the new account a name.';
+  return '';
+}
+/* Next time a file like this arrives, match it to the same account. */
+function rememberImportSource(acct, it) {
+  if (!acct) return;
+  if (!acct.last4 && it.fileLast4 && !state.accounts.some(x => x !== acct && x.last4 === it.fileLast4)) acct.last4 = it.fileLast4;
+  const stem = fileStem(it.fileName);
+  if (stem) acct.importStems = [stem, ...(acct.importStems || []).filter(s => s !== stem)].slice(0, 5);
+}
+/* Adds an import's checked rows to state (the caller commits). */
+function applyTxItem(it) {
   const dest = {}, fresh = [];
-  if (IMP.multi) {
-    for (const [src, v] of Object.entries(IMP.acctMap)) {
-      if (!v) return toast(`Choose where “${src || 'unnamed'}” goes.`);
+  if (it.multi) {
+    for (const [src, v] of Object.entries(it.acctMap)) {
       if (v === '__new') { const a = makeAccount(src || 'Imported account', guessTypeFromName(src)); a.importName = src; dest[src] = a; fresh.push(a); }
       else { dest[src] = acctById(v); dest[src].importName = dest[src].importName || src; }
     }
   } else {
-    if (!IMP.accountId) { toast('Choose which account these transactions belong to.'); $('#imp-acct')?.focus(); return; }
-    let acct = acctById(IMP.accountId);
-    if (IMP.accountId === '__new') {
-      stashNewAcct();
-      const d = IMP.newDefaults || {};
-      if (!(d.name || '').trim()) { toast('Give the new account a name.'); $('#imp-new-name')?.focus(); return; }
-      acct = makeAccount(d.name.trim(), d.type || 'checking', d.inst); fresh.push(acct);
-    }
+    let acct = acctById(it.accountId);
+    if (it.accountId === '__new') { const d = it.newDefaults || {}; acct = makeAccount(d.name.trim(), d.type || 'checking', d.inst); fresh.push(acct); }
     dest[''] = acct;
   }
-  // create categories from other apps' exports
+  // categories from other apps' exports
   const created = {};
-  const rows = IMP.txRows.filter(r => r.include);
+  const rows = it.txRows.filter(r => r.include);
   for (const r of rows) if (!r.categoryId && r.newCat) {
     if (!created[r.newCat]) {
       const parts = r.newCat.split(/\s*[:>]\s*/);
@@ -397,41 +412,58 @@ function commitTxImport() {
     }
     r.categoryId = created[r.newCat];
   }
+  const have = {};
+  let added = 0, skipped = 0, unc = 0;
   for (const r of rows) {
-    const acct = IMP.multi ? dest[r.srcAccount || ''] : dest[''];
+    const acct = it.multi ? dest[r.srcAccount || ''] : dest[''];
+    if (r.importId) {
+      const ids = have[acct.id] || (have[acct.id] = new Set(state.transactions.filter(t => t.accountId === acct.id && t.importId).map(t => t.importId)));
+      if (ids.has(r.importId)) { skipped++; continue; }   // e.g. two overlapping downloads in one batch
+      ids.add(r.importId);
+    }
     const t = { id: uid(), date: r.date, accountId: acct.id, payee: r.rename || prettyPayee(r.payee), rawPayee: r.payee, amount: r.amount, categoryId: r.categoryId || null, memo: r.memo || '', importId: r.importId };
     if (r.tags?.length) t.tags = r.tags;
     if (r.person) t.person = r.person;
-    state.transactions.push(t);
+    state.transactions.push(t); added++;
+    if (!t.categoryId) unc++;
   }
   state.transactions.sort((a, b) => b.date.localeCompare(a.date));
   const single = dest[''];
-  if (single && IMP.ofx?.last4) single.last4 = IMP.ofx.last4;
-  const bal = IMP.ofx?.balance;
-  if (single && bal && isFinite(bal.amount) && IMP.setBal !== false) setBalance(single, round2(Math.abs(bal.amount) * (bal.amount < 0 && !isLiability(single) ? -1 : 1)), bal.date || today());
+  if (single && it.ofx?.last4) single.last4 = it.ofx.last4;
+  if (single) rememberImportSource(single, it);
+  const bal = it.ofx?.balance;
+  if (single && bal && isFinite(bal.amount) && it.setBal !== false) setBalance(single, round2(Math.abs(bal.amount) * (bal.amount < 0 && !isLiability(single) ? -1 : 1)), bal.date || today());
   // accounts created by import start at zero on the earliest date so imported history doesn't move today's balance unexpectedly
   for (const a of Object.values(dest)) if (a.ledger && a.anchorDate === '0000-00-00') { a.anchorDate = today(); a.anchorBalance = 0; a.balanceDate = today(); }
-  const unc = rows.filter(r => !r.categoryId).length, nAcct = Object.keys(dest).length, nCats = Object.keys(created).length;
+  return { added, skipped, unc, dest, fresh, created, bal };
+}
+function commitTxImport() {
+  stashNewAcct();
+  const problem = txItemProblem(IMP);
+  if (problem) { toast(problem); (IMP.accountId === '__new' ? $('#imp-new-name') : $('#imp-acct'))?.focus(); return; }
+  const r = applyTxItem(IMP);
+  const nAcct = Object.keys(r.dest).length, nCats = Object.keys(r.created).length, single = r.dest[''];
   closeModal(); IMP = null;
   commit();
-  toast(`Imported ${rows.length.toLocaleString()} transaction${rows.length === 1 ? '' : 's'}${nAcct > 1 ? ` into ${nAcct} accounts` : single ? ` into ${single.name}` : ''}.${nCats ? ` Created ${nCats} categor${nCats === 1 ? 'y' : 'ies'}.` : ''}${unc ? ` ${unc} need a category.` : ''}`,
-    unc ? { label: 'Categorize', fn: () => go(`#/transactions?cat=_none&m=all`) } : { label: 'Undo', fn: undo });
-  if (fresh.some(a => a.ledger && !a.anchorBalance && !bal)) setTimeout(() => toast('Set each new account’s current balance (Accounts › Update balances) so its balance tracks from here.'), 400);
+  toast(`Imported ${r.added.toLocaleString()} transaction${r.added === 1 ? '' : 's'}${nAcct > 1 ? ` into ${nAcct} accounts` : single ? ` into ${single.name}` : ''}.${nCats ? ` Created ${nCats} categor${nCats === 1 ? 'y' : 'ies'}.` : ''}${r.unc ? ` ${r.unc} need a category.` : ''}`,
+    r.unc ? { label: 'Categorize', fn: () => go(`#/transactions?cat=_none&m=all`) } : { label: 'Undo', fn: undo });
+  if (r.fresh.some(a => a.ledger && !a.anchorBalance && !r.bal)) setTimeout(() => toast('Set each new account’s current balance (Accounts › Update balances) so its balance tracks from here.'), 400);
 }
-function commitPositions() {
-  const P = IMP.positions.filter(p => p.include);
+/* Writes a positions file into holdings (the caller commits). */
+function applyPositionsItem(it) {
+  const P = it.positions.filter(p => p.include);
   const targets = {};
-  for (const [src, val] of Object.entries(IMP.srcMap)) {
+  for (const [src, val] of Object.entries(it.srcMap)) {
     if (val === '__new') {
-      const a = { id: uid(), name: (IMP.srcNames?.[src] ?? (src || 'Brokerage')).trim() || 'Brokerage', type: IMP.srcTypes?.[src] || guessInvType(src), institution: '', balance: 0, balanceDate: today(), importName: src, owner: UI.lens || 'joint' };
-      if (IMP.ofx?.last4) a.last4 = IMP.ofx.last4;
+      const a = { id: uid(), name: (it.srcNames?.[src] ?? (src || 'Brokerage')).trim() || 'Brokerage', type: it.srcTypes?.[src] || guessInvType(src), institution: '', balance: 0, balanceDate: today(), importName: src, owner: UI.lens || 'joint' };
+      if (it.ofx?.last4) a.last4 = it.ofx.last4;
       state.accounts.push(a); targets[src] = a.id;
     } else { targets[src] = val; const a = acctById(val); if (a && src) a.importName = src; }
   }
   const touched = new Set(Object.values(targets));
   const old = {};
   for (const h of state.holdings) if (touched.has(h.accountId)) old[h.accountId + '|' + h.symbol] = h;
-  if (IMP.replace !== false) state.holdings = state.holdings.filter(h => !touched.has(h.accountId) || h.private);
+  if (it.replace !== false) state.holdings = state.holdings.filter(h => !touched.has(h.accountId) || h.private);
   for (const p of P) {
     const accountId = targets[p.srcAccount || ''] || targets[Object.keys(targets)[0]];
     const prev = old[accountId + '|' + p.symbol];
@@ -440,7 +472,11 @@ function commitPositions() {
     if (existing) Object.assign(existing, rec); else state.holdings.push({ id: uid(), ...rec });
   }
   for (const id of touched) { const a = acctById(id); if (a) a.balanceDate = today(); }
+  return { count: P.length, accounts: [...touched] };
+}
+function commitPositions() {
+  const r = applyPositionsItem(IMP);
   closeModal(); IMP = null;
   commit();
-  toast(`Updated ${P.length} holding${P.length === 1 ? '' : 's'} in ${touched.size} account${touched.size === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
+  toast(`Updated ${r.count} holding${r.count === 1 ? '' : 's'} in ${r.accounts.length} account${r.accounts.length === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
 }

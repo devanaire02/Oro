@@ -34,21 +34,21 @@ VIEWS.overview = () => {
   const sub = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   if (!state.accounts.length) {
     if (isCompanion()) return pageHead('Welcome to Ọrọ̀', sub) + `<div class="welcome">
-      <div class="welcome-copy"><h2>Your Mac’s money picture, on your ${deviceLabel()}</h2>
-        <p>Ọrọ̀ on this ${deviceLabel()} works from the data your Mac keeps in iCloud Drive. It stays on your devices and in your iCloud. Nothing is uploaded anywhere else.</p>
+      <div class="welcome-copy"><p class="welcome-kicker"><span class="wordmark">Ọrọ̀</span> is ${ORO_MEANING}.</p><h2>${ORO_TAGLINE}</h2>
+        <p>On this ${deviceLabel()}, Ọrọ̀ works from the data your Mac keeps in iCloud Drive, so it stays on your devices and in your iCloud. Nothing is uploaded anywhere else.</p>
         <ol class="steps"><li><strong>Open your Mac’s data:</strong> choose <strong>iCloud Drive › Ọrọ̀ › data › oro.json</strong>.</li>
         <li><strong>Review, import or add transactions</strong> here as you go.</li>
         <li><strong>Send your changes</strong> back to your Mac. They’re added the next time Ọrọ̀ is open there.</li></ol>
         <div class="actions"><button class="btn primary" data-act="sync-open">Open from iCloud Drive</button><button class="btn ghost" data-act="load-sample">Explore with sample data</button></div></div></div>`;
     return pageHead('Welcome to Ọrọ̀', sub) + `<div class="welcome">
-      <div class="welcome-copy"><h2>Your money, on your own machine</h2>
-        <p>Ọrọ̀ keeps your budget, net worth, investments, property and plans in one place that never leaves this Mac. Nothing is uploaded, and there’s no subscription.</p>
+      <div class="welcome-copy"><p class="welcome-kicker"><span class="wordmark">Ọrọ̀</span> is ${ORO_MEANING}.</p><h2>${ORO_TAGLINE}</h2>
+        <p>Your budget, net worth, investments, property and plans in one place that never leaves your own devices. Nothing is uploaded, and there’s no subscription.</p>
         <ol class="steps"><li><strong>Choose your Ọrọ̀ folder</strong> so everything is saved as files with daily backups. <button class="linklike" data-act="connect-folder">Choose folder</button></li>
         <li><strong>Add your accounts</strong>, or import a statement from your bank, card or brokerage.</li>
         <li><strong>Set a few budgets and goals</strong>, then use Money date to go over the month together.</li></ol>
         <div class="actions"><button class="btn primary" data-act="add-account">Add an account</button><button class="btn" data-act="import">Import a file</button><button class="btn ghost" data-act="load-sample">Explore with sample data</button></div></div></div>`;
   }
-  return UI.mode === 'simple' ? overviewSimple(sub) : overviewDetailed(sub);
+  return (UI.mode === 'simple' ? overviewSimple(sub) : overviewDetailed(sub)) + colophon();
 };
 
 function spendByGroup(txs) {

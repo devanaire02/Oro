@@ -1,6 +1,8 @@
 # Ọrọ̀
 
-Your household finances on your own Mac: budget, net worth, investments, property, planning and taxes. Nothing is uploaded and there's no subscription. Ọrọ̀ is a set of files in this folder that runs in your browser.
+**Ọrọ̀ is Yoruba for wealth. Know your wealth. Keep it close.**
+
+Your household finances on your own devices: budget, net worth, investments, property, planning and taxes. Nothing is uploaded and there's no subscription. Ọrọ̀ is a set of files in this folder that runs in your browser.
 
 ## Open it
 

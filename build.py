@@ -81,7 +81,7 @@ page = (html.replace('content="default-src' + csp_mac + '"', 'content="default-s
 assert csp_web in page
 (web / "index.html").write_text(page)
 (web / "manifest.webmanifest").write_text(json.dumps({
-    "name": NAME, "short_name": NAME, "description": "Household finances that stay on your own devices.",
+    "name": NAME, "short_name": NAME, "description": "Ọrọ̀ is Yoruba for wealth. Know your wealth. Keep it close.",
     "start_url": "./", "scope": "./", "display": "standalone", "background_color": "#E8EEE5", "theme_color": "#24508C",
     "icons": [{"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
               {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png"}]}, ensure_ascii=False, indent=1))
