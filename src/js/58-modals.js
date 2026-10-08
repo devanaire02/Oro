@@ -9,17 +9,22 @@ function offerRule(t, catId) {
   const src = t.rawPayee || t.payee;
   const existing = matchRule(src);
   if (existing && existing.categoryId === catId) return;
-  const key = ruleKeyFor(src); if (!key) return;
-  const others = state.transactions.filter(x => x.id !== t.id && isUncat(x) && !isSplit(x) && normPayee(x.rawPayee || x.payee).includes(key));
-  toast(`Always file “${key}” under ${catName(catId)}?`, {
-    label: others.length ? `Make a rule and fix ${others.length} more` : 'Make a rule',
-    fn: () => {
-      if (existing) existing.categoryId = catId; else state.rules.unshift({ id: uid(), text: key, categoryId: catId });
-      others.forEach(o => o.categoryId = catId);
-      commit();
-      toast(`Rule saved.${others.length ? ` ${others.length} more categorized.` : ''}`);
-    },
+  const key = existing ? existing.text : ruleKeyFor(src); if (!key) return;
+  const others = state.transactions.filter(x => x.id !== t.id && isUncat(x) && !isSplit(x) && ruleMatches({ text: key }, x.rawPayee || x.payee)).length;
+  toast(`Always file “${key}” under ${catName(catId)}?${others ? ` ${others} more uncategorized look${others === 1 ? 's' : ''} like it.` : ''}`, {
+    label: existing ? 'Update the rule…' : 'Make a rule…',
+    fn: () => ruleModal(existing?.id || null, { text: key, categoryId: catId }),
   });
+}
+/* Which transactions a rule's text would catch, for the live preview in the rule dialog. */
+function rulePreview(text, categoryId) {
+  const r = { text: String(text || '').trim().toUpperCase() };
+  if (!r.text) return null;
+  const hits = state.transactions.filter(t => !isSplit(t) && ruleMatches(r, t.rawPayee || t.payee));
+  const unc = hits.filter(t => !t.categoryId), other = hits.filter(t => t.categoryId && t.categoryId !== categoryId), same = hits.filter(t => categoryId && t.categoryId === categoryId);
+  const examples = [...new Set(hits.map(t => prettyPayee(t.rawPayee || t.payee)))].slice(0, 6);
+  const otherCats = Object.entries(groupBy(other, t => t.categoryId)).map(([c, l]) => `${catName(c)} ${l.length}`).join(', ');
+  return { hits, unc, other, same, examples, otherCats };
 }
 
 /* ---------- transaction (with splits, tags, person, receipts) ---------- */
@@ -389,9 +394,9 @@ function catModal(id) {
 }
 
 /* ---------- rule ---------- */
-function ruleModal(id) {
+function ruleModal(id, preset = {}) {
   const r = id ? state.rules.find(x => x.id === id) : null;
-  const v = r || { text: '', categoryId: '', rename: '' };
+  const v = { ...(r || { text: '', categoryId: '', rename: '' }), ...preset };
   openModal({
     title: r ? 'Edit rule' : 'Add a rule',
     body: `<form id="f" class="form-grid">
@@ -399,15 +404,39 @@ function ruleModal(id) {
       <label class="field"><span>Set the category to</span><select name="categoryId">${catOptions(v.categoryId, false)}</select></label>
       ${members().length > 1 ? `<label class="field"><span>And the person to</span><select name="person">${memberOptions(v.person || '', 'Leave as account owner')}</select></label>` : ''}
       <label class="field"><span>And rename the payee to</span><input name="rename" value="${esc(v.rename || '')}" placeholder="Optional"></label>
+      <div class="wide rule-preview" id="rule-preview"></div>
     </form>`,
     actions: `${r ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${r ? 'Save' : 'Add rule'}</button>`,
   });
+  let applyUnc = true, applyOther = false;
+  const paint = () => {
+    const d = formData($('#f')), p = rulePreview(d.text, d.categoryId), box = $('#rule-preview');
+    if (!box) return;
+    if (!p) { box.innerHTML = '<p class="muted small">Type part of the payee, like COSTCO or SHELL OIL. Shorter text catches more.</p>'; return; }
+    if (!p.hits.length) { box.innerHTML = '<p class="muted small">Nothing you have matches this yet. It will apply to future imports.</p>'; return; }
+    box.innerHTML = `<p><strong>Matches ${p.hits.length.toLocaleString()} transaction${p.hits.length === 1 ? '' : 's'}</strong>${p.unc.length ? ` · ${p.unc.length} uncategorized` : ''}${p.other.length ? ` · ${p.other.length} in other categories` : ''}${p.same.length ? ` · ${p.same.length} already in ${esc(catName(d.categoryId))}` : ''}</p>
+      <p class="muted small">For example: ${p.examples.map(esc).join(' · ')}${p.hits.length > p.examples.length ? ' …' : ''}</p>
+      ${p.unc.length ? `<label class="check"><input type="checkbox" id="rule-apply-unc" ${applyUnc ? 'checked' : ''}> Categorize the ${p.unc.length} uncategorized now</label>` : ''}
+      ${p.other.length ? `<label class="check"><input type="checkbox" id="rule-apply-other" ${applyOther ? 'checked' : ''}> Also move the ${p.other.length} filed elsewhere (${esc(p.otherCats)})</label>` : ''}`;
+  };
+  $('#f').addEventListener('input', e => { if (e.target.name === 'text') paint(); });
+  $('#f').addEventListener('change', e => {
+    if (e.target.id === 'rule-apply-unc') applyUnc = e.target.checked;
+    else if (e.target.id === 'rule-apply-other') applyOther = e.target.checked;
+    else paint();
+  });
+  paint();
   $('#save').onclick = () => {
     const d = formData($('#f'));
     if (!d.text.trim()) return toast('Type the text to match.');
+    if (!d.categoryId) return toast('Choose a category.');
     const rec = { text: d.text.trim().toUpperCase(), categoryId: d.categoryId, rename: d.rename.trim(), person: d.person || undefined };
+    const p = rulePreview(rec.text, rec.categoryId);
     if (r) Object.assign(r, rec); else state.rules.unshift({ id: uid(), ...rec });
+    const targets = p ? [...(applyUnc ? p.unc : []), ...(applyOther ? p.other : [])] : [];
+    for (const t of targets) { t.categoryId = rec.categoryId; if (rec.rename) t.payee = rec.rename; if (rec.person) t.person = rec.person; }
     closeModal(); commit();
+    toast(`Rule ${r ? 'updated' : 'saved'}.${targets.length ? ` ${targets.length} transaction${targets.length === 1 ? '' : 's'} categorized as ${catName(rec.categoryId)}.` : ''}`, { label: 'Undo', fn: undo });
   };
   if (r) $('#del').onclick = () => { state.rules = state.rules.filter(x => x.id !== r.id); closeModal(); commit(); };
 }

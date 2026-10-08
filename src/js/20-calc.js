@@ -59,15 +59,12 @@ function netWorthSeries() { return Object.keys(state.snapshots).sort().map(mk =>
 function snapshotNW(mk) { const s = state.snapshots[mk]; return s ? round2(sum(Object.values(s))) : null; }
 
 /* ---------- rules ---------- */
-function matchRule(payee) {
-  const p = normPayee(payee), raw = String(payee || '').toUpperCase();
-  for (const r of state.rules) {
-    const t = String(r.text || '').toUpperCase().trim();
-    if (!t) continue;
-    if (p.includes(normPayee(t) || t) || raw.includes(t)) return r;
-  }
-  return null;
+function ruleMatches(r, payee) {
+  const t = String(r.text || '').toUpperCase().trim();
+  if (!t) return false;
+  return normPayee(payee).includes(normPayee(t) || t) || String(payee || '').toUpperCase().includes(t);
 }
+function matchRule(payee) { return state.rules.find(r => ruleMatches(r, payee)) || null; }
 
 /* ---------- flows ---------- */
 function txInMonth(mk) { return memo('m:' + mk, () => state.transactions.filter(t => t.date.startsWith(mk))); }

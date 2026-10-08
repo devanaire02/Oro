@@ -28,7 +28,7 @@ const ACTIONS = {
       if (r) { t.categoryId = r.categoryId; if (r.rename) t.payee = r.rename; if (r.person) t.person = r.person; n++; }
       else { const b = builtinCategory(t.rawPayee || t.payee, t.amount); if (b) { t.categoryId = b; n++; } }
     }
-    commit(); toast(n ? `Categorized ${n} transaction${n > 1 ? 's' : ''}.` : 'No uncategorized transactions matched a rule.');
+    commit(); toast(n ? `Categorized ${n} transaction${n > 1 ? 's' : ''}.` : 'No uncategorized transactions matched a rule.', n ? { label: 'Undo', fn: undo } : null);
   },
   'load-sample': async () => {
     if (state.accounts.length && !await confirmBox('Load sample data', 'This replaces everything in Ọrọ̀ with a fictional household. You can undo it right after.', 'Replace with sample data', true)) return;

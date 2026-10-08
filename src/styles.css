@@ -617,6 +617,9 @@ body.presenting { overflow: hidden; }
 .slide-sign { margin-top: 28px; color: var(--muted); font: italic 15px var(--serif); }
 .slide-sign .wordmark { font-style: normal; color: var(--ink); }
 
+.rule-preview { border-top: 1px solid var(--rule); padding-top: 10px; display: grid; gap: 6px; }
+.rule-preview p { margin: 0; }
+
 /* ---------- batch import ---------- */
 .batch-list { display: flex; flex-direction: column; gap: 10px; max-height: 62vh; overflow: auto; padding-right: 4px; }
 .batch-item { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 14px 8px; background: var(--sheet); }
