@@ -15,6 +15,8 @@ html = (src / "index.html").read_text()
 css = (src / "styles.css").read_text()
 js_files = sorted((src / "js").glob("*.js"))
 js = "\n".join(p.read_text() for p in js_files)
+BUILD = hashlib.sha256((js + css + html).encode()).hexdigest()[:7]   # shown in Settings, so you can tell which version a device runs
+js = js.replace("__BUILD__", BUILD)
 vend = root / "vendor" / "package" / "build"
 pdfjs = (vend / "pdf.min.js").read_text()
 worker = (vend / "pdf.worker.min.js").read_text()
@@ -98,12 +100,13 @@ version = hashlib.sha256((page + css + js).encode()).hexdigest()[:12]
 (web / "sw.js").write_text(f"""/* Ọrọ̀ offline cache: always tries the network first, so updates show up right away; falls back to the cached copy offline. */
 const CACHE = 'oro-{version}';
 const FILES = {json.dumps(files)};
-self.addEventListener('install', e => {{ e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); }});
+self.addEventListener('install', e => {{ e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES.map(u => new Request(u, {{ cache: 'reload' }})))).then(() => self.skipWaiting())); }});
 self.addEventListener('activate', e => {{ e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); }});
 self.addEventListener('fetch', e => {{
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
-  e.respondWith(fetch(req).then(res => {{ if (res.ok) {{ const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }} return res; }})
+  const fresh = req.mode === 'navigate' ? new Request(req.url, {{ cache: 'no-cache', credentials: 'same-origin' }}) : new Request(req, {{ cache: 'no-cache' }});
+  e.respondWith(fetch(fresh).then(res => {{ if (res.ok) {{ const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }} return res; }})
     .catch(() => caches.match(req, {{ ignoreSearch: true }}).then(r => r || caches.match('index.html'))));
 }});
 """)
