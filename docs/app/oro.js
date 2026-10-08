@@ -373,6 +373,8 @@ async function readHandleText(fh) { return (await fh.getFile()).text(); }
 async function persistNow() {
   Store.status = 'saving'; paintStatus();
   try {
+    // Each save into the folder gets the next number, so the phone and the Mac can tell which copy is newest
+    if (hasFolder()) { Store.saveNo = Math.max(Store.saveNo || 0, Number(state.meta.saveNo) || 0) + 1; state.meta.saveNo = Store.saveNo; }
     const payload = await serialize();
     try { await IDB.set('state', payload); }
     catch (e) { try { localStorage.setItem('keel.state', JSON.stringify(payload)); } catch (e2) { /* in memory only */ } }
@@ -3034,10 +3036,10 @@ function paintStatus() {
     action = 'sync';
     if (SYNC.rec.replaced) { text = 'Not matched to your Mac'; tone = 'warn'; }
     else if (n) { text = `${changesWord(n)} to send to Mac`; tone = 'warn'; }
-    else text = `Mac copy · ${shortWhen(SYNC.rec.macSaved)}`;
+    else text = SYNC.rec.macSaveNo ? `Mac save ${SYNC.rec.macSaveNo} · ${shortWhen(SYNC.rec.macSaved)}` : `Mac copy · ${shortWhen(SYNC.rec.macSaved)}`;
   }
   else if (isCompanion()) { text = `Saved on this ${deviceLabel()} only`; tone = 'warn'; action = 'sync'; }
-  else if (Store.dir) text = `Saved to ${Store.fileName} folder`;
+  else if (Store.dir) text = `Saved to ${Store.fileName} folder${state.meta.saveNo ? ` · save ${state.meta.saveNo}` : ''}`;
   else if (Store.handle) text = `Saved to ${Store.fileName}`;
   else { text = 'Saved in this browser only'; tone = 'warn'; }
   el.className = 'save-status ' + tone;
@@ -4151,14 +4153,14 @@ VIEWS.data = () => {
   const n = state.transactions.length;
   const groups = groupBy(state.categories, c => c.group);
   let where;
-  if (Store.dir) where = Store.perm === 'granted' ? `Saving to your <strong>${esc(Store.fileName)}</strong> folder: <code>data/oro.json</code>, with a dated copy in <code>backups/</code> each day and receipts in <code>receipts/</code>.` : `Your <strong>${esc(Store.fileName)}</strong> folder is connected, but this browser needs your permission again.`;
+  if (Store.dir) where = Store.perm === 'granted' ? `Saving to your <strong>${esc(Store.fileName)}</strong> folder: <code>data/oro.json</code> (each save is numbered at the bottom of the sidebar; your iPhone shows the same number once it has that copy), with a dated copy in <code>backups/</code> each day and receipts in <code>receipts/</code>.` : `Your <strong>${esc(Store.fileName)}</strong> folder is connected, but this browser needs your permission again.`;
   else if (Store.handle) where = `Saving to <strong>${esc(Store.fileName)}</strong>. Switch to a Ọrọ̀ folder to get daily backups and receipts.`;
   else where = 'Only saved in this browser’s private storage. Choose your Ọrọ̀ folder so your data lives as files you can see and back up.';
   const lm = state.meta.lastMerge;
-  const phoneLine = !isCompanion() && Store.dir ? `<p class="muted small"><strong>iPhone:</strong> changes you send from Ọrọ̀ on your iPhone are saved into <code>inbox/</code> in this folder and added here automatically while Ọrọ̀ is open.${lm ? ` Last added ${esc(whenLabel(lm.at))}: ${changesWord(lm.applied)} from your ${esc(lm.device)}${lm.conflicts ? `, ${lm.conflicts} kept as this Mac’s version` : ''}.` : ''}</p>` : '';
+  const phoneLine = !isCompanion() && Store.dir ? `<p class="muted small"><strong>iPhone:</strong> changes you send from Ọrọ̀ on your iPhone are saved into <code>inbox/</code> in this folder and added here automatically while Ọrọ̀ is open.${lm ? ` Last added ${esc(whenLabel(lm.at))}: ${changesWord(lm.applied)} from your ${esc(lm.device)}${lm.conflicts ? `, ${lm.conflicts} kept as this Mac’s version${lm.kept?.length ? ` (${lm.kept.slice(0, 6).map(esc).join(', ')}${lm.kept.length > 6 ? '…' : ''})` : ''}` : ''}.` : ''}</p>` : '';
   if (isCompanion()) {
     const dev = deviceLabel(), rec = SYNC.rec, n = rec && !rec.replaced ? syncPending().length : 0;
-    where = rec ? (rec.replaced ? `The data on this ${dev} was replaced, so it no longer matches your Mac’s. Get the latest from iCloud Drive to start fresh.` : `This ${dev} has your Mac’s data from <strong>${esc(whenLabel(rec.macSaved))}</strong>. ${n ? `${changesWord(n)} made here ${n === 1 ? 'isn’t' : 'aren’t'} on your Mac yet.` : 'Everything you’ve changed here has been sent.'}`)
+    where = rec ? (rec.replaced ? `The data on this ${dev} was replaced, so it no longer matches your Mac’s. Get the latest from iCloud Drive to start fresh.` : `This ${dev} has your Mac’s <strong>${esc(saveLabel(rec.macSaveNo, rec.macSaved))}</strong>.${mergeNote(rec.base?.meta?.lastMerge, dev)} ${n ? `${changesWord(n)} made here ${n === 1 ? 'isn’t' : 'aren’t'} on your Mac yet.` : 'Everything you’ve changed here has been sent.'}`)
       : `Saved on this ${dev} only. Open your Mac’s data from iCloud Drive to work with the same numbers in both places.`;
   }
   return pageHead('Settings', '') + `
@@ -5257,7 +5259,7 @@ async function boot() {
   resetHistory();
   window.addEventListener('hashchange', () => { if ($('#present')) endMoneyDate(); render(); });
   render();
-  if (!payload || (state.version || 0) < 2) persist();
+  if (!payload || (state.version || 0) < 2 || (hasFolder() && !state.meta.saveNo)) persist();   // first numbered save
   armAutoLock();
   syncWatch();
   registerOffline();
@@ -5268,8 +5270,9 @@ document.addEventListener('DOMContentLoaded', boot);
    The Mac keeps the main copy in its Ọrọ̀ folder (data/oro.json, synced by iCloud Drive).
    A phone (or any browser that can't save into a folder) opens that file, keeps a working copy,
    and sends its own edits back as a small change file saved into the folder's inbox/.
-   The Mac merges change files item by item (account, transaction, category, goal, setting…).
-   If the Mac changed the same item after the phone's copy was made, the Mac's version is kept. */
+   The Mac merges change files item by item (account, transaction, category, goal, setting…), and within an item
+   field by field: a category changed on the phone and a payee tidied on the Mac both survive.
+   Only when both sides changed the same field of the same item is the Mac's version kept. */
 
 const SYNC = { rec: null, cacheKey: null, cacheOps: [], busy: false, prepared: null, warnedLocked: false };
 const SYNC_SKIP_TOP = new Set(['meta', 'version', 'snapshots']);
@@ -5283,6 +5286,7 @@ function deviceLabel() {
   return 'device';
 }
 const shortWhen = iso => { if (!iso) return '—'; const d = new Date(iso); return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };
+const saveLabel = (no, at) => `${no ? `save ${no}` : 'copy'} from ${whenLabel(at)}`;
 const whenLabel = iso => iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'an unknown date';
 
 /* ---------- diff and merge ---------- */
@@ -5345,6 +5349,21 @@ function opLabel(o, target) {
 }
 function walkPath(root, keys) { let n = root; for (const k of keys) { if (n == null) return undefined; n = n[k]; } return n; }
 
+/* Field-by-field fallback for a changed item: `o.bf` lists, for each field the sender changed, the values it started from.
+   A field lands when the receiver still holds one of those; a field the receiver changed too stays as it is (a clash). */
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+function mergeFields(cur, o) {
+  let took = 0, clash = false;
+  for (const [k, prevs] of Object.entries(o.bf || {})) {
+    if (UNSAFE_KEYS.has(k) || !Array.isArray(prevs)) continue;
+    const nv = o.v[k], cs = stableStr(cur[k]);
+    if (cs === stableStr(nv)) continue;
+    if (prevs.includes(cs)) { if (nv === undefined) delete cur[k]; else cur[k] = cloneVal(nv); took++; }
+    else clash = true;
+  }
+  return { took, clash };
+}
+
 /* Apply changes onto `target`. A change only lands if the target still holds what the sender started from
    (or already holds the new value); otherwise the target's version wins and the change is reported as a conflict. */
 function syncApply(target, ops) {
@@ -5386,7 +5405,13 @@ function syncApply(target, ops) {
         if (o.path.length === 1 && o.path[0] === 'transactions' && v.importId && arr.some(t => t.accountId === v.accountId && t.importId === v.importId)) { res.dupes++; continue; }
         arr.push(cloneVal(v)); res.applied++;
       } else if (!sameVal(arr[idx], o.v)) {
-        if (okPrev(hashVal(arr[idx]))) { arr[idx] = cloneVal(o.v); res.applied++; } else (res.conflicts.push(opLabel(o, target)), res.conflictOps.push(o));
+        if (okPrev(hashVal(arr[idx]))) { arr[idx] = cloneVal(o.v); res.applied++; }
+        else if (o.bf && isPlainObj(arr[idx]) && isPlainObj(o.v)) {
+          const r = mergeFields(arr[idx], o);
+          if (r.took) res.applied++;
+          if (r.clash) (res.conflicts.push(opLabel(o, target)), res.conflictOps.push(o));
+        }
+        else (res.conflicts.push(opLabel(o, target)), res.conflictOps.push(o));
       }
     } else if (idx >= 0) {
       if (okPrev(hashVal(arr[idx]))) { arr.splice(idx, 1); res.applied++; } else (res.conflicts.push(opLabel(o, target)), res.conflictOps.push(o));
@@ -5433,7 +5458,23 @@ function syncBatchOps(rec = SYNC.rec) {
   const ops = syncDiff(rec.base, state);
   if (rec.sentSnap) { const seen = new Set(ops.map(opKey)); for (const o of syncDiff(rec.sentSnap, state)) if (!seen.has(opKey(o))) ops.push(o); }
   const sent = rec.sentHashes || {};
-  return ops.map(o => ({ ...o, was: [...new Set([baseHash(rec.base, o), ...(sent[opKey(o)] || [])])] }));
+  return ops.map(o => {
+    const out = { ...o, was: [...new Set([baseHash(rec.base, o), ...(sent[opKey(o)] || [])])] };
+    if (o.op === 'put') { const bf = fieldPrevs(o.v, [itemAt(rec.base, o), itemAt(rec.sentSnap, o)]); if (bf) out.bf = bf; }
+    return out;
+  });
+}
+const itemAt = (root, o) => { const arr = root ? walkPath(root, o.path) : undefined; return Array.isArray(arr) ? arr.find(x => x && x.id === o.id) : undefined; };
+/* For each field of `v` that differs from an earlier version of the item, the earlier values (as stableStr). */
+function fieldPrevs(v, refs) {
+  refs = refs.filter(isPlainObj);
+  if (!refs.length || !isPlainObj(v)) return null;
+  const bf = {};
+  for (const k of new Set([...Object.keys(v), ...refs.flatMap(r => Object.keys(r))])) {
+    const nv = stableStr(v[k]), prevs = [...new Set(refs.map(r => stableStr(r[k])))];
+    if (prevs.some(p => p !== nv)) bf[k] = prevs;
+  }
+  return Object.keys(bf).length ? bf : null;
 }
 const changesWord = n => `${n} change${n === 1 ? '' : 's'}`;
 
@@ -5449,7 +5490,10 @@ async function syncOpenText(text, fileName = '') {
   let next;
   try { next = await readDataFile(text, () => promptPass('Unlock your Mac’s data', 'Enter the passphrase you use for Ọrọ̀ on your Mac.')); }
   catch (e) { if (e.message !== 'cancelled') toast(e.message.includes('holds no') ? 'That file doesn’t hold Ọrọ̀ data. Choose Ọrọ̀ › data › oro.json.' : e.message); return; }
-  const prev = SYNC.rec;
+  const prev = SYNC.rec, dev = deviceLabel();
+  const nNo = Number(next.meta?.saveNo) || 0, nAt = next.meta?.modified || '';
+  const older = !!(prev?.macSaved && nAt) && (prev.macSaveNo && nNo ? nNo < prev.macSaveNo : nAt < prev.macSaved);
+  if (older && !await confirmBox('This is an older copy', `This file is your Mac’s ${saveLabel(nNo, nAt)}. This ${dev} already has your Mac’s ${saveLabel(prev.macSaveNo, prev.macSaved)}, which is newer. iCloud Drive may still be bringing the newest copy to this ${dev}. Wait a minute, then choose <strong>data › oro.json</strong> again.`, 'Open the older copy anyway', true)) return;
   const cur = cloneVal(next);
   let res = null, carried = 0;
   if (prev?.base && !prev.replaced && !syncLooksReplaced(syncDiff(prev.base, state), prev.base)) {
@@ -5464,13 +5508,15 @@ async function syncOpenText(text, fileName = '') {
   }
   for (const k of SYNC_SKIP_SETTINGS) if (state.settings && state.settings[k] !== undefined) cur.settings[k] = state.settings[k]; else if (!prev && state.accounts.length && !state.meta.sample && !await confirmBox('Use your Mac’s data?', `This ${deviceLabel()} already has its own data. Replace it with your Mac’s data? Anything you entered only here will be removed.`, 'Use my Mac’s data', true)) return;
   const merged = new Set(next.meta?.mergedBatches || []);
-  SYNC.rec = { base: cloneVal(next), macSaved: next.meta?.modified || null, openedAt: new Date().toISOString(), fileName, lastSent: prev?.lastSent || null };
+  SYNC.rec = { base: cloneVal(next), macSaved: next.meta?.modified || null, macSaveNo: nNo || null, openedAt: new Date().toISOString(), fileName, lastSent: prev?.lastSent || null };
   if (SYNC.rec.lastSent && merged.has(SYNC.rec.lastSent.id)) SYNC.rec.lastSent.merged = true;
   state = cur; invalidate(); applyTheme(); commit({ silent: true }); resetHistory();
   SYNC.cacheKey = null; SYNC.prepared = null;
   await syncSave();
   closeModal(true); render();
-  let msg = `Opened your Mac’s data, saved ${whenLabel(SYNC.rec.macSaved)}.`;
+  let msg = `Opened your Mac’s ${saveLabel(nNo, nAt)}.`;
+  const lm = next.meta?.lastMerge;
+  if (lm && (!prev?.macSaved || lm.at > prev.macSaved)) msg += ` It includes ${changesWord(lm.applied)} from your ${lm.device || dev}, added on your Mac ${whenLabel(lm.at)}${lm.conflicts ? `; your Mac kept its own version of ${lm.conflicts === 1 ? 'one item' : lm.conflicts + ' items'}${lm.kept?.length ? ` (${lm.kept.slice(0, 2).join(', ')}${lm.kept.length > 2 ? '…' : ''})` : ''}` : ''}.`;
   const left = syncPending().length;
   if (left) msg += ` ${changesWord(left)} made here still need to go to your Mac.`;
   if (res?.conflicts.length) msg += ` Your Mac had also changed ${res.conflicts.length === 1 ? 'one item' : res.conflicts.length + ' items'} you edited here (${res.conflicts.slice(0, 2).join(', ')}${res.conflicts.length > 2 ? '…' : ''}), so its version was kept.`;
@@ -5531,7 +5577,7 @@ function syncSheet() {
     <p>Open the data file your Mac keeps in iCloud Drive. This ${dev} keeps a copy, and anything you change here goes back to your Mac.</p>
     <ol class="steps small"><li>Tap <strong>Open from iCloud Drive</strong>.</li><li>Go to <strong>iCloud Drive › Ọrọ̀ › data</strong> and choose <strong>oro.json</strong>.</li><li>Enter the passphrase you use on your Mac, if you set one.</li></ol>`
     : `
-    <p>This ${dev} has your Mac’s data from <strong>${esc(whenLabel(rec.macSaved))}</strong>.</p>
+    <p>This ${dev} has your Mac’s <strong>${esc(saveLabel(rec.macSaveNo, rec.macSaved))}</strong>.${mergeNote(rec.base?.meta?.lastMerge, dev)}</p>
     ${blocked ? `<p class="notice bad small">The data on this ${dev} was replaced or erased, so it no longer matches your Mac’s. Nothing will be sent. Get the latest from iCloud Drive to start fresh from your Mac’s data.</p>` : ''}
     <div class="sync-block">
       <h3>${n ? `${changesWord(n)} to send` : 'Nothing to send'}</h3>
@@ -5541,11 +5587,19 @@ function syncSheet() {
     </div>
     <div class="sync-block">
       <h3>Get the latest from your Mac</h3>
-      <p class="muted small">Choose <strong>iCloud Drive › Ọrọ̀ › data › oro.json</strong>. ${n ? 'Your unsent changes here are kept.' : ''}</p>
+      <p class="muted small">Choose <strong>iCloud Drive › Ọrọ̀ › data › oro.json</strong>. It’s the only file there and always your Mac’s newest save; the save number shows which one you have. Files in <strong>inbox</strong> only carry changes to your Mac, so don’t open those. ${n ? 'Your unsent changes here are kept.' : ''}</p>
       <button class="btn ${n ? '' : 'primary'}" data-act="sync-open">Get latest from iCloud Drive</button>
-    </div>`;
+    </div>
+    <p class="muted small sync-note">Keep Ọrọ̀ on your Home Screen. Removing it erases this ${dev}’s copy, including changes you haven’t sent.</p>`;
   openModal({ title: 'Sync with your Mac', body, actions: !rec ? `<button class="btn ghost" data-close>Not now</button><button class="btn primary" data-act="sync-open">Open from iCloud Drive</button>` : `<button class="btn ghost" data-close>Done</button>` });
   if (n) syncPrepare();
+}
+
+/* One line on the Mac's last merge of phone changes: when, how many, and anything it kept as its own version. */
+function mergeNote(lm, dev) {
+  if (!lm) return '';
+  const kept = lm.conflicts ? ` It kept its own version of ${lm.conflicts === 1 ? 'one item' : lm.conflicts + ' items'} changed in both places${lm.kept?.length ? `: ${lm.kept.slice(0, 6).map(esc).join(', ')}${lm.kept.length > 6 ? '…' : ''}` : ''}.` : '';
+  return ` Your Mac last added changes from your ${esc(lm.device || dev)} ${esc(whenLabel(lm.at))} (${changesWord(lm.applied)}${lm.files > 1 ? ` from ${lm.files} files` : ''}).${kept}`;
 }
 
 /* ---------- Mac side: merge change files from inbox/ ---------- */
@@ -5585,7 +5639,7 @@ async function syncCheckInbox() {
     }
     if (tot.batches) {
       state.meta.mergedBatches = [...merged].slice(-300);
-      state.meta.lastMerge = { at: new Date().toISOString(), device: tot.device, applied: tot.applied, conflicts: tot.conflicts.length, dupes: tot.dupes };
+      state.meta.lastMerge = { at: new Date().toISOString(), device: tot.device, applied: tot.applied, conflicts: tot.conflicts.length, dupes: tot.dupes, files: tot.batches, kept: [...new Set(tot.conflicts)].slice(0, 25) };
       commit();
       let msg = tot.applied ? `Added ${changesWord(tot.applied)} from your ${tot.device}.` : `Your ${tot.device}’s changes were already here.`;
       if (tot.dupes) msg += ` Skipped ${tot.dupes} transaction${tot.dupes === 1 ? '' : 's'} already imported here.`;

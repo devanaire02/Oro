@@ -350,7 +350,7 @@ async function boot() {
   resetHistory();
   window.addEventListener('hashchange', () => { if ($('#present')) endMoneyDate(); render(); });
   render();
-  if (!payload || (state.version || 0) < 2) persist();
+  if (!payload || (state.version || 0) < 2 || (hasFolder() && !state.meta.saveNo)) persist();   // first numbered save
   armAutoLock();
   syncWatch();
   registerOffline();

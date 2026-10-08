@@ -134,10 +134,10 @@ function paintStatus() {
     action = 'sync';
     if (SYNC.rec.replaced) { text = 'Not matched to your Mac'; tone = 'warn'; }
     else if (n) { text = `${changesWord(n)} to send to Mac`; tone = 'warn'; }
-    else text = `Mac copy · ${shortWhen(SYNC.rec.macSaved)}`;
+    else text = SYNC.rec.macSaveNo ? `Mac save ${SYNC.rec.macSaveNo} · ${shortWhen(SYNC.rec.macSaved)}` : `Mac copy · ${shortWhen(SYNC.rec.macSaved)}`;
   }
   else if (isCompanion()) { text = `Saved on this ${deviceLabel()} only`; tone = 'warn'; action = 'sync'; }
-  else if (Store.dir) text = `Saved to ${Store.fileName} folder`;
+  else if (Store.dir) text = `Saved to ${Store.fileName} folder${state.meta.saveNo ? ` · save ${state.meta.saveNo}` : ''}`;
   else if (Store.handle) text = `Saved to ${Store.fileName}`;
   else { text = 'Saved in this browser only'; tone = 'warn'; }
   el.className = 'save-status ' + tone;

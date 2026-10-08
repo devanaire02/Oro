@@ -227,6 +227,8 @@ async function readHandleText(fh) { return (await fh.getFile()).text(); }
 async function persistNow() {
   Store.status = 'saving'; paintStatus();
   try {
+    // Each save into the folder gets the next number, so the phone and the Mac can tell which copy is newest
+    if (hasFolder()) { Store.saveNo = Math.max(Store.saveNo || 0, Number(state.meta.saveNo) || 0) + 1; state.meta.saveNo = Store.saveNo; }
     const payload = await serialize();
     try { await IDB.set('state', payload); }
     catch (e) { try { localStorage.setItem('keel.state', JSON.stringify(payload)); } catch (e2) { /* in memory only */ } }
