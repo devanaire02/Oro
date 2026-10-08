@@ -269,7 +269,7 @@ function syncSheet() {
     ${blocked ? `<p class="notice bad small">The data on this ${dev} was replaced or erased, so it no longer matches your Mac’s. Nothing will be sent. Get the latest from iCloud Drive to start fresh from your Mac’s data.</p>` : ''}
     <div class="sync-block">
       <h3>${n ? `${changesWord(n)} to send` : 'Nothing to send'}</h3>
-      <p class="muted small">${n ? `Made on this ${dev} and not on your Mac yet. In the share sheet, choose <strong>Save to Files</strong>, then <strong>iCloud Drive › Ọrọ̀ › inbox</strong>.` : sent ? (sent.merged ? `Your Mac added the last ${changesWord(sent.count)} you sent.` : `You sent ${changesWord(sent.count)} on ${esc(whenLabel(sent.at))}. Your Mac adds them the next time Ọrọ̀ is open on it.`) : `Everything you change here is listed until you send it.`}</p>
+      <p class="muted small">${n ? `Made on this ${dev} and not on your Mac yet. In the share sheet, choose <strong>Save to Files</strong>, then <strong>iCloud Drive › Ọrọ̀ › inbox</strong> (the <strong>data</strong> folder works too). Never replace oro.json.` : sent ? (sent.merged ? `Your Mac added the last ${changesWord(sent.count)} you sent.` : `You sent ${changesWord(sent.count)} on ${esc(whenLabel(sent.at))}. Your Mac adds them the next time Ọrọ̀ is open on it.`) : `Everything you change here is listed until you send it.`}</p>
       ${dels > 20 ? `<p class="notice bad small">This includes deleting ${dels} items on your Mac. If that isn’t what you meant, get the latest from iCloud Drive first and redo your edits.</p>` : ''}
       ${n ? `<button class="btn primary" data-act="sync-send">Send to your Mac</button>` : ''}
     </div>
@@ -289,7 +289,11 @@ async function syncCheckInbox() {
   try {
     const inbox = await Store.dir.getDirectoryHandle('inbox', { create: true });
     const files = [];
-    for await (const [name, h] of inbox.entries()) if (h.kind === 'file' && /\.json$/i.test(name) && !name.startsWith('.')) files.push({ name, h });
+    for await (const [name, h] of inbox.entries()) if (h.kind === 'file' && /\.json$/i.test(name) && !name.startsWith('.')) files.push({ name, h, from: inbox });
+    // The iPhone's Save to Files reopens the last folder used, often data/ (where oro.json was picked). Pick change files up there and at the top too.
+    const strays = [Store.dir];
+    try { strays.push(await Store.dir.getDirectoryHandle('data')); } catch (e) { /* no data folder yet */ }
+    for (const d of strays) for await (const [name, h] of d.entries()) if (h.kind === 'file' && /^oro-changes-.*\.json$/i.test(name)) files.push({ name, h, from: d });
     if (!files.length) return;
     files.sort((a, b) => a.name.localeCompare(b.name));
     const merged = new Set(state.meta.mergedBatches || []);
@@ -332,7 +336,7 @@ async function syncFileAway(inbox, f) {
   try {
     const dir = await inbox.getDirectoryHandle('merged', { create: true });
     await writeHandle(await dir.getFileHandle(f.name, { create: true }), await f.h.getFile());
-    await inbox.removeEntry(f.name);
+    await (f.from || inbox).removeEntry(f.name);
     const names = [];
     for await (const [name, h] of dir.entries()) if (h.kind === 'file') names.push(name);
     names.sort();

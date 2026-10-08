@@ -49,7 +49,7 @@ Fix one by hand and it offers to remember the fix. On Transactions, **Auto-categ
 
 **Getting around:** the four main pages are in the tab bar at the bottom; everything else, plus Money date (swipe between slides), is under **More**. On an iPhone, transactions show as one line each: tap the category to change it, or **Select** to change several at once.
 
-**Phone → Mac:** changes you make on the phone are saved on the phone right away. To give them to your Mac, tap the line at the top ("3 changes to send to Mac") → **Send to your Mac** → **Save to Files** → **iCloud Drive › Ọrọ̀ › inbox**. The Mac adds them automatically whenever Ọrọ̀ is open there.
+**Phone → Mac:** changes you make on the phone are saved on the phone right away. To give them to your Mac, tap the line at the top ("3 changes to send to Mac") → **Send to your Mac** → **Save to Files** → **iCloud Drive › Ọrọ̀ › inbox**. If Files opens the **data** folder instead, saving there works too. Never replace `oro.json`. The Mac adds them automatically whenever Ọrọ̀ is open there.
 
 **Mac → Phone:** the Mac saves to iCloud Drive as you work. On the phone, tap the line at the top → **Get latest from iCloud Drive** → **oro.json**. Changes you haven't sent yet are kept.
 
