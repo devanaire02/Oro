@@ -5496,7 +5496,7 @@ function syncSheet() {
     ${blocked ? `<p class="notice bad small">The data on this ${dev} was replaced or erased, so it no longer matches your Mac’s. Nothing will be sent. Get the latest from iCloud Drive to start fresh from your Mac’s data.</p>` : ''}
     <div class="sync-block">
       <h3>${n ? `${changesWord(n)} to send` : 'Nothing to send'}</h3>
-      <p class="muted small">${n ? `Made on this ${dev} and not on your Mac yet. In the share sheet, choose <strong>Save to Files</strong>, then <strong>iCloud Drive › Ọrọ̀ › inbox</strong> (the <strong>data</strong> folder works too). Never replace oro.json.` : sent ? (sent.merged ? `Your Mac added the last ${changesWord(sent.count)} you sent.` : `You sent ${changesWord(sent.count)} on ${esc(whenLabel(sent.at))}. Your Mac adds them the next time Ọrọ̀ is open on it.`) : `Everything you change here is listed until you send it.`}</p>
+      <p class="muted small">${n ? `Made on this ${dev} and not on your Mac yet. In the share sheet, choose <strong>Save to Files</strong>, then <strong>iCloud Drive › Ọrọ̀ › inbox</strong>.` : sent ? (sent.merged ? `Your Mac added the last ${changesWord(sent.count)} you sent.` : `You sent ${changesWord(sent.count)} on ${esc(whenLabel(sent.at))}. Your Mac adds them the next time Ọrọ̀ is open on it.`) : `Everything you change here is listed until you send it.`}</p>
       ${dels > 20 ? `<p class="notice bad small">This includes deleting ${dels} items on your Mac. If that isn’t what you meant, get the latest from iCloud Drive first and redo your edits.</p>` : ''}
       ${n ? `<button class="btn primary" data-act="sync-send">Send to your Mac</button>` : ''}
     </div>
