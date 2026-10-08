@@ -10,6 +10,16 @@ function startMoneyDate(mk) {
   document.body.classList.add('presenting');
   paintSlide();
 }
+/* Swipe left or right between slides on a phone or iPad */
+document.addEventListener('touchstart', e => {
+  const el = e.target.closest?.('#present .slide'); if (!el || e.touches.length !== 1 || e.target.closest('textarea, input, select, button')) { MD.swipe = null; return; }
+  MD.swipe = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+}, { passive: true });
+document.addEventListener('touchend', e => {
+  const s = MD.swipe; MD.swipe = null; if (!s || !$('#present')) return;
+  const t = e.changedTouches[0], dx = t.clientX - s.x, dy = t.clientY - s.y;
+  if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && Date.now() - s.t < 700) { if (dx > 0) mdAction('prev'); else if (MD.i < MD.slides.length - 1) mdAction('next'); }
+}, { passive: true });
 function endMoneyDate() { $('#present')?.remove(); document.body.classList.remove('presenting'); render(); }
 function paintSlide() {
   const el = $('#present'); if (!el) return;

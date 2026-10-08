@@ -98,12 +98,18 @@ const US_STATES = new Set('AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY
 function prettyPayee(s) {
   const raw = String(s || '').trim();
   if (!raw) return '';
-  if (/[a-z]/.test(raw)) return raw.slice(0, 60);
+  // already mixed case: keep it as written, minus a trailing store number or dangling "&"
+  if (/[a-z]/.test(raw)) return raw.replace(/\s+#?\s?\d{3,}\s*$/, '').replace(/[\s&*\-–,]+$/, '').slice(0, 60) || raw.slice(0, 60);
   const c = cleanPayee(raw) || raw;
   const words = c.split(' ');
   if (words.length > 2 && US_STATES.has(words[words.length - 1].toUpperCase())) words.pop();
-  return words.slice(0, 5).map(w => /^(LLC|INC|USA|ATM|IRS|HOA|ACH|CVS|AT&T|BP|UPS|USPS|IKEA|BMW|KFC|TJ|HSA|IRA)$/.test(w) ? w
-    : w.toLowerCase().replace(/(^|[-/'(&])([a-z])/g, (m, a, b) => a + b.toUpperCase())).join(' ');
+  const kept = words.slice(0, 5);
+  while (kept.length > 1 && /^[&*\-–,.]+$/.test(kept[kept.length - 1])) kept.pop();
+  return kept.map(w => /^(LLC|INC|USA|ATM|IRS|HOA|ACH|CVS|AT&T|BP|UPS|USPS|IKEA|BMW|KFC|TJ|HSA|IRA|FFC|AMC|YMCA|ADT|DMV|HBO|NYC|CTA)$/.test(w) ? w
+    : w.toLowerCase()
+      .replace(/(^|[-/(&])([a-z])/g, (m, a, b) => a + b.toUpperCase())
+      .replace(/'([a-z])(?=[a-z]{2})/g, (m, b) => "'" + b.toUpperCase())   // O'Reilly, but Rita's
+      .replace(/^Mc([a-z])/, (m, b) => 'Mc' + b.toUpperCase())).join(' ');  // McDonald's
 }
 
 function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); }

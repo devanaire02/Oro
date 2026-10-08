@@ -144,6 +144,7 @@ async function syncLoad() {
   try {
     if (p.encrypted) { if (!Store.pass) return; p = (await Vault.open(p, Store.pass)).data; }
     SYNC.rec = p.sync || null; SYNC.cacheKey = null;
+    if (SYNC.rec) { tidyPayees(SYNC.rec.base); tidyPayees(SYNC.rec.sentSnap); }   // match the tidy-up migrate() does, so it isn't counted as a change
   } catch (e) { SYNC.rec = null; }
 }
 /* Edits made here since the last send (or since the Mac's data was opened). */

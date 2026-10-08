@@ -207,6 +207,12 @@ function parseSearch(q) {
   }
   return out;
 }
+/* A memo that only repeats the bank's description isn't worth a second line */
+function memoWorthShowing(t) {
+  if (!t.memo) return false;
+  const m = normPayee(t.memo), r = normPayee(t.rawPayee || t.payee), q = normPayee(t.payee);
+  return !!m && m !== r && m !== q && !r.startsWith(m) && !m.startsWith(r);
+}
 VIEWS.transactions = p => {
   const month = p.m || thisMonth();
   const S = parseSearch(p.q);
@@ -230,16 +236,19 @@ VIEWS.transactions = p => {
   const unc = state.transactions.filter(isUncat).length;
   const tags = allTags();
   const multi = members().length > 1;
+  const nFilters = ['acct', 'cat', 'who', 'tag'].filter(k => p[k]).length;
+  const fOpen = UI.txFilters === undefined ? nFilters > 0 : UI.txFilters;
 
   return pageHead('Transactions', `${list.length.toLocaleString()} shown${unc ? ` · <a href="#/transactions?cat=_none&m=all">${unc} uncategorized</a>` : ''}`,
     `${unc ? `<button class="btn ghost" data-act="run-rules" title="Fill in uncategorized transactions using your rules, your past choices and Ọrọ̀’s merchant list">Auto-categorize</button>` : ''}<button class="btn" data-act="import">Import</button><button class="btn primary" data-act="add-txn">Add transaction</button>`) + lensNote() + `
-  <div class="filters">
+  <div class="filters ${fOpen ? 'open' : ''}">
     <label class="field inline"><span>Month</span><select data-filter="m"><option value="all" ${month === 'all' ? 'selected' : ''}>All months</option>${months.map(m => `<option value="${m}" ${m === month ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}</select></label>
-    <label class="field inline"><span>Account</span><select data-filter="acct">${acctOptions(p.acct, null, 'All accounts')}</select></label>
-    <label class="field inline"><span>Category</span><select data-filter="cat"><option value="">All categories</option><option value="_none" ${p.cat === '_none' ? 'selected' : ''}>Uncategorized</option>${catOptions(p.cat, false)}</select></label>
-    ${multi && !UI.lens ? `<label class="field inline"><span>Person</span><select data-filter="who"><option value="">Everyone</option>${memberOptions(p.who)}</select></label>` : ''}
-    ${tags.length ? `<label class="field inline"><span>Tag</span><select data-filter="tag"><option value="">Any tag</option>${tags.map(t => `<option ${t === p.tag ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>` : ''}
+    <label class="field inline more"><span>Account</span><select data-filter="acct">${acctOptions(p.acct, null, 'All accounts')}</select></label>
+    <label class="field inline more"><span>Category</span><select data-filter="cat"><option value="">All categories</option><option value="_none" ${p.cat === '_none' ? 'selected' : ''}>Uncategorized</option>${catOptions(p.cat, false)}</select></label>
+    ${multi && !UI.lens ? `<label class="field inline more"><span>Person</span><select data-filter="who"><option value="">Everyone</option>${memberOptions(p.who)}</select></label>` : ''}
+    ${tags.length ? `<label class="field inline more"><span>Tag</span><select data-filter="tag"><option value="">Any tag</option>${tags.map(t => `<option ${t === p.tag ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>` : ''}
     <label class="field inline grow"><span>Search</span><input type="search" id="tx-search" data-filter="q" value="${esc(p.q || '')}" placeholder="Payee, memo, #tag, >100"></label>
+    <div class="filters-sm"><button class="btn small ghost" data-act="tx-filters" aria-expanded="${fOpen ? 'true' : 'false'}">${fOpen ? 'Fewer filters' : 'More filters'}${nFilters ? ` · ${nFilters} on` : ''}</button>${shown.length ? `<button class="btn small ghost" data-act="tx-select" aria-pressed="${UI.txSelect ? 'true' : 'false'}">${UI.txSelect ? 'Done selecting' : 'Select'}</button>` : ''}</div>
   </div>
   <div class="bulk" id="bulk" hidden>
     <span id="bulk-count"></span>
@@ -248,21 +257,21 @@ VIEWS.transactions = p => {
     <input id="bulk-tag" placeholder="tag" list="tag-list" style="width:8em"><datalist id="tag-list">${tags.map(t => `<option value="${esc(t)}">`).join('')}</datalist><button class="btn small" data-act="bulk-tag">Add tag</button>
     <button class="btn small ghost danger-text" data-act="bulk-del">Delete</button>
   </div>
-  ${shown.length ? `<div class="scroll-table"><table class="ledger tx-table" id="tx-table">
+  ${shown.length ? `<div class="scroll-table"><table class="ledger tx-table ${UI.txSelect ? 'selecting' : ''}" id="tx-table">
     <thead><tr><th class="cb"><input type="checkbox" id="tx-all" aria-label="Select all shown"></th><th>Date</th><th>Payee</th><th>Category</th>${multi ? '<th class="hide-sm detail-only">Person</th>' : ''}<th class="hide-sm">Account</th><th class="num">Amount</th></tr></thead>
     <tbody>${shown.map(t => {
       const who = personOf(t);
       return `<tr data-id="${t.id}" class="${isUncat(t) ? 'needs' : ''}">
       <td class="cb"><input type="checkbox" class="tx-cb" value="${t.id}" aria-label="Select"></td>
-      <td class="nowrap muted">${dateLabel(t.date)}${t.reconciled ? ' <span class="rec" title="Reconciled">✓</span>' : ''}</td>
-      <td><button class="linklike" data-edit-txn="${t.id}">${esc(t.payee || '(no description)')}</button>${t.attachments?.length ? ' <span class="clip" title="Has a receipt">⎘</span>' : ''}
-        ${t.memo || t.tags?.length ? `<div class="tx-meta">${(t.tags || []).map(x => `<button class="tagchip" data-tagfilter="${esc(x)}">#${esc(x)}</button>`).join('')}${t.memo ? `<span class="muted small">${esc(t.memo)}</span>` : ''}</div>` : ''}</td>
-      <td>${isSplit(t) ? `<button class="split-btn" data-edit-txn="${t.id}">Split · ${t.splits.length}</button>` : `<select class="cat-select" data-txcat="${t.id}" aria-label="Category">${t.categoryId ? opts.replace(`value="${t.categoryId}"`, `value="${t.categoryId}" selected`) : opts}</select>`}</td>
-      ${multi ? `<td class="hide-sm detail-only"><span class="person-dot" style="background:${memberColor(who)}"></span>${esc(memberName(who))}</td>` : ''}
+      <td class="nowrap muted tx-date">${dateLabel(t.date)}${t.reconciled ? ' <span class="rec" title="Reconciled">✓</span>' : ''}<span class="tx-acct-sm"> · ${esc(acctById(t.accountId)?.name || '—')}</span></td>
+      <td class="tx-payee"><button class="linklike" data-edit-txn="${t.id}">${esc(t.payee || '(no description)')}</button>${t.attachments?.length ? ' <span class="clip" title="Has a receipt">⎘</span>' : ''}
+        ${memoWorthShowing(t) || t.tags?.length ? `<div class="tx-meta">${(t.tags || []).map(x => `<button class="tagchip" data-tagfilter="${esc(x)}">#${esc(x)}</button>`).join('')}${memoWorthShowing(t) ? `<span class="muted small">${esc(t.memo)}</span>` : ''}</div>` : ''}</td>
+      <td class="tx-cat">${isSplit(t) ? `<button class="split-btn" data-edit-txn="${t.id}">Split · ${t.splits.length}</button>` : `<span class="cat-pill"><span class="cat-pill-text" aria-hidden="true">${esc(catName(t.categoryId))}</span><select class="cat-select" data-txcat="${t.id}" aria-label="Category">${t.categoryId ? opts.replace(`value="${t.categoryId}"`, `value="${t.categoryId}" selected`) : opts}</select></span>`}</td>
+      ${multi ? `<td class="hide-sm detail-only nowrap"><span class="person-dot" style="background:${memberColor(who)}"></span>${esc(memberName(who))}</td>` : ''}
       <td class="hide-sm muted">${esc(acctById(t.accountId)?.name || '—')}</td>
-      <td class="num ${signClass(t.amount)}">${money(t.amount)}</td></tr>`;
+      <td class="num tx-amt ${signClass(t.amount)}">${money(t.amount)}</td></tr>`;
     }).join('')}</tbody>
-    <tfoot><tr><td colspan="${multi ? 4 : 3}"></td><td class="hide-sm"></td><td class="muted">Money in<br>Money out<br><strong>Net</strong></td><td class="num total">${money(inflow)}<br>${money(outflow)}<br><strong class="${signClass(inflow + outflow)}">${money(inflow + outflow)}</strong></td></tr></tfoot>
+    <tfoot><tr><td colspan="${multi ? 4 : 3}" class="tx-foot-pad"></td><td class="hide-sm"></td><td class="muted">Money in<br>Money out<br><strong>Net</strong></td><td class="num total">${money(inflow)}<br>${money(outflow)}<br><strong class="${signClass(inflow + outflow)}">${money(inflow + outflow)}</strong></td></tr></tfoot>
   </table></div>
   ${list.length > limit ? `<p class="center"><button class="btn ghost" data-more="${limit + 250}">Show ${Math.min(250, list.length - limit)} more</button></p>` : ''}`
   : emptyState(state.transactions.length ? 'Nothing matches these filters' : 'No transactions yet',
@@ -350,13 +359,13 @@ VIEWS.accounts = p => {
       <tbody>${g.accts.map(a => {
         const hs = holdingsFor(a.id).length, v = byOwner ? signedValue(a) : accountValue(a);
         return `<tr>
-          <th scope="row"><button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button>${a.institution ? `<div class="muted small">${esc(a.institution)}${a.last4 ? ` ending ${esc(a.last4)}` : ''}</div>` : ''}</th>
+          <th scope="row" class="acct-name"><button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button>${a.institution ? `<div class="muted small">${esc(a.institution)}${a.last4 ? ` ending ${esc(a.last4)}` : ''}</div>` : ''}</th>
           <td class="hide-sm muted">${byOwner || !multi ? `${esc(ACCOUNT_TYPES[a.type]?.label)}${a.rental ? ', rental' : ''}${hs ? `, ${hs} holding${hs > 1 ? 's' : ''}` : ''}` : `<span class="person-dot" style="background:${memberColor(a.owner || 'joint')}"></span>${esc(memberName(a.owner || 'joint'))}`}</td>
-          <td>${staleTag(accountAsOf(a))}${a.reconciledThrough ? `<div class="muted small">Reconciled ${dateLabel(a.reconciledThrough)}</div>` : ''}</td>
-          <td class="num">${updating && !hs ? `<input class="bal-input" data-bal="${a.id}" inputmode="decimal" value="${round2(accountValue(a))}" aria-label="Balance for ${esc(a.name)}">` : `<span class="${byOwner ? signClass(v) : ''}">${money(v)}</span>`}</td>
+          <td class="acct-asof">${staleTag(accountAsOf(a))}${a.reconciledThrough ? `<div class="muted small">Reconciled ${dateLabel(a.reconciledThrough)}</div>` : ''}</td>
+          <td class="num acct-val">${updating && !hs ? `<input class="bal-input" data-bal="${a.id}" inputmode="decimal" value="${round2(accountValue(a))}" aria-label="Balance for ${esc(a.name)}">` : `<span class="${byOwner ? signClass(v) : ''}">${money(v)}</span>`}</td>
           <td class="acts"><button class="linklike small" data-history="${a.id}">History</button>${a.ledger ? ` <button class="linklike small" data-reconcile="${a.id}">Reconcile</button>` : ''}</td></tr>`;
       }).join('')}</tbody>
-      <tfoot><tr><th scope="row">Total</th><td class="hide-sm"></td><td></td><td class="num total">${money(subtotal)}</td><td></td></tr></tfoot>
+      <tfoot><tr><th scope="row">Total</th><td class="hide-sm"></td><td class="acct-pad"></td><td class="num total">${money(subtotal)}</td><td class="acct-pad"></td></tr></tfoot>
     </table></section>`;
   }).join('')}
   <section class="acct-group"><table class="ledger acct-table grand">

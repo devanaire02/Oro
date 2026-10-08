@@ -100,6 +100,19 @@ function migrate(s) {
     }
     s.version = 2;
   }
+  tidyPayees(s);
+  return s;
+}
+/* Older imports capitalized after apostrophes ("Rita'S", "Mcdonald'S") and kept store numbers on mixed-case names.
+   Runs the same way on every device, so the Mac and phone stay in step. */
+function tidyPayees(s) {
+  for (const t of s?.transactions || []) {
+    if (typeof t.payee !== 'string') continue;
+    let p = t.payee;
+    if (t.rawPayee && /[a-z]/.test(t.rawPayee) && p === t.rawPayee.trim()) p = prettyPayee(t.rawPayee);
+    p = p.replace(/([A-Za-z])'S\b/g, "$1's").replace(/\bMc([a-z])/g, (m, b) => 'Mc' + b.toUpperCase());
+    if (p !== t.payee) t.payee = p;
+  }
   return s;
 }
 

@@ -15,18 +15,18 @@ VIEWS.investments = () => {
 
   return pageHead('Investments', `${accts.length} account${accts.length > 1 ? 's' : ''}, ${hs.length} holding${hs.length === 1 ? '' : 's'}`,
     `<button class="btn" data-act="import">Import positions</button><button class="btn primary" data-act="add-holding">Add holding</button>`) + `
-  <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Market value</th><th class="num">Cost basis</th><th class="num">Unrealized gain</th><th class="num">Return on cost</th></tr></thead>
-    <tbody><tr><th scope="row">All investments</th><td class="num">${money(total, { cents: false })}</td><td class="num">${cost ? money(cost, { cents: false }) : '—'}</td><td class="num ${signClass(mval - cost)}">${cost ? money(mval - cost, { cents: false, sign: true }) : '—'}</td><td class="num ${signClass(mval - cost)}">${cost ? pct((mval - cost) / cost) : '—'}</td></tr></tbody></table>
+  <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Market value</th><th class="num hide-sm">Cost basis</th><th class="num">Unrealized gain</th><th class="num">Return on cost</th></tr></thead>
+    <tbody><tr><th scope="row">All investments</th><td class="num">${money(total, { cents: false })}</td><td class="num hide-sm">${cost ? money(cost, { cents: false }) : '—'}</td><td class="num ${signClass(mval - cost)}">${cost ? money(mval - cost, { cents: false, sign: true }) : '—'}</td><td class="num ${signClass(mval - cost)}">${cost ? pct((mval - cost) / cost) : '—'}</td></tr></tbody></table>
     <p class="muted small">Gains count only holdings with a cost basis. Cash positions are left out.</p></section>
 
   <section class="panel">
     <header class="panel-head"><h2>Allocation</h2><span class="muted small">Targets ${targetSum ? `add to ${targetSum}%` : 'are optional'}</span></header>
     <div class="stack" role="img" aria-label="Investment allocation">${classes.filter(c => alloc[c]).map(c => `<span style="width:${(alloc[c] / allocTotal) * 100}%;background:${CLASS_COLORS[c]}" title="${esc(c)} ${pct(alloc[c] / allocTotal)}"></span>`).join('')}</div>
-    <table class="ledger compact alloc-table"><thead><tr><th>Asset class</th><th class="num">Value</th><th class="num">Actual</th><th class="num">Target</th><th class="num">Drift</th><th class="num hide-sm">To rebalance</th></tr></thead><tbody>
+    <table class="ledger compact alloc-table"><thead><tr><th>Asset class</th><th class="num hide-sm">Value</th><th class="num">Actual</th><th class="num">Target</th><th class="num">Drift</th><th class="num hide-sm">To rebalance</th></tr></thead><tbody>
     ${classes.map(c => {
       const v = alloc[c] || 0, share = allocTotal ? v / allocTotal : 0, tgt = state.settings.targets[c];
       const drift = tgt != null && tgt !== '' ? share - tgt / 100 : null;
-      return `<tr><th scope="row"><span class="swatch" style="background:${CLASS_COLORS[c]}"></span>${esc(c)}</th><td class="num">${money(v, { cents: false })}</td><td class="num">${pct(share)}</td>
+      return `<tr><th scope="row"><span class="swatch" style="background:${CLASS_COLORS[c]}"></span>${esc(c)}</th><td class="num hide-sm">${money(v, { cents: false })}</td><td class="num">${pct(share)}</td>
         <td class="num budget-cell"><input class="budget-input" id="tg-${slug(c)}" data-target="${esc(c)}" inputmode="decimal" value="${tgt ?? ''}" placeholder="—" aria-label="Target for ${esc(c)}"><span class="cur">%</span></td>
         <td class="num ${drift == null ? '' : Math.abs(drift) >= 0.05 ? 'neg' : 'muted'}">${drift == null ? '—' : (drift >= 0 ? '+' : '−') + Math.abs(drift * 100).toFixed(1) + ' pts'}</td>
         <td class="num hide-sm">${drift == null ? '' : money(-drift * allocTotal, { cents: false, sign: true })}</td></tr>`;
@@ -96,10 +96,10 @@ VIEWS.property = () => {
         const coc = a.cashInvested ? ttm.cashFlow / a.cashInvested : NaN;
         const dscr = ttm.debt ? ttm.noi / ttm.debt : NaN;
         rental = `
-        <table class="ledger flows-table"><thead><tr><th></th><th class="num">Rent</th><th class="num">Operating costs</th><th class="num">NOI</th><th class="num">Debt service</th><th class="num">Cash flow</th></tr></thead>
+        <table class="ledger flows-table"><thead><tr><th></th><th class="num">Rent</th><th class="num hide-sm">Operating costs</th><th class="num">NOI</th><th class="num hide-sm">Debt service</th><th class="num">Cash flow</th></tr></thead>
           <tbody>
-            <tr><th scope="row">This year</th><td class="num">${money(ytd.income, { cents: false })}</td><td class="num">${money(ytd.opex, { cents: false })}</td><td class="num">${money(ytd.noi, { cents: false })}</td><td class="num">${money(ytd.debt, { cents: false })}</td><td class="num ${signClass(ytd.cashFlow)}">${money(ytd.cashFlow, { cents: false })}</td></tr>
-            <tr><th scope="row">Last 12 full months</th><td class="num">${money(ttm.income, { cents: false })}</td><td class="num">${money(ttm.opex, { cents: false })}</td><td class="num">${money(ttm.noi, { cents: false })}</td><td class="num">${money(ttm.debt, { cents: false })}</td><td class="num ${signClass(ttm.cashFlow)}">${money(ttm.cashFlow, { cents: false })}</td></tr>
+            <tr><th scope="row">This year</th><td class="num">${money(ytd.income, { cents: false })}</td><td class="num hide-sm">${money(ytd.opex, { cents: false })}</td><td class="num">${money(ytd.noi, { cents: false })}</td><td class="num hide-sm">${money(ytd.debt, { cents: false })}</td><td class="num ${signClass(ytd.cashFlow)}">${money(ytd.cashFlow, { cents: false })}</td></tr>
+            <tr><th scope="row">Last 12 full months</th><td class="num">${money(ttm.income, { cents: false })}</td><td class="num hide-sm">${money(ttm.opex, { cents: false })}</td><td class="num">${money(ttm.noi, { cents: false })}</td><td class="num hide-sm">${money(ttm.debt, { cents: false })}</td><td class="num ${signClass(ttm.cashFlow)}">${money(ttm.cashFlow, { cents: false })}</td></tr>
           </tbody></table>
         <dl class="kpis">
           <div><dt>Cap rate</dt><dd>${pct(cap)}</dd><span class="muted small">NOI over value</span></div>

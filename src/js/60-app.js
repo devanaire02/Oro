@@ -15,6 +15,10 @@ const ACTIONS = {
   'add-rule': () => ruleModal(),
   'add-goal': () => goalModal(),
   'palette': () => openPalette(),
+  'more-pages': () => morePagesSheet(),
+  'tx-filters': () => { UI.txFilters = !$('.filters')?.classList.contains('open'); render(); },
+  'tx-select': () => { UI.txSelect = !UI.txSelect; if (!UI.txSelect) { $$('.tx-cb:checked').forEach(c => { c.checked = false; }); } render(); },
+  'more-money-date': () => { closeModal(true); ACTIONS['money-date'](); },
   'money-date': el => startMoneyDate(el?.dataset.mk),
   'privacy': () => { state.settings.privacy = !state.settings.privacy; commit({ silent: true }); render(); },
   'print': () => window.print(),
@@ -186,7 +190,7 @@ document.addEventListener('click', e => {
   if (d.act) { e.preventDefault(); return ACTIONS[d.act]?.(el); }
   if (d.month) return setParam(d.param || 'm', d.month === thisMonth() && d.param !== 'cm' ? '' : d.month);
   if (d.nwrange) { UI.nwRange = d.nwrange; return render(); }
-  if (d.mode) return setMode(d.mode);
+  if (d.mode) { setMode(d.mode); $$('#modal .seg.mode button').forEach(b => b.classList.toggle('on', b.dataset.mode === d.mode)); return; }
   if (d.tab) return setParam(d.param, d.tab);
   if ('by' in d && el.closest('.seg')) return setParam('by', d.by);
   if ('lens' in d) { UI.lens = d.lens; try { sessionStorage.setItem('keel.lens', d.lens); } catch (e2) { /* ignore */ } return render(); }
@@ -233,6 +237,7 @@ document.addEventListener('change', e => {
     const t = state.transactions.find(x => x.id === d.txcat); if (!t) return;
     t.categoryId = el.value || null;
     el.closest('tr')?.classList.toggle('needs', !t.categoryId);
+    const pill = el.parentElement?.querySelector('.cat-pill-text'); if (pill) pill.textContent = catName(t.categoryId);
     commit({ silent: true });
     offerRule(t, t.categoryId);
     return;

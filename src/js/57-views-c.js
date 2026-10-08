@@ -18,7 +18,7 @@ VIEWS.reports = p => {
     return head + `
     <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Left over</th><th class="num">Savings rate</th></tr></thead>
       <tbody><tr><th scope="row">${esc(R.label)}</th><td class="num">${money(f.income, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td><td class="num ${signClass(f.net)}">${money(f.net, { cents: false })}</td><td class="num">${pct(f.rate, 0)}</td></tr></tbody></table></section>
-    <section class="panel"><header class="panel-head"><h2>Where the money came from and went</h2><span class="muted small">Hover a band for the amount</span></header>
+    <section class="panel"><header class="panel-head"><h2>Where the money came from and went</h2><span class="muted small">${isTouch() ? 'Tap' : 'Hover over'} a band for the amount</span></header>
       ${chartHost({ type: 'sankey', left: sk.left, right: sk.right, total: Math.max(sk.income, sk.spending), empty: 'No income or spending in this period.' })}</section>`;
   }
 
@@ -325,7 +325,7 @@ VIEWS.data = () => {
     <header class="panel-head"><h2>Appearance and privacy</h2></header>
     <div class="form-grid">
       <label class="field"><span>Theme</span><select data-setting="theme"><option value="auto" ${state.settings.theme === 'auto' ? 'selected' : ''}>Match my Mac</option><option value="light" ${state.settings.theme === 'light' ? 'selected' : ''}>Light</option><option value="dark" ${state.settings.theme === 'dark' ? 'selected' : ''}>Dark</option></select></label>
-      <label class="check"><input type="checkbox" data-setting-bool="privacy" ${state.settings.privacy ? 'checked' : ''}> Hide amounts until I hover (⇧P)</label>
+      <label class="check"><input type="checkbox" data-setting-bool="privacy" ${state.settings.privacy ? 'checked' : ''}> ${isTouch() ? 'Hide amounts until I tap them' : 'Hide amounts until I hover (⇧P)'}</label>
       <label class="field"><span>Flag balances older than (days)</span><input data-setting="staleDays" inputmode="numeric" value="${state.settings.staleDays}"></label>
       <label class="field"><span>Warn when cash may dip below</span><input data-setting="lowCash" inputmode="decimal" value="${state.settings.lowCash}"></label>
       <label class="field"><span>Daily backups to keep</span><input data-setting="keepBackups" inputmode="numeric" value="${state.settings.keepBackups}"><small class="muted">Plus one per month for a year</small></label>

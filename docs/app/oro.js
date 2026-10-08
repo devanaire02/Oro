@@ -98,12 +98,18 @@ const US_STATES = new Set('AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY
 function prettyPayee(s) {
   const raw = String(s || '').trim();
   if (!raw) return '';
-  if (/[a-z]/.test(raw)) return raw.slice(0, 60);
+  // already mixed case: keep it as written, minus a trailing store number or dangling "&"
+  if (/[a-z]/.test(raw)) return raw.replace(/\s+#?\s?\d{3,}\s*$/, '').replace(/[\s&*\-–,]+$/, '').slice(0, 60) || raw.slice(0, 60);
   const c = cleanPayee(raw) || raw;
   const words = c.split(' ');
   if (words.length > 2 && US_STATES.has(words[words.length - 1].toUpperCase())) words.pop();
-  return words.slice(0, 5).map(w => /^(LLC|INC|USA|ATM|IRS|HOA|ACH|CVS|AT&T|BP|UPS|USPS|IKEA|BMW|KFC|TJ|HSA|IRA)$/.test(w) ? w
-    : w.toLowerCase().replace(/(^|[-/'(&])([a-z])/g, (m, a, b) => a + b.toUpperCase())).join(' ');
+  const kept = words.slice(0, 5);
+  while (kept.length > 1 && /^[&*\-–,.]+$/.test(kept[kept.length - 1])) kept.pop();
+  return kept.map(w => /^(LLC|INC|USA|ATM|IRS|HOA|ACH|CVS|AT&T|BP|UPS|USPS|IKEA|BMW|KFC|TJ|HSA|IRA|FFC|AMC|YMCA|ADT|DMV|HBO|NYC|CTA)$/.test(w) ? w
+    : w.toLowerCase()
+      .replace(/(^|[-/(&])([a-z])/g, (m, a, b) => a + b.toUpperCase())
+      .replace(/'([a-z])(?=[a-z]{2})/g, (m, b) => "'" + b.toUpperCase())   // O'Reilly, but Rita's
+      .replace(/^Mc([a-z])/, (m, b) => 'Mc' + b.toUpperCase())).join(' ');  // McDonald's
 }
 
 function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); }
@@ -239,6 +245,19 @@ function migrate(s) {
       if (!a.owner || a.owner === 'Joint') a.owner = 'joint';
     }
     s.version = 2;
+  }
+  tidyPayees(s);
+  return s;
+}
+/* Older imports capitalized after apostrophes ("Rita'S", "Mcdonald'S") and kept store numbers on mixed-case names.
+   Runs the same way on every device, so the Mac and phone stay in step. */
+function tidyPayees(s) {
+  for (const t of s?.transactions || []) {
+    if (typeof t.payee !== 'string') continue;
+    let p = t.payee;
+    if (t.rawPayee && /[a-z]/.test(t.rawPayee) && p === t.rawPayee.trim()) p = prettyPayee(t.rawPayee);
+    p = p.replace(/([A-Za-z])'S\b/g, "$1's").replace(/\bMc([a-z])/g, (m, b) => 'Mc' + b.toUpperCase());
+    if (p !== t.payee) t.payee = p;
   }
   return s;
 }
@@ -2890,6 +2909,17 @@ const PAGES = [
   ['data', 'Settings', 'end'],
 ];
 const LENS_PAGES = new Set(['overview', 'transactions', 'reports']);
+/* iPhone and iPad portrait: four main sections in a tab bar at the bottom, everything else under More */
+const TAB_PAGES = ['overview', 'transactions', 'budget', 'accounts'];
+const TAB_ICONS = {
+  overview: '<path d="M4 11.5 12 5l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5h-5v5H5a1 1 0 0 1-1-1z"/>',
+  transactions: '<path d="M5 7h14M5 12h14M5 17h9"/>',
+  budget: '<circle cx="12" cy="12" r="7.5"/><path d="M12 4.5V12l5.3 5.3"/>',
+  accounts: '<path d="M4 9.5 12 5l8 4.5M5.5 10v7M9.8 10v7M14.2 10v7M18.5 10v7M4 19.5h16"/>',
+  more: '<circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18" cy="12" r="1.3"/>',
+};
+const tabIcon = k => `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${TAB_ICONS[k]}</svg>`;
+const isTouch = () => { try { return matchMedia('(hover: none)').matches; } catch (e) { return false; } };
 function route() {
   const h = location.hash.replace(/^#\/?/, '') || 'overview';
   const [page, qs] = h.split('?');
@@ -2937,6 +2967,7 @@ function render() {
     const w = document.createElement('div'); w.className = 'scroll-table'; t.replaceWith(w); w.appendChild(t);
   }
   $$('.nav a').forEach(a => a.classList.toggle('active', a.dataset.page === page));
+  $$('#tabbar [data-tab-page]').forEach(a => { const on = a.dataset.tabPage === page || (a.dataset.tabPage === 'more' && !TAB_PAGES.includes(page)); a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   document.title = `${PAGES.find(p => p[0] === page)[1]} · Ọrọ̀`;
   paintTopbar(page);
   drawCharts($('#main'));
@@ -2955,6 +2986,19 @@ function buildShell() {
     html += `<a href="#/${id}" data-page="${id}">${label}</a>`;
   }
   $('#nav').innerHTML = html;
+  const tb = $('#tabbar');
+  if (tb) tb.innerHTML = TAB_PAGES.map(id => `<a href="#/${id}" data-tab-page="${id}">${tabIcon(id)}<span>${PAGES.find(p => p[0] === id)[1]}</span></a>`).join('')
+    + `<button type="button" data-act="more-pages" data-tab-page="more">${tabIcon('more')}<span>More</span></button>`;
+}
+/* The More sheet on iPhone: the pages that aren't in the tab bar, plus Money date */
+function morePagesSheet() {
+  const { page } = route();
+  const desc = { cashflow: 'Bills, paychecks and the next 90 days', investments: 'Holdings, allocation and fees', property: 'Home, rental and other assets', reports: 'Cash flow, spending, income statement', planning: 'Retirement, goals, debt payoff', taxes: 'Schedule E and deductions for your CPA', review: 'Close out the month together', data: 'Sync, security, household, rules' };
+  const links = PAGES.filter(([id]) => !TAB_PAGES.includes(id)).map(([id, label]) => `<a class="more-link ${id === page ? 'on' : ''}" href="#/${id}" data-close><strong>${label}</strong><span>${desc[id] || ''}</span></a>`).join('');
+  openModal({ title: 'More', body: `<div class="more-list">${links}</div>
+    <div class="more-row"><button class="btn money-date-btn" data-act="more-money-date">Money date</button>
+    <div class="seg mode" role="group" aria-label="Detail level"><button class="${UI.mode === 'simple' ? 'on' : ''}" data-mode="simple">Simple</button><button class="${UI.mode === 'detailed' ? 'on' : ''}" data-mode="detailed">Detailed</button></div></div>` });
+  $('#modal')?.classList.add('sheet');
 }
 function paintTopbar(page) {
   const tb = $('#topbar'); if (!tb) return;
@@ -2971,7 +3015,10 @@ function paintTopbar(page) {
       <button class="btn small money-date-btn" data-act="money-date" title="Walk through a month together, one screen at a time">Money date</button>
       <button class="icon-btn eye" data-act="privacy" aria-pressed="${state.settings.privacy ? 'true' : 'false'}" title="${state.settings.privacy ? 'Show amounts' : 'Hide amounts'} (⇧P)">${state.settings.privacy ? EYE_OFF : EYE}</button>
     </div>`;
+  const st = $('#side-tools');
+  if (st) st.innerHTML = `<button class="icon-btn" data-act="palette" aria-label="Search">${SEARCH_ICON}</button><button class="icon-btn eye" data-act="privacy" aria-pressed="${state.settings.privacy ? 'true' : 'false'}" aria-label="${state.settings.privacy ? 'Show amounts' : 'Hide amounts'}">${state.settings.privacy ? EYE_OFF : EYE}</button>`;
 }
+const SEARCH_ICON = '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 const EYE = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>';
 const EYE_OFF = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.1 6.1C3.6 7.8 2 12 2 12s3.6 7 10 7a9.6 9.6 0 0 0 4.5-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>';
 
@@ -3011,7 +3058,8 @@ function openModal({ title, body, actions, wide, id }) {
       <footer class="modal-foot">${actions || ''}</footer></div>`;
   document.body.appendChild(wrap);
   wrap.addEventListener('mousedown', e => { if (e.target === wrap) closeModal(); });
-  setTimeout(() => { const f = wrap.querySelector('[autofocus], input:not([type=checkbox]):not([type=file]), select, textarea'); if (f) f.focus(); }, 30);
+  // on a touch screen, don't pop the keyboard up until a field is tapped (the passphrase box is the exception)
+  setTimeout(() => { const f = isTouch() ? wrap.querySelector('input[type=password][autofocus]') : wrap.querySelector('[autofocus], input:not([type=checkbox]):not([type=file]), select, textarea'); if (f) f.focus(); }, 30);
   return wrap;
 }
 function setModalActions(html) { const f = $('#modal .modal-foot'); if (f) f.innerHTML = html; }
@@ -3337,6 +3385,12 @@ function parseSearch(q) {
   }
   return out;
 }
+/* A memo that only repeats the bank's description isn't worth a second line */
+function memoWorthShowing(t) {
+  if (!t.memo) return false;
+  const m = normPayee(t.memo), r = normPayee(t.rawPayee || t.payee), q = normPayee(t.payee);
+  return !!m && m !== r && m !== q && !r.startsWith(m) && !m.startsWith(r);
+}
 VIEWS.transactions = p => {
   const month = p.m || thisMonth();
   const S = parseSearch(p.q);
@@ -3360,16 +3414,19 @@ VIEWS.transactions = p => {
   const unc = state.transactions.filter(isUncat).length;
   const tags = allTags();
   const multi = members().length > 1;
+  const nFilters = ['acct', 'cat', 'who', 'tag'].filter(k => p[k]).length;
+  const fOpen = UI.txFilters === undefined ? nFilters > 0 : UI.txFilters;
 
   return pageHead('Transactions', `${list.length.toLocaleString()} shown${unc ? ` · <a href="#/transactions?cat=_none&m=all">${unc} uncategorized</a>` : ''}`,
     `${unc ? `<button class="btn ghost" data-act="run-rules" title="Fill in uncategorized transactions using your rules, your past choices and Ọrọ̀’s merchant list">Auto-categorize</button>` : ''}<button class="btn" data-act="import">Import</button><button class="btn primary" data-act="add-txn">Add transaction</button>`) + lensNote() + `
-  <div class="filters">
+  <div class="filters ${fOpen ? 'open' : ''}">
     <label class="field inline"><span>Month</span><select data-filter="m"><option value="all" ${month === 'all' ? 'selected' : ''}>All months</option>${months.map(m => `<option value="${m}" ${m === month ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}</select></label>
-    <label class="field inline"><span>Account</span><select data-filter="acct">${acctOptions(p.acct, null, 'All accounts')}</select></label>
-    <label class="field inline"><span>Category</span><select data-filter="cat"><option value="">All categories</option><option value="_none" ${p.cat === '_none' ? 'selected' : ''}>Uncategorized</option>${catOptions(p.cat, false)}</select></label>
-    ${multi && !UI.lens ? `<label class="field inline"><span>Person</span><select data-filter="who"><option value="">Everyone</option>${memberOptions(p.who)}</select></label>` : ''}
-    ${tags.length ? `<label class="field inline"><span>Tag</span><select data-filter="tag"><option value="">Any tag</option>${tags.map(t => `<option ${t === p.tag ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>` : ''}
+    <label class="field inline more"><span>Account</span><select data-filter="acct">${acctOptions(p.acct, null, 'All accounts')}</select></label>
+    <label class="field inline more"><span>Category</span><select data-filter="cat"><option value="">All categories</option><option value="_none" ${p.cat === '_none' ? 'selected' : ''}>Uncategorized</option>${catOptions(p.cat, false)}</select></label>
+    ${multi && !UI.lens ? `<label class="field inline more"><span>Person</span><select data-filter="who"><option value="">Everyone</option>${memberOptions(p.who)}</select></label>` : ''}
+    ${tags.length ? `<label class="field inline more"><span>Tag</span><select data-filter="tag"><option value="">Any tag</option>${tags.map(t => `<option ${t === p.tag ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>` : ''}
     <label class="field inline grow"><span>Search</span><input type="search" id="tx-search" data-filter="q" value="${esc(p.q || '')}" placeholder="Payee, memo, #tag, >100"></label>
+    <div class="filters-sm"><button class="btn small ghost" data-act="tx-filters" aria-expanded="${fOpen ? 'true' : 'false'}">${fOpen ? 'Fewer filters' : 'More filters'}${nFilters ? ` · ${nFilters} on` : ''}</button>${shown.length ? `<button class="btn small ghost" data-act="tx-select" aria-pressed="${UI.txSelect ? 'true' : 'false'}">${UI.txSelect ? 'Done selecting' : 'Select'}</button>` : ''}</div>
   </div>
   <div class="bulk" id="bulk" hidden>
     <span id="bulk-count"></span>
@@ -3378,21 +3435,21 @@ VIEWS.transactions = p => {
     <input id="bulk-tag" placeholder="tag" list="tag-list" style="width:8em"><datalist id="tag-list">${tags.map(t => `<option value="${esc(t)}">`).join('')}</datalist><button class="btn small" data-act="bulk-tag">Add tag</button>
     <button class="btn small ghost danger-text" data-act="bulk-del">Delete</button>
   </div>
-  ${shown.length ? `<div class="scroll-table"><table class="ledger tx-table" id="tx-table">
+  ${shown.length ? `<div class="scroll-table"><table class="ledger tx-table ${UI.txSelect ? 'selecting' : ''}" id="tx-table">
     <thead><tr><th class="cb"><input type="checkbox" id="tx-all" aria-label="Select all shown"></th><th>Date</th><th>Payee</th><th>Category</th>${multi ? '<th class="hide-sm detail-only">Person</th>' : ''}<th class="hide-sm">Account</th><th class="num">Amount</th></tr></thead>
     <tbody>${shown.map(t => {
       const who = personOf(t);
       return `<tr data-id="${t.id}" class="${isUncat(t) ? 'needs' : ''}">
       <td class="cb"><input type="checkbox" class="tx-cb" value="${t.id}" aria-label="Select"></td>
-      <td class="nowrap muted">${dateLabel(t.date)}${t.reconciled ? ' <span class="rec" title="Reconciled">✓</span>' : ''}</td>
-      <td><button class="linklike" data-edit-txn="${t.id}">${esc(t.payee || '(no description)')}</button>${t.attachments?.length ? ' <span class="clip" title="Has a receipt">⎘</span>' : ''}
-        ${t.memo || t.tags?.length ? `<div class="tx-meta">${(t.tags || []).map(x => `<button class="tagchip" data-tagfilter="${esc(x)}">#${esc(x)}</button>`).join('')}${t.memo ? `<span class="muted small">${esc(t.memo)}</span>` : ''}</div>` : ''}</td>
-      <td>${isSplit(t) ? `<button class="split-btn" data-edit-txn="${t.id}">Split · ${t.splits.length}</button>` : `<select class="cat-select" data-txcat="${t.id}" aria-label="Category">${t.categoryId ? opts.replace(`value="${t.categoryId}"`, `value="${t.categoryId}" selected`) : opts}</select>`}</td>
-      ${multi ? `<td class="hide-sm detail-only"><span class="person-dot" style="background:${memberColor(who)}"></span>${esc(memberName(who))}</td>` : ''}
+      <td class="nowrap muted tx-date">${dateLabel(t.date)}${t.reconciled ? ' <span class="rec" title="Reconciled">✓</span>' : ''}<span class="tx-acct-sm"> · ${esc(acctById(t.accountId)?.name || '—')}</span></td>
+      <td class="tx-payee"><button class="linklike" data-edit-txn="${t.id}">${esc(t.payee || '(no description)')}</button>${t.attachments?.length ? ' <span class="clip" title="Has a receipt">⎘</span>' : ''}
+        ${memoWorthShowing(t) || t.tags?.length ? `<div class="tx-meta">${(t.tags || []).map(x => `<button class="tagchip" data-tagfilter="${esc(x)}">#${esc(x)}</button>`).join('')}${memoWorthShowing(t) ? `<span class="muted small">${esc(t.memo)}</span>` : ''}</div>` : ''}</td>
+      <td class="tx-cat">${isSplit(t) ? `<button class="split-btn" data-edit-txn="${t.id}">Split · ${t.splits.length}</button>` : `<span class="cat-pill"><span class="cat-pill-text" aria-hidden="true">${esc(catName(t.categoryId))}</span><select class="cat-select" data-txcat="${t.id}" aria-label="Category">${t.categoryId ? opts.replace(`value="${t.categoryId}"`, `value="${t.categoryId}" selected`) : opts}</select></span>`}</td>
+      ${multi ? `<td class="hide-sm detail-only nowrap"><span class="person-dot" style="background:${memberColor(who)}"></span>${esc(memberName(who))}</td>` : ''}
       <td class="hide-sm muted">${esc(acctById(t.accountId)?.name || '—')}</td>
-      <td class="num ${signClass(t.amount)}">${money(t.amount)}</td></tr>`;
+      <td class="num tx-amt ${signClass(t.amount)}">${money(t.amount)}</td></tr>`;
     }).join('')}</tbody>
-    <tfoot><tr><td colspan="${multi ? 4 : 3}"></td><td class="hide-sm"></td><td class="muted">Money in<br>Money out<br><strong>Net</strong></td><td class="num total">${money(inflow)}<br>${money(outflow)}<br><strong class="${signClass(inflow + outflow)}">${money(inflow + outflow)}</strong></td></tr></tfoot>
+    <tfoot><tr><td colspan="${multi ? 4 : 3}" class="tx-foot-pad"></td><td class="hide-sm"></td><td class="muted">Money in<br>Money out<br><strong>Net</strong></td><td class="num total">${money(inflow)}<br>${money(outflow)}<br><strong class="${signClass(inflow + outflow)}">${money(inflow + outflow)}</strong></td></tr></tfoot>
   </table></div>
   ${list.length > limit ? `<p class="center"><button class="btn ghost" data-more="${limit + 250}">Show ${Math.min(250, list.length - limit)} more</button></p>` : ''}`
   : emptyState(state.transactions.length ? 'Nothing matches these filters' : 'No transactions yet',
@@ -3480,13 +3537,13 @@ VIEWS.accounts = p => {
       <tbody>${g.accts.map(a => {
         const hs = holdingsFor(a.id).length, v = byOwner ? signedValue(a) : accountValue(a);
         return `<tr>
-          <th scope="row"><button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button>${a.institution ? `<div class="muted small">${esc(a.institution)}${a.last4 ? ` ending ${esc(a.last4)}` : ''}</div>` : ''}</th>
+          <th scope="row" class="acct-name"><button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button>${a.institution ? `<div class="muted small">${esc(a.institution)}${a.last4 ? ` ending ${esc(a.last4)}` : ''}</div>` : ''}</th>
           <td class="hide-sm muted">${byOwner || !multi ? `${esc(ACCOUNT_TYPES[a.type]?.label)}${a.rental ? ', rental' : ''}${hs ? `, ${hs} holding${hs > 1 ? 's' : ''}` : ''}` : `<span class="person-dot" style="background:${memberColor(a.owner || 'joint')}"></span>${esc(memberName(a.owner || 'joint'))}`}</td>
-          <td>${staleTag(accountAsOf(a))}${a.reconciledThrough ? `<div class="muted small">Reconciled ${dateLabel(a.reconciledThrough)}</div>` : ''}</td>
-          <td class="num">${updating && !hs ? `<input class="bal-input" data-bal="${a.id}" inputmode="decimal" value="${round2(accountValue(a))}" aria-label="Balance for ${esc(a.name)}">` : `<span class="${byOwner ? signClass(v) : ''}">${money(v)}</span>`}</td>
+          <td class="acct-asof">${staleTag(accountAsOf(a))}${a.reconciledThrough ? `<div class="muted small">Reconciled ${dateLabel(a.reconciledThrough)}</div>` : ''}</td>
+          <td class="num acct-val">${updating && !hs ? `<input class="bal-input" data-bal="${a.id}" inputmode="decimal" value="${round2(accountValue(a))}" aria-label="Balance for ${esc(a.name)}">` : `<span class="${byOwner ? signClass(v) : ''}">${money(v)}</span>`}</td>
           <td class="acts"><button class="linklike small" data-history="${a.id}">History</button>${a.ledger ? ` <button class="linklike small" data-reconcile="${a.id}">Reconcile</button>` : ''}</td></tr>`;
       }).join('')}</tbody>
-      <tfoot><tr><th scope="row">Total</th><td class="hide-sm"></td><td></td><td class="num total">${money(subtotal)}</td><td></td></tr></tfoot>
+      <tfoot><tr><th scope="row">Total</th><td class="hide-sm"></td><td class="acct-pad"></td><td class="num total">${money(subtotal)}</td><td class="acct-pad"></td></tr></tfoot>
     </table></section>`;
   }).join('')}
   <section class="acct-group"><table class="ledger acct-table grand">
@@ -3515,18 +3572,18 @@ VIEWS.investments = () => {
 
   return pageHead('Investments', `${accts.length} account${accts.length > 1 ? 's' : ''}, ${hs.length} holding${hs.length === 1 ? '' : 's'}`,
     `<button class="btn" data-act="import">Import positions</button><button class="btn primary" data-act="add-holding">Add holding</button>`) + `
-  <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Market value</th><th class="num">Cost basis</th><th class="num">Unrealized gain</th><th class="num">Return on cost</th></tr></thead>
-    <tbody><tr><th scope="row">All investments</th><td class="num">${money(total, { cents: false })}</td><td class="num">${cost ? money(cost, { cents: false }) : '—'}</td><td class="num ${signClass(mval - cost)}">${cost ? money(mval - cost, { cents: false, sign: true }) : '—'}</td><td class="num ${signClass(mval - cost)}">${cost ? pct((mval - cost) / cost) : '—'}</td></tr></tbody></table>
+  <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Market value</th><th class="num hide-sm">Cost basis</th><th class="num">Unrealized gain</th><th class="num">Return on cost</th></tr></thead>
+    <tbody><tr><th scope="row">All investments</th><td class="num">${money(total, { cents: false })}</td><td class="num hide-sm">${cost ? money(cost, { cents: false }) : '—'}</td><td class="num ${signClass(mval - cost)}">${cost ? money(mval - cost, { cents: false, sign: true }) : '—'}</td><td class="num ${signClass(mval - cost)}">${cost ? pct((mval - cost) / cost) : '—'}</td></tr></tbody></table>
     <p class="muted small">Gains count only holdings with a cost basis. Cash positions are left out.</p></section>
 
   <section class="panel">
     <header class="panel-head"><h2>Allocation</h2><span class="muted small">Targets ${targetSum ? `add to ${targetSum}%` : 'are optional'}</span></header>
     <div class="stack" role="img" aria-label="Investment allocation">${classes.filter(c => alloc[c]).map(c => `<span style="width:${(alloc[c] / allocTotal) * 100}%;background:${CLASS_COLORS[c]}" title="${esc(c)} ${pct(alloc[c] / allocTotal)}"></span>`).join('')}</div>
-    <table class="ledger compact alloc-table"><thead><tr><th>Asset class</th><th class="num">Value</th><th class="num">Actual</th><th class="num">Target</th><th class="num">Drift</th><th class="num hide-sm">To rebalance</th></tr></thead><tbody>
+    <table class="ledger compact alloc-table"><thead><tr><th>Asset class</th><th class="num hide-sm">Value</th><th class="num">Actual</th><th class="num">Target</th><th class="num">Drift</th><th class="num hide-sm">To rebalance</th></tr></thead><tbody>
     ${classes.map(c => {
       const v = alloc[c] || 0, share = allocTotal ? v / allocTotal : 0, tgt = state.settings.targets[c];
       const drift = tgt != null && tgt !== '' ? share - tgt / 100 : null;
-      return `<tr><th scope="row"><span class="swatch" style="background:${CLASS_COLORS[c]}"></span>${esc(c)}</th><td class="num">${money(v, { cents: false })}</td><td class="num">${pct(share)}</td>
+      return `<tr><th scope="row"><span class="swatch" style="background:${CLASS_COLORS[c]}"></span>${esc(c)}</th><td class="num hide-sm">${money(v, { cents: false })}</td><td class="num">${pct(share)}</td>
         <td class="num budget-cell"><input class="budget-input" id="tg-${slug(c)}" data-target="${esc(c)}" inputmode="decimal" value="${tgt ?? ''}" placeholder="—" aria-label="Target for ${esc(c)}"><span class="cur">%</span></td>
         <td class="num ${drift == null ? '' : Math.abs(drift) >= 0.05 ? 'neg' : 'muted'}">${drift == null ? '—' : (drift >= 0 ? '+' : '−') + Math.abs(drift * 100).toFixed(1) + ' pts'}</td>
         <td class="num hide-sm">${drift == null ? '' : money(-drift * allocTotal, { cents: false, sign: true })}</td></tr>`;
@@ -3596,10 +3653,10 @@ VIEWS.property = () => {
         const coc = a.cashInvested ? ttm.cashFlow / a.cashInvested : NaN;
         const dscr = ttm.debt ? ttm.noi / ttm.debt : NaN;
         rental = `
-        <table class="ledger flows-table"><thead><tr><th></th><th class="num">Rent</th><th class="num">Operating costs</th><th class="num">NOI</th><th class="num">Debt service</th><th class="num">Cash flow</th></tr></thead>
+        <table class="ledger flows-table"><thead><tr><th></th><th class="num">Rent</th><th class="num hide-sm">Operating costs</th><th class="num">NOI</th><th class="num hide-sm">Debt service</th><th class="num">Cash flow</th></tr></thead>
           <tbody>
-            <tr><th scope="row">This year</th><td class="num">${money(ytd.income, { cents: false })}</td><td class="num">${money(ytd.opex, { cents: false })}</td><td class="num">${money(ytd.noi, { cents: false })}</td><td class="num">${money(ytd.debt, { cents: false })}</td><td class="num ${signClass(ytd.cashFlow)}">${money(ytd.cashFlow, { cents: false })}</td></tr>
-            <tr><th scope="row">Last 12 full months</th><td class="num">${money(ttm.income, { cents: false })}</td><td class="num">${money(ttm.opex, { cents: false })}</td><td class="num">${money(ttm.noi, { cents: false })}</td><td class="num">${money(ttm.debt, { cents: false })}</td><td class="num ${signClass(ttm.cashFlow)}">${money(ttm.cashFlow, { cents: false })}</td></tr>
+            <tr><th scope="row">This year</th><td class="num">${money(ytd.income, { cents: false })}</td><td class="num hide-sm">${money(ytd.opex, { cents: false })}</td><td class="num">${money(ytd.noi, { cents: false })}</td><td class="num hide-sm">${money(ytd.debt, { cents: false })}</td><td class="num ${signClass(ytd.cashFlow)}">${money(ytd.cashFlow, { cents: false })}</td></tr>
+            <tr><th scope="row">Last 12 full months</th><td class="num">${money(ttm.income, { cents: false })}</td><td class="num hide-sm">${money(ttm.opex, { cents: false })}</td><td class="num">${money(ttm.noi, { cents: false })}</td><td class="num hide-sm">${money(ttm.debt, { cents: false })}</td><td class="num ${signClass(ttm.cashFlow)}">${money(ttm.cashFlow, { cents: false })}</td></tr>
           </tbody></table>
         <dl class="kpis">
           <div><dt>Cap rate</dt><dd>${pct(cap)}</dd><span class="muted small">NOI over value</span></div>
@@ -3809,7 +3866,7 @@ VIEWS.reports = p => {
     return head + `
     <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Left over</th><th class="num">Savings rate</th></tr></thead>
       <tbody><tr><th scope="row">${esc(R.label)}</th><td class="num">${money(f.income, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td><td class="num ${signClass(f.net)}">${money(f.net, { cents: false })}</td><td class="num">${pct(f.rate, 0)}</td></tr></tbody></table></section>
-    <section class="panel"><header class="panel-head"><h2>Where the money came from and went</h2><span class="muted small">Hover a band for the amount</span></header>
+    <section class="panel"><header class="panel-head"><h2>Where the money came from and went</h2><span class="muted small">${isTouch() ? 'Tap' : 'Hover over'} a band for the amount</span></header>
       ${chartHost({ type: 'sankey', left: sk.left, right: sk.right, total: Math.max(sk.income, sk.spending), empty: 'No income or spending in this period.' })}</section>`;
   }
 
@@ -4116,7 +4173,7 @@ VIEWS.data = () => {
     <header class="panel-head"><h2>Appearance and privacy</h2></header>
     <div class="form-grid">
       <label class="field"><span>Theme</span><select data-setting="theme"><option value="auto" ${state.settings.theme === 'auto' ? 'selected' : ''}>Match my Mac</option><option value="light" ${state.settings.theme === 'light' ? 'selected' : ''}>Light</option><option value="dark" ${state.settings.theme === 'dark' ? 'selected' : ''}>Dark</option></select></label>
-      <label class="check"><input type="checkbox" data-setting-bool="privacy" ${state.settings.privacy ? 'checked' : ''}> Hide amounts until I hover (⇧P)</label>
+      <label class="check"><input type="checkbox" data-setting-bool="privacy" ${state.settings.privacy ? 'checked' : ''}> ${isTouch() ? 'Hide amounts until I tap them' : 'Hide amounts until I hover (⇧P)'}</label>
       <label class="field"><span>Flag balances older than (days)</span><input data-setting="staleDays" inputmode="numeric" value="${state.settings.staleDays}"></label>
       <label class="field"><span>Warn when cash may dip below</span><input data-setting="lowCash" inputmode="decimal" value="${state.settings.lowCash}"></label>
       <label class="field"><span>Daily backups to keep</span><input data-setting="keepBackups" inputmode="numeric" value="${state.settings.keepBackups}"><small class="muted">Plus one per month for a year</small></label>
@@ -4641,6 +4698,16 @@ function startMoneyDate(mk) {
   document.body.classList.add('presenting');
   paintSlide();
 }
+/* Swipe left or right between slides on a phone or iPad */
+document.addEventListener('touchstart', e => {
+  const el = e.target.closest?.('#present .slide'); if (!el || e.touches.length !== 1 || e.target.closest('textarea, input, select, button')) { MD.swipe = null; return; }
+  MD.swipe = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+}, { passive: true });
+document.addEventListener('touchend', e => {
+  const s = MD.swipe; MD.swipe = null; if (!s || !$('#present')) return;
+  const t = e.changedTouches[0], dx = t.clientX - s.x, dy = t.clientY - s.y;
+  if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && Date.now() - s.t < 700) { if (dx > 0) mdAction('prev'); else if (MD.i < MD.slides.length - 1) mdAction('next'); }
+}, { passive: true });
 function endMoneyDate() { $('#present')?.remove(); document.body.classList.remove('presenting'); render(); }
 function paintSlide() {
   const el = $('#present'); if (!el) return;
@@ -4820,6 +4887,10 @@ const ACTIONS = {
   'add-rule': () => ruleModal(),
   'add-goal': () => goalModal(),
   'palette': () => openPalette(),
+  'more-pages': () => morePagesSheet(),
+  'tx-filters': () => { UI.txFilters = !$('.filters')?.classList.contains('open'); render(); },
+  'tx-select': () => { UI.txSelect = !UI.txSelect; if (!UI.txSelect) { $$('.tx-cb:checked').forEach(c => { c.checked = false; }); } render(); },
+  'more-money-date': () => { closeModal(true); ACTIONS['money-date'](); },
   'money-date': el => startMoneyDate(el?.dataset.mk),
   'privacy': () => { state.settings.privacy = !state.settings.privacy; commit({ silent: true }); render(); },
   'print': () => window.print(),
@@ -4991,7 +5062,7 @@ document.addEventListener('click', e => {
   if (d.act) { e.preventDefault(); return ACTIONS[d.act]?.(el); }
   if (d.month) return setParam(d.param || 'm', d.month === thisMonth() && d.param !== 'cm' ? '' : d.month);
   if (d.nwrange) { UI.nwRange = d.nwrange; return render(); }
-  if (d.mode) return setMode(d.mode);
+  if (d.mode) { setMode(d.mode); $$('#modal .seg.mode button').forEach(b => b.classList.toggle('on', b.dataset.mode === d.mode)); return; }
   if (d.tab) return setParam(d.param, d.tab);
   if ('by' in d && el.closest('.seg')) return setParam('by', d.by);
   if ('lens' in d) { UI.lens = d.lens; try { sessionStorage.setItem('keel.lens', d.lens); } catch (e2) { /* ignore */ } return render(); }
@@ -5038,6 +5109,7 @@ document.addEventListener('change', e => {
     const t = state.transactions.find(x => x.id === d.txcat); if (!t) return;
     t.categoryId = el.value || null;
     el.closest('tr')?.classList.toggle('needs', !t.categoryId);
+    const pill = el.parentElement?.querySelector('.cat-pill-text'); if (pill) pill.textContent = catName(t.categoryId);
     commit({ silent: true });
     offerRule(t, t.categoryId);
     return;
@@ -5299,6 +5371,7 @@ async function syncLoad() {
   try {
     if (p.encrypted) { if (!Store.pass) return; p = (await Vault.open(p, Store.pass)).data; }
     SYNC.rec = p.sync || null; SYNC.cacheKey = null;
+    if (SYNC.rec) { tidyPayees(SYNC.rec.base); tidyPayees(SYNC.rec.sentSnap); }   // match the tidy-up migrate() does, so it isn't counted as a change
   } catch (e) { SYNC.rec = null; }
 }
 /* Edits made here since the last send (or since the Mac's data was opened). */

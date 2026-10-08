@@ -47,6 +47,8 @@ Fix one by hand and it offers to remember the fix. On Transactions, **Auto-categ
 
 **Set it up once:** open the address in Safari, tap Share, choose **Add to Home Screen**, then open Ọrọ̀ from its icon and tap **Open from iCloud Drive** → **iCloud Drive › Ọrọ̀ › data › oro.json**.
 
+**Getting around:** the four main pages are in the tab bar at the bottom; everything else, plus Money date (swipe between slides), is under **More**. On an iPhone, transactions show as one line each: tap the category to change it, or **Select** to change several at once.
+
 **Phone → Mac:** changes you make on the phone are saved on the phone right away. To give them to your Mac, tap the line at the top ("3 changes to send to Mac") → **Send to your Mac** → **Save to Files** → **iCloud Drive › Ọrọ̀ › inbox**. The Mac adds them automatically whenever Ọrọ̀ is open there.
 
 **Mac → Phone:** the Mac saves to iCloud Drive as you work. On the phone, tap the line at the top → **Get latest from iCloud Drive** → **oro.json**. Changes you haven't sent yet are kept.

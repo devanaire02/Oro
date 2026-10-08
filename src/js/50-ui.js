@@ -9,6 +9,17 @@ const PAGES = [
   ['data', 'Settings', 'end'],
 ];
 const LENS_PAGES = new Set(['overview', 'transactions', 'reports']);
+/* iPhone and iPad portrait: four main sections in a tab bar at the bottom, everything else under More */
+const TAB_PAGES = ['overview', 'transactions', 'budget', 'accounts'];
+const TAB_ICONS = {
+  overview: '<path d="M4 11.5 12 5l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5h-5v5H5a1 1 0 0 1-1-1z"/>',
+  transactions: '<path d="M5 7h14M5 12h14M5 17h9"/>',
+  budget: '<circle cx="12" cy="12" r="7.5"/><path d="M12 4.5V12l5.3 5.3"/>',
+  accounts: '<path d="M4 9.5 12 5l8 4.5M5.5 10v7M9.8 10v7M14.2 10v7M18.5 10v7M4 19.5h16"/>',
+  more: '<circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18" cy="12" r="1.3"/>',
+};
+const tabIcon = k => `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${TAB_ICONS[k]}</svg>`;
+const isTouch = () => { try { return matchMedia('(hover: none)').matches; } catch (e) { return false; } };
 function route() {
   const h = location.hash.replace(/^#\/?/, '') || 'overview';
   const [page, qs] = h.split('?');
@@ -56,6 +67,7 @@ function render() {
     const w = document.createElement('div'); w.className = 'scroll-table'; t.replaceWith(w); w.appendChild(t);
   }
   $$('.nav a').forEach(a => a.classList.toggle('active', a.dataset.page === page));
+  $$('#tabbar [data-tab-page]').forEach(a => { const on = a.dataset.tabPage === page || (a.dataset.tabPage === 'more' && !TAB_PAGES.includes(page)); a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   document.title = `${PAGES.find(p => p[0] === page)[1]} · Ọrọ̀`;
   paintTopbar(page);
   drawCharts($('#main'));
@@ -74,6 +86,19 @@ function buildShell() {
     html += `<a href="#/${id}" data-page="${id}">${label}</a>`;
   }
   $('#nav').innerHTML = html;
+  const tb = $('#tabbar');
+  if (tb) tb.innerHTML = TAB_PAGES.map(id => `<a href="#/${id}" data-tab-page="${id}">${tabIcon(id)}<span>${PAGES.find(p => p[0] === id)[1]}</span></a>`).join('')
+    + `<button type="button" data-act="more-pages" data-tab-page="more">${tabIcon('more')}<span>More</span></button>`;
+}
+/* The More sheet on iPhone: the pages that aren't in the tab bar, plus Money date */
+function morePagesSheet() {
+  const { page } = route();
+  const desc = { cashflow: 'Bills, paychecks and the next 90 days', investments: 'Holdings, allocation and fees', property: 'Home, rental and other assets', reports: 'Cash flow, spending, income statement', planning: 'Retirement, goals, debt payoff', taxes: 'Schedule E and deductions for your CPA', review: 'Close out the month together', data: 'Sync, security, household, rules' };
+  const links = PAGES.filter(([id]) => !TAB_PAGES.includes(id)).map(([id, label]) => `<a class="more-link ${id === page ? 'on' : ''}" href="#/${id}" data-close><strong>${label}</strong><span>${desc[id] || ''}</span></a>`).join('');
+  openModal({ title: 'More', body: `<div class="more-list">${links}</div>
+    <div class="more-row"><button class="btn money-date-btn" data-act="more-money-date">Money date</button>
+    <div class="seg mode" role="group" aria-label="Detail level"><button class="${UI.mode === 'simple' ? 'on' : ''}" data-mode="simple">Simple</button><button class="${UI.mode === 'detailed' ? 'on' : ''}" data-mode="detailed">Detailed</button></div></div>` });
+  $('#modal')?.classList.add('sheet');
 }
 function paintTopbar(page) {
   const tb = $('#topbar'); if (!tb) return;
@@ -90,7 +115,10 @@ function paintTopbar(page) {
       <button class="btn small money-date-btn" data-act="money-date" title="Walk through a month together, one screen at a time">Money date</button>
       <button class="icon-btn eye" data-act="privacy" aria-pressed="${state.settings.privacy ? 'true' : 'false'}" title="${state.settings.privacy ? 'Show amounts' : 'Hide amounts'} (⇧P)">${state.settings.privacy ? EYE_OFF : EYE}</button>
     </div>`;
+  const st = $('#side-tools');
+  if (st) st.innerHTML = `<button class="icon-btn" data-act="palette" aria-label="Search">${SEARCH_ICON}</button><button class="icon-btn eye" data-act="privacy" aria-pressed="${state.settings.privacy ? 'true' : 'false'}" aria-label="${state.settings.privacy ? 'Show amounts' : 'Hide amounts'}">${state.settings.privacy ? EYE_OFF : EYE}</button>`;
 }
+const SEARCH_ICON = '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 const EYE = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>';
 const EYE_OFF = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.1 6.1C3.6 7.8 2 12 2 12s3.6 7 10 7a9.6 9.6 0 0 0 4.5-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>';
 
@@ -130,7 +158,8 @@ function openModal({ title, body, actions, wide, id }) {
       <footer class="modal-foot">${actions || ''}</footer></div>`;
   document.body.appendChild(wrap);
   wrap.addEventListener('mousedown', e => { if (e.target === wrap) closeModal(); });
-  setTimeout(() => { const f = wrap.querySelector('[autofocus], input:not([type=checkbox]):not([type=file]), select, textarea'); if (f) f.focus(); }, 30);
+  // on a touch screen, don't pop the keyboard up until a field is tapped (the passphrase box is the exception)
+  setTimeout(() => { const f = isTouch() ? wrap.querySelector('input[type=password][autofocus]') : wrap.querySelector('[autofocus], input:not([type=checkbox]):not([type=file]), select, textarea'); if (f) f.focus(); }, 30);
   return wrap;
 }
 function setModalActions(html) { const f = $('#modal .modal-foot'); if (f) f.innerHTML = html; }
