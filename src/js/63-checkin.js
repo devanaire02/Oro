@@ -4,9 +4,9 @@
    coming up. Each card is answered by tapping, or by typing or dictating into the answer box, and can be read aloud with the
    device's built-in voice. All of it runs on the device; nothing is sent anywhere. */
 const CI_WINDOWS = [['day', 'Today'], ['week', 'This week'], ['month', 'This month']];
-const CI = { w: 'week', handled: [], skipped: new Set(), older: false, talking: false, heard: '', last: null, back: null, choose: null, wParam: '', sayBack: '' };
+const CI = { w: 'week', handled: [], skipped: new Set(), older: false, talking: false, heard: '', last: null, back: null, choose: null, wParam: '', sayBack: '', draft: null, addParam: '' };
 function ciReset() {
-  Object.assign(CI, { w: 'week', handled: [], skipped: new Set(), older: false, talking: false, heard: '', last: null, back: null, choose: null, wParam: '', sayBack: '' });
+  Object.assign(CI, { w: 'week', handled: [], skipped: new Set(), older: false, talking: false, heard: '', last: null, back: null, choose: null, wParam: '', sayBack: '', draft: null, addParam: '' });
   ciHush();
 }
 const checkinOn = () => state.settings.checkin !== false;
@@ -260,6 +260,7 @@ function ciItems(w) {
   const win = ciWindow(w), now = today(), items = [];
   const got = SYNC.rec?.openedAt || SYNC.rec?.macSaved;
   if (isCompanion() && got && daysBetween(got.slice(0, 10), now) >= 2) items.push({ id: 'copy:' + got, kind: 'copy', got });
+  for (const x of ciGaps()) items.push(x);
   for (const x of ciImportsDue()) items.push({ id: `${x.key}:${x.newest}`, kind: 'import', ...x });
   for (const x of ciMissing()) items.push({ id: `${x.key}:${x.due}`, ...x });
   const txs = state.transactions.filter(t => ciNeeds(t) && (CI.older || ciInWindow(t, win))).sort((a, b) => a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id)));
@@ -333,7 +334,7 @@ function ciButton() {
 function greeting() { const h = new Date().getHours(); return h < 12 ? 'Good morning.' : h < 17 ? 'Good afternoon.' : 'Good evening.'; }
 
 /* ---------- each card: what it shows, and what it says ---------- */
-const kindLabel = { uncat: 'Needs a category', flag: 'You flagged this', missing: 'Hasn’t shown up', import: 'Time to import', balance: 'Update a balance', budget: 'Budgets', due: 'Coming up', older: 'Older ones', send: 'Send to your Mac', review: 'Monthly review', copy: 'Get the latest first' };
+const kindLabel = { gap: 'Missing something', uncat: 'Needs a category', flag: 'You flagged this', missing: 'Hasn’t shown up', import: 'Time to import', balance: 'Update a balance', budget: 'Budgets', due: 'Coming up', older: 'Older ones', send: 'Send to your Mac', review: 'Monthly review', copy: 'Get the latest first' };
 function ciTx(item) { return state.transactions.find(t => t.id === item.tx); }
 function ciCardSpeech(item) {
   if (!item) return '';
@@ -348,6 +349,7 @@ function ciCardSpeech(item) {
     return s;
   }
   switch (item.kind) {
+    case 'gap': return gapSpeech(item);
     case 'missing': {
       const amt = sayMoney(item.amount), from = item.from && acctById(item.from), stale = item.from && ciStaleImport(item.from);
       return `${item.name}${amt ? `, about ${amt},` : ''} usually ${item.what === 'deposit' ? 'comes in' : 'shows up'} around the ${ordinal(+item.due.slice(8))}, and it hasn’t yet.${item.last ? ` Last seen ${sayDate(item.last).replace(/^on /, '')}.` : ''}${stale ? ` ${from.name} hasn’t been imported since ${MONTHS[+stale.newest.slice(5, 7) - 1]} ${+stale.newest.slice(8)}, so it may just need an import.` : ''}`;
@@ -396,6 +398,7 @@ function ciCardHtml(item, q) {
   }
   const body = (title, html, actions, extra) => `<section class="panel ci-card" data-ci-item="${esc(item.id)}">${head}<h2 class="ci-title">${title}</h2>${html}<div class="ci-actions">${actions}</div>${foot(extra)}</section>`;
   switch (item.kind) {
+    case 'gap': return gapCardHtml(item, q, head, foot);
     case 'missing': {
       const from = item.from && acctById(item.from), stale = item.from && ciStaleImport(item.from);
       return body(esc(item.name), `${item.amount ? `<div class="ci-amount num ${item.amount > 0 ? 'pos' : ''}">about ${approx(item.amount)}</div>` : ''}
@@ -455,6 +458,7 @@ function checkinSettings() {
 VIEWS.checkin = p => {
   const sub = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   if (!checkinOn()) return pageHead('Check-in', sub) + `<section class="panel narrow"><p>Check-in is turned off.</p><div class="actions"><button class="btn primary" data-ci="turn-on">Turn it on</button></div></section>`;
+  if (p.add && p.add !== CI.addParam) { CI.addParam = p.add; tellStart('', p.add === 'property' ? 'property' : ''); }
   if (p.w && p.w !== CI.wParam && CI_WINDOWS.some(([k]) => k === p.w)) { CI.wParam = p.w; if (p.w !== CI.w) { CI.w = p.w; CI.handled = []; CI.back = null; } }
   const q = ciQueue(), prefs = voicePrefs();
   const seg = `<div class="seg ci-seg" role="group" aria-label="Window">${CI_WINDOWS.map(([k, l]) => `<button class="${CI.w === k ? 'on' : ''}" data-ci="w" data-v="${k}">${l}</button>`).join('')}</div>`;
@@ -465,10 +469,12 @@ VIEWS.checkin = p => {
     : `<div class="ci-progress"><div class="ci-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${q.total}" aria-valuenow="${Math.min(q.pos - 1, q.total)}" aria-label="Progress"><i style="width:${Math.round(100 * (q.pos - 1) / Math.max(1, q.total))}%"></i></div>${talk}</div>`;
   const last = CI.last ? `<p class="ci-last">${esc(CI.last.text)}${CI.last.undo ? ' <button class="linklike" data-ci="undo">Undo</button>' : ''}</p>` : '';
   // the answer box sits above the card, so with the phone's keyboard up the card is still in view
-  const say = prefs.box && q.cur ? `<form class="ci-say" data-ci-say autocomplete="off"><input id="ci-say" type="text" enterkeyhint="go" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="${isTouch() ? 'Tap here, then the keyboard’s mic' : 'Type an answer'}" aria-label="Answer"><button class="btn" type="submit">Go</button></form>` : '';
-  const hint = say ? '<p class="ci-hint muted small">Say “yes”, a category, a person, “flag it”, “skip”, “back” or “always”. For a split: “half groceries, half household”. Add a note with “note:” and what to write.</p>' : '';
-  let card = q.cur ? ciCardHtml(q.cur, q) : '';
-  if (!q.cur) {
+  const say = prefs.box ? `<form class="ci-say" data-ci-say autocomplete="off"><input id="ci-say" type="text" enterkeyhint="go" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="${isTouch() ? 'Tap here, then the keyboard’s mic' : q.cur || CI.draft ? 'Type an answer' : 'Say “add a savings account at Chase…”'}" aria-label="Answer"><button class="btn" type="submit">Go</button></form>` : '';
+  const hint = (say ? `<p class="ci-hint muted small">${CI.draft ? 'Answer the question, or change anything: “call it Chase Sapphire”, “the balance is 13,000”, “it’s Julissa’s”. Say “cancel” to stop.'
+    : 'Say “yes”, a category, a person, “flag it”, “skip”, “back” or “always”. For a split: “half groceries, half household”. Add a note with “note:” and what to write. To add an account: “add a checking account at Chase ending 4321 with 12,400 for Julissa”.'}</p>` : '')
+    + (CI.draft ? '' : '<div class="ci-add-row"><button class="btn ghost" data-ci="tell-start" data-v="account">Add an account</button><button class="btn ghost" data-ci="tell-start" data-v="property">Add a property</button></div>');
+  let card = CI.draft ? tellCardHtml() : q.cur ? ciCardHtml(q.cur, q) : '';
+  if (!q.cur && !CI.draft) {
     const did = CI.handled.filter(h => h.what !== 'skipped').length, skipped = CI.handled.filter(h => h.what === 'skipped').length;
     card = `<section class="panel ci-done"><h2>${q.items.length ? 'That’s everything' : 'You’re all caught up'} for ${CI.w === 'day' ? 'today' : CI.w === 'week' ? 'this week' : 'this month'}.</h2>
       ${CI.handled.length ? `<p>${did ? `You took care of ${did}` : 'Nothing changed'}${skipped ? `${did ? ' and' : ','} skipped ${skipped}` : ''}.</p>` : ''}
@@ -524,7 +530,7 @@ function ciDo(a, item) {
         if (!g) { if (!isUncat(t)) return ciDo({ act: 'unflag' }, item); CI.heard = 'There’s no guess for this one. Say or pick a category.'; return CI.heard; }
         return done('sorted', ciSetCategory(t, g.id, { person: a.person || g.person, always: a.always || $('#ci-always')?.checked }), true, catName(g.id) + '.');
       }
-      const map = { missing: 'import', import: 'import', older: 'older', send: 'send', review: 'review', copy: 'sync-open', budget: 'next', due: 'next', balance: null };
+      const map = { gap: item.what === 'notx' ? 'import' : null, missing: 'import', import: 'import', older: 'older', send: 'send', review: 'review', copy: 'sync-open', budget: 'next', due: 'next', balance: null };
       return map[item.kind] ? ciDo({ act: map[item.kind] }, item) : '';
     }
     case 'cat': return t ? done('sorted', ciSetCategory(t, a.categoryId, { person: a.person, always: a.always || $('#ci-always')?.checked }), true, catName(a.categoryId) + (a.person ? ` for ${memberName(a.person)}` : '') + '.') : '';
@@ -540,6 +546,17 @@ function ciDo(a, item) {
       setBalance(acc, v); commit({ silent: true });
       return done('sorted', `${acc.name} updated to ${money(v)}.`, true, 'Saved.');
     }
+    case 'hand': {
+      const acc = acctById(item.accountId); if (!acc) return '';
+      if (acc.ledger) { acc.ledger = false; delete acc.anchorBalance; delete acc.anchorDate; commit({ silent: true }); }
+      return done('sorted', `OK, ${acc.name}’s balance will be kept by hand.`, true, 'OK.');
+    }
+    case 'rate': {
+      const acc = acctById(item.accountId); if (!acc || !isFinite(a.value) || a.value <= 0 || a.value >= 30) { CI.heard = 'Say the rate as a number, like 6.25.'; return CI.heard; }
+      acc.rate = round2(a.value * 1000) / 1000; commit({ silent: true });
+      return done('sorted', `${acc.name}: ${acc.rate}% interest.`, true, 'Saved.');
+    }
+    case 'not-needed': ciQuietSet(item.key, 'stop:' + today()); commit({ silent: true }); return done('sorted', 'OK, I won’t ask about that again.', true, 'OK.');
     case 'quiet-month': ciQuietSet(item.key, thisMonth()); commit({ silent: true }); return done('sorted', `OK, I won’t ask about ${item.name} again this month.`);
     case 'stopped':
       if (item.rec) { state.recurring = state.recurring.filter(r => r.id !== item.rec); commit({ silent: true }); return done('sorted', `Removed ${item.name} from your bills.`); }
@@ -584,7 +601,8 @@ function ciRun(a, item) {
 function ciCurrent() { return ciQueue().cur; }
 /* Undo the last change made here, and show that card again */
 function ciUndo() {
-  const n = CI.last?.n || 1, popped = CI.handled.splice(-n, n);
+  const n = CI.last?.n ?? 1, popped = n ? CI.handled.splice(-n, n) : [];
+  if (CI.draft?.step === 'after') CI.draft = null;
   undo();
   CI.last = null; CI.choose = null; CI.back = popped.length === 1 ? popped[0].item : null;
   return 'Undone.';
@@ -601,12 +619,14 @@ document.addEventListener('click', e => {
   if (act === 'talk') {
     CI.talking = true; render();
     const q = ciQueue();
+    if (CI.draft) return ciSpeak(tellPrompt());
     return ciSpeak(`${greeting()} ${CI.handled.length ? '' : ciSummary(q.left, q.win, true) + ' '}${q.cur ? (CI.handled.length ? '' : 'First: ') + ciCardSpeech(q.cur) : ''}`);
   }
   if (act === 'quiet') { CI.talking = false; ciHush(); return render(); }
-  if (act === 'say-card') return ciSpeak(ciCardSpeech(ciCurrent()));
+  if (act === 'say-card') return ciSpeak(CI.draft ? tellPrompt() : ciCardSpeech(ciCurrent()));
   if (act === 'revisit') { CI.handled = CI.handled.filter(h => h.what !== 'skipped'); CI.skipped.clear(); return ciAfter(''); }
   if (act === 'undo') return ciAfter(ciUndo());
+  if (act.startsWith('tell-')) { CI.heard = ''; const reply = tellClick(act, v); render(); if (CI.talking && reply) ciSpeak(reply); return; }
   if (act === 'file-sure') {
     const ts = ciItems(CI.w).items.filter(i => i.kind === 'uncat').map(ciTx).filter(t => t && ciGuess(t)?.sure);
     for (const t of ts) { const g = ciGuess(t); t.categoryId = g.id; if (g.person && !t.person) t.person = g.person; }
@@ -639,14 +659,25 @@ document.addEventListener('submit', e => {
   const f = e.target;
   if (f.matches('[data-ci-bal]')) {
     e.preventDefault();
-    const item = ciCurrent(), n = ciNumber($('#ci-bal')?.value || '');
-    if (!item || n == null) return toast('Type the balance, like 12,400.');
-    return ciRun({ act: 'balance', value: n }, item);
+    const item = ciCurrent(), n = ciNumber(($('#ci-bal')?.value || '').replace(/%/g, ''));
+    if (!item || n == null) return toast(item?.what === 'rate' ? 'Type the rate, like 6.25.' : 'Type the balance, like 12,400.');
+    return ciRun({ act: item.kind === 'gap' && item.what === 'rate' ? 'rate' : 'balance', value: n }, item);
   }
   if (f.matches('[data-ci-say]')) {
     e.preventDefault();
-    const inp = $('#ci-say'), text = inp?.value || '', item = ciCurrent();
-    if (!text.trim() || !item) return;
+    const inp = $('#ci-say'), text = inp?.value || '';
+    if (!text.trim()) return;
+    const low = text.trim().toLowerCase().replace(/[’‘]/g, "'");
+    if (CI.draft || (TELL_ADD.test(low) && !/^add (a )?note\b/.test(low) && (tellFindType(low) || /\b(account|property)\b/.test(low)))) {
+      CI.heard = '';
+      const reply = CI.draft ? tellAnswer(text) : tellStart(text);
+      render();
+      if (CI.talking) ciSpeak(reply);
+      const again = $('#ci-say'); if (again) { again.value = ''; again.focus(); }
+      return;
+    }
+    const item = ciCurrent();
+    if (!item) { CI.heard = 'Nothing left to answer here. To add something, say “add a checking account…” or “add a property…”.'; render(); return; }
     const a = ciUnderstand(text, item);
     CI.heard = '';
     const before = CI.handled.length, back = CI.back;
@@ -656,7 +687,7 @@ document.addEventListener('submit', e => {
     const again = $('#ci-say'); if (again) { again.value = ''; again.focus(); }   // keep the keyboard up for the next answer
   }
 });
-window.addEventListener('hashchange', () => { if (!/^#\/?checkin/.test(location.hash) && CI.talking) { CI.talking = false; ciHush(); } });
+window.addEventListener('hashchange', () => { if (!/^#\/?checkin/.test(location.hash)) { CI.addParam = ''; if (CI.talking) { CI.talking = false; ciHush(); } } });
 if (canSpeak()) {
   const onVoices = () => { liveVoices(); refreshVoiceMenu(); };
   try { speechSynthesis.addEventListener('voiceschanged', onVoices); } catch (e) { try { speechSynthesis.onvoiceschanged = onVoices; } catch (e2) { /* older browsers */ } }
@@ -794,6 +825,11 @@ function ciUnderstand(text, item) {
       return { act: 'unknown', text: raw };
     }
     case 'balance': { const n = ciNumber(s); if (n != null) return { act: 'balance', value: n }; break; }
+    case 'gap':
+      if (item.what === 'notx') { if (CI_SAY.import.test(s)) return { act: 'import' }; if (/\b(by hand|manual|manually|myself|hand)\b/.test(s)) return { act: 'hand' }; break; }
+      if (/^(i )?(don'?t know|not sure|no idea|leave it|skip it for good|it'?s zero|zero|none)$/.test(s)) return { act: 'not-needed' };
+      { const n = ciNumber(s.replace(/percent|%/g, '')); if (n != null) return { act: item.what === 'rate' ? 'rate' : 'balance', value: n }; }
+      break;
     case 'missing':
       if (CI_SAY.quietMonth.test(s)) return { act: 'quiet-month' };
       if (CI_SAY.stopped.test(s)) return { act: 'stopped' };

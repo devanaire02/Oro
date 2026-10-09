@@ -79,7 +79,7 @@ VIEWS.property = () => {
   if (!props.length) return pageHead('Property') + emptyState('No properties yet', 'Add your home or a rental. For rentals, Ọrọ̀ tracks rent, operating costs, NOI, cap rate and cash-on-cash return from your categorized transactions.', `<button class="btn primary" data-act="add-account" data-type="realestate">Add a property</button>`);
   const mk = thisMonth(), yr = mk.slice(0, 4);
   const ttmFrom = `${addMonths(mk, -12)}-01`, ttmTo = monthEnd(addMonths(mk, -1));
-  return pageHead('Property', 'Equity, leverage and, for rentals, operating returns.', `<button class="btn primary" data-act="add-account" data-type="realestate">Add a property</button>`) +
+  return pageHead('Property', 'Equity, leverage and, for rentals, operating returns.', `${checkinOn() ? '<a class="btn" href="#/checkin?add=property">Add by talking</a>' : ''}<button class="btn primary" data-act="add-account" data-type="realestate">Add a property</button>`) +
     props.map(a => {
       const value = accountValue(a);
       const loan = a.mortgageId ? acctById(a.mortgageId) : null;
