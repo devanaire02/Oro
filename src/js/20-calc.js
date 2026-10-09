@@ -268,6 +268,8 @@ function attentionItems() {
   if (stale.length) items.push({ tone: 'info', text: `${stale.length} balance${stale.length > 1 ? 's are' : ' is'} more than ${state.settings.staleDays} days old`, go: '#/accounts?update=1' });
   const marks = state.holdings.filter(h => h.private && daysBetween(h.priceDate || '2000-01-01', today()) > 90);
   if (marks.length) items.push({ tone: 'info', text: `${marks.length} private holding${marks.length > 1 ? 's' : ''} last valued over 90 days ago`, go: '#/investments' });
+  const nFlag = state.transactions.filter(t => t.flag).length;
+  if (nFlag) items.push({ tone: 'warn', text: `${nFlag} flagged transaction${nFlag > 1 ? 's' : ''} to sort out`, go: '#/transactions?flag=1&m=all' });
   const mk = thisMonth();
   const over = state.categories.filter(c => c.kind === 'expense' && c.budget > 0).map(c => ({ c, v: budgetView(c, mk) })).filter(x => x.v.period === 'year' ? x.v.actual > x.v.budget * 1.0001 : x.v.available < -0.01);
   if (over.length) items.push({ tone: 'bad', text: `${over.length} categor${over.length > 1 ? 'ies are' : 'y is'} over budget: ${over.slice(0, 3).map(x => x.c.name).join(', ')}${over.length > 3 ? '…' : ''}`, go: '#/budget' });

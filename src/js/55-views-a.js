@@ -221,6 +221,7 @@ VIEWS.transactions = p => {
   if (p.acct) list = list.filter(t => t.accountId === p.acct);
   if (p.cat === '_none') list = list.filter(isUncat);
   else if (p.cat) list = list.filter(t => txHasCat(t, p.cat));
+  if (p.flag) list = list.filter(t => t.flag);
   if (p.who) list = list.filter(t => personOf(t) === p.who);
   if (p.tag) list = list.filter(t => (t.tags || []).includes(p.tag));
   if (S.tags.length) list = list.filter(t => S.tags.every(x => (t.tags || []).some(y => y.includes(x))));
@@ -238,28 +239,31 @@ VIEWS.transactions = p => {
   }
   inflow = round2(inflow); outflow = round2(outflow); moved = round2(moved);
   const opts = catOptions(null, true);
-  const unc = state.transactions.filter(isUncat).length;
+  const unc = state.transactions.filter(isUncat).length, nFlag = state.transactions.filter(t => t.flag).length;
   const tags = allTags();
   const multi = members().length > 1;
-  const nFilters = ['acct', 'cat', 'who', 'tag'].filter(k => p[k]).length;
-  const fOpen = UI.txFilters === undefined ? nFilters > 0 : UI.txFilters;
+  const nFilters = ['acct', 'cat', 'who', 'tag', 'flag'].filter(k => p[k]).length;
+  const fOpen = UI.txFilters === undefined ? nFilters - (p.flag ? 1 : 0) > 0 : UI.txFilters;   // the flagged list keeps the filters folded
 
-  return pageHead('Transactions', `${list.length.toLocaleString()} shown${unc ? ` · <a href="#/transactions?cat=_none&m=all">${unc} uncategorized</a>` : ''}`,
+  return pageHead('Transactions', `${list.length.toLocaleString()} shown${unc ? ` · <a href="#/transactions?cat=_none&m=all">${unc} uncategorized</a>` : ''}${nFlag ? ` · <a href="#/transactions?flag=1&m=all" class="flag-link">${FLAG_ICON}${nFlag} flagged</a>` : ''}`,
     `${unc ? `<button class="btn ghost" data-act="run-rules" title="Fill in uncategorized transactions using your rules, your past choices and Ọrọ̀’s merchant list">Auto-categorize</button>` : ''}<button class="btn" data-act="import">Import</button><button class="btn primary" data-act="add-txn">Add transaction</button>`) + lensNote() + `
   <div class="filters ${fOpen ? 'open' : ''}">
     <label class="field inline"><span>Month</span><select data-filter="m"><option value="all" ${month === 'all' ? 'selected' : ''}>All months</option>${months.map(m => `<option value="${m}" ${m === month ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}</select></label>
     <label class="field inline more"><span>Account</span><select data-filter="acct">${acctOptions(p.acct, null, 'All accounts')}</select></label>
     <label class="field inline more"><span>Category</span><select data-filter="cat"><option value="">All categories</option><option value="_none" ${p.cat === '_none' ? 'selected' : ''}>Uncategorized</option>${catOptions(p.cat, false)}</select></label>
     ${multi && !UI.lens ? `<label class="field inline more"><span>Person</span><select data-filter="who"><option value="">Everyone</option>${memberOptions(p.who)}</select></label>` : ''}
+    <label class="field inline more"><span>Flag</span><select data-filter="flag"><option value="">Any</option><option value="1" ${p.flag ? 'selected' : ''}>Flagged only</option></select></label>
     ${tags.length ? `<label class="field inline more"><span>Tag</span><select data-filter="tag"><option value="">Any tag</option>${tags.map(t => `<option ${t === p.tag ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>` : ''}
     <label class="field inline grow"><span>Search</span><input type="search" id="tx-search" data-filter="q" value="${esc(p.q || '')}" placeholder="Payee, memo, #tag, >100"></label>
     <div class="filters-sm"><button class="btn small ghost" data-act="tx-filters" aria-expanded="${fOpen ? 'true' : 'false'}">${fOpen ? 'Fewer filters' : 'More filters'}${nFilters ? ` · ${nFilters} on` : ''}</button>${shown.length ? `<button class="btn small ghost" data-act="tx-select" aria-pressed="${UI.txSelect ? 'true' : 'false'}">${UI.txSelect ? 'Done selecting' : 'Select'}</button>` : ''}</div>
   </div>
+  ${p.flag && shown.length ? `<p class="lens-note flag-note">${FLAG_ICON} Showing flagged transactions. Pick the right category and each one drops off this list. <a href="#/transactions">Show all</a></p>` : ''}
   <div class="bulk" id="bulk" hidden>
     <span id="bulk-count"></span>
     <select id="bulk-cat" aria-label="Category">${catOptions(null, true)}</select><button class="btn small" data-act="bulk-cat">Set category</button>
     ${multi ? `<select id="bulk-who" aria-label="Person">${memberOptions('', 'Account owner')}</select><button class="btn small" data-act="bulk-who">Set person</button>` : ''}
     <input id="bulk-tag" placeholder="tag" list="tag-list" style="width:8em"><datalist id="tag-list">${tags.map(t => `<option value="${esc(t)}">`).join('')}</datalist><button class="btn small" data-act="bulk-tag">Add tag</button>
+    <button class="btn small" data-act="bulk-flag">Flag</button><button class="btn small ghost" data-act="bulk-unflag">Clear flag</button>
     <button class="btn small ghost danger-text" data-act="bulk-del">Delete</button>
   </div>
   ${shown.length ? `<div class="scroll-table"><table class="ledger tx-table ${UI.txSelect ? 'selecting' : ''}" id="tx-table">
@@ -269,7 +273,7 @@ VIEWS.transactions = p => {
       return `<tr data-id="${t.id}" class="${isUncat(t) ? 'needs' : ''}">
       <td class="cb"><input type="checkbox" class="tx-cb" value="${t.id}" aria-label="Select"></td>
       <td class="nowrap muted tx-date">${dateLabel(t.date)}${t.reconciled ? ' <span class="rec" title="Reconciled">✓</span>' : ''}<span class="tx-acct-sm"> · ${esc(acctById(t.accountId)?.name || '—')}</span></td>
-      <td class="tx-payee"><button class="linklike" data-edit-txn="${t.id}">${esc(t.payee || '(no description)')}</button>${t.attachments?.length ? ' <span class="clip" title="Has a receipt">⎘</span>' : ''}
+      <td class="tx-payee"><span class="payee-line"><button class="linklike" data-edit-txn="${t.id}">${esc(t.payee || '(no description)')}</button>${t.attachments?.length ? ' <span class="clip" title="Has a receipt">⎘</span>' : ''}<button class="flag-btn ${t.flag ? 'on' : ''}" data-act="tx-flag" data-id="${t.id}" aria-pressed="${t.flag ? 'true' : 'false'}" aria-label="${t.flag ? 'Flagged. Clear the flag' : 'Flag to come back to'}" title="${t.flag ? 'Flagged. Click to clear' : 'Not sure what this was? Flag it to come back to'}">${FLAG_ICON}</button></span>
         ${memoWorthShowing(t) || t.tags?.length ? `<div class="tx-meta">${(t.tags || []).map(x => `<button class="tagchip" data-tagfilter="${esc(x)}">#${esc(x)}</button>`).join('')}${memoWorthShowing(t) ? `<span class="muted small">${esc(t.memo)}</span>` : ''}</div>` : ''}</td>
       <td class="tx-cat">${isSplit(t) ? `<button class="split-btn" data-edit-txn="${t.id}">Split · ${t.splits.length}</button>` : `<span class="cat-pill"><span class="cat-pill-text" aria-hidden="true">${esc(catName(t.categoryId))}</span><select class="cat-select" data-txcat="${t.id}" aria-label="Category">${t.categoryId ? opts.replace(`value="${t.categoryId}"`, `value="${t.categoryId}" selected`) : opts}</select></span>`}</td>
       ${multi ? `<td class="hide-sm detail-only nowrap"><span class="person-dot" style="background:${memberColor(who)}"></span>${esc(memberName(who))}</td>` : ''}
@@ -279,6 +283,7 @@ VIEWS.transactions = p => {
     <tfoot><tr><td colspan="${multi ? 4 : 3}" class="tx-foot-pad"></td><td class="hide-sm"></td><td class="muted">Money in<br>Money out<br><strong>Net</strong>${nMoved ? '<br><span class="small">Transfers (not counted)</span>' : ''}</td><td class="num total">${money(inflow)}<br>${money(outflow)}<br><strong class="${signClass(inflow + outflow)}">${money(round2(inflow + outflow))}</strong>${nMoved ? `<br><span class="small muted">${money(moved, { sign: true })}</span>` : ''}</td></tr></tfoot>
   </table></div>
   ${list.length > limit ? `<p class="center"><button class="btn ghost" data-more="${limit + 250}">Show ${Math.min(250, list.length - limit)} more</button></p>` : ''}`
+  : p.flag ? emptyState('Nothing flagged', 'When you’re not sure what a transaction was for, tap its flag (or check “Flag it” when you open it). Flagged ones collect here until you pick a category.', `<a class="btn" href="#/transactions">Back to transactions</a>`)
   : emptyState(state.transactions.length ? 'Nothing matches these filters' : 'No transactions yet',
     state.transactions.length ? 'Try another month or clear the search.' : 'Import an OFX, QFX, CSV, QIF or PDF from your bank or card, or bring your history over from YNAB, Monarch, Mint or Copilot.',
     state.transactions.length ? `<a class="btn" href="#/transactions?m=all">Show all months</a>` : `<button class="btn primary" data-act="import">Import a file</button>`)}`;

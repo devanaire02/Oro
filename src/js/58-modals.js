@@ -69,7 +69,8 @@ function txnModal(id) {
       <div class="field" id="cat-field"></div>
       ${multi ? `<label class="field"><span>Whose</span><select name="person">${memberOptions(v.person || '', `Account owner (${memberName(acctById(v.accountId)?.owner || 'joint')})`)}</select></label>` : ''}
       <label class="field ${multi ? '' : 'wide'}"><span>Tags</span><input name="tags" value="${esc((v.tags || []).join(', '))}" placeholder="e.g. vacation, tax" list="tag-list-m"><datalist id="tag-list-m">${allTags().map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>
-      <label class="field wide"><span>Memo</span><input name="memo" value="${esc(v.memo || '')}"></label>
+      <label class="field wide"><span>Memo</span><input name="memo" value="${esc(v.memo || '')}" placeholder="${v.flag ? 'What to check, e.g. ask Julissa' : ''}"></label>
+      <label class="check wide flag-check"><input type="checkbox" name="flag" id="tx-flag" ${v.flag ? 'checked' : ''}> ${FLAG_ICON} Flag it: not sure what this was for</label>
       <div class="wide" id="split-box"></div>
       <div class="wide attach-box"><span class="field-label">Receipts</span><div id="att-list"></div>
         <label class="btn small ${hasFolder() ? '' : 'disabled'}" title="${hasFolder() ? 'Saved into receipts/ in your Ọrọ̀ folder' : isCompanion() ? 'Attach receipts in Ọrọ̀ on your Mac' : 'Choose your Ọrọ̀ folder in Settings first'}">Attach a file<input type="file" id="att-input" accept="image/*,application/pdf" hidden ${hasFolder() ? '' : 'disabled'}></label></div>
@@ -79,6 +80,7 @@ function txnModal(id) {
     actions: `${t ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${t ? 'Save' : 'Add transaction'}</button>`,
   });
   const total = () => parseAmount($('#tx-amount').value);
+  if (v.flag) $('#f').addEventListener('change', e => { if (e.target.id === 'tx-cat' && e.target.value && $('#tx-flag').checked) { $('#tx-flag').checked = false; toast('Unticked the flag, since you picked a category. Tick it again to keep it flagged.'); } });
   const paintCat = () => {
     $('#cat-field').innerHTML = splits
       ? `<span class="field-label">Category</span><button type="button" class="btn small" id="unsplit">Remove split</button>`
@@ -124,7 +126,7 @@ function txnModal(id) {
       if (Math.abs(rem) > 0.004) return toast(`The split lines are ${money(rem)} short of the total.`);
     }
     const prevCat = t?.categoryId;
-    const rec = { date: d.date, payee: d.payee.trim(), amount: round2(amount), accountId: d.accountId, memo: d.memo, tags: parseTags(d.tags), attachments: atts };
+    const rec = { date: d.date, payee: d.payee.trim(), amount: round2(amount), accountId: d.accountId, memo: d.memo, tags: parseTags(d.tags), attachments: atts, flag: d.flag || undefined };
     if (multi) rec.person = d.person || undefined;
     if (splits) { rec.splits = splits.filter(s => +s.amount || s.categoryId).map(s => ({ categoryId: s.categoryId || null, amount: round2(+s.amount || 0), memo: s.memo || '' })); rec.categoryId = '__split'; }
     else { rec.splits = undefined; rec.categoryId = d.categoryId || null; }
@@ -133,6 +135,7 @@ function txnModal(id) {
     if (!target.tags.length) delete target.tags;
     if (!target.attachments.length) delete target.attachments;
     if (!target.splits) delete target.splits;
+    if (!target.flag) delete target.flag;
     state.transactions.sort((a, b) => b.date.localeCompare(a.date));
     closeModal(); commit();
     if (t && !splits && prevCat !== target.categoryId) offerRule(target, target.categoryId);

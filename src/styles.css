@@ -681,6 +681,22 @@ body.presenting { overflow: hidden; }
 
 /* ---------- sync with the Mac (phone and tablet) ---------- */
 .sync-block { border-top: 1px solid var(--rule); padding: 14px 0 2px; margin-top: 14px; }
+/* flags: "not sure what this was" */
+.payee-line { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; }
+.flag-btn { display: inline-flex; align-items: center; justify-content: center; border: 0; background: none; padding: 2px; margin: -2px 0; border-radius: 4px; color: var(--muted-2); cursor: pointer; opacity: 0; flex: none; }
+.flag-btn .flag-ico path:last-child { fill: none; }
+.flag-btn.on { opacity: 1; color: var(--margin); }
+.flag-btn.on .flag-ico path:last-child, .flag-link .flag-ico path:last-child, .flag-check .flag-ico path:last-child { fill: currentColor; }
+.ledger tbody tr:hover .flag-btn, .flag-btn:focus-visible { opacity: 1; }
+.flag-btn:hover { color: var(--margin); }
+.flag-link { display: inline-flex; align-items: center; gap: 3px; color: var(--margin); }
+.flag-link .flag-ico { margin-top: -1px; }
+.flag-check { align-items: center; }
+.flag-note .flag-ico { color: var(--margin); vertical-align: -2px; }
+.flag-note .flag-ico path:last-child { fill: currentColor; }
+.flag-check .flag-ico { color: var(--margin); }
+@media (hover: none) { .flag-btn:not(.on) { display: none; } }
+@media print { .flag-btn:not(.on) { display: none; } }
 /* mortgage and loan detail */
 .loan-kpis { margin-top: 0; }
 .loan-cands { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -799,7 +815,8 @@ a, button, select, label, summary { touch-action: manipulation; }
   .tx-table.selecting td.cb { display: flex; align-items: center; }
   .tx-table td.cb input { width: 22px; height: 22px; }
   .tx-table td.tx-payee { grid-area: payee; font-weight: 500; font-size: 16px; }
-  .tx-table td.tx-payee > .linklike { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tx-table td.tx-payee .payee-line { display: flex; }
+  .tx-table td.tx-payee .payee-line > .linklike { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tx-table td.tx-amt { grid-area: amt; font-size: 16px; font-weight: 600; white-space: nowrap; }
   .tx-table td.tx-date { grid-area: date; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
   .tx-acct-sm { display: inline; }

@@ -70,8 +70,9 @@ const ACTIONS = {
   },
   'bulk-cat': () => {
     const ids = new Set($$('.tx-cb:checked').map(c => c.value)), cat = $('#bulk-cat').value || null;
-    state.transactions.forEach(t => { if (ids.has(t.id)) { t.categoryId = cat; delete t.splits; } });
-    commit(); toast(`Updated ${ids.size} transaction${ids.size === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
+    let unflagged = 0;
+    state.transactions.forEach(t => { if (ids.has(t.id)) { t.categoryId = cat; delete t.splits; if (cat && t.flag) { delete t.flag; unflagged++; } } });
+    commit(); toast(`Updated ${ids.size} transaction${ids.size === 1 ? '' : 's'}${unflagged ? ` and cleared ${unflagged} flag${unflagged === 1 ? '' : 's'}` : ''}.`, { label: 'Undo', fn: undo });
   },
   'bulk-who': () => {
     const ids = new Set($$('.tx-cb:checked').map(c => c.value)), who = $('#bulk-who').value;
@@ -83,6 +84,23 @@ const ACTIONS = {
     if (!tags.length) return toast('Type a tag first.');
     state.transactions.forEach(t => { if (ids.has(t.id)) t.tags = [...new Set([...(t.tags || []), ...tags])]; });
     commit(); toast(`Tagged ${ids.size} transaction${ids.size === 1 ? '' : 's'}.`);
+  },
+  'tx-flag': el => {
+    const t = state.transactions.find(x => x.id === el.dataset.id); if (!t) return;
+    if (t.flag) delete t.flag; else t.flag = true;
+    const first = t.flag && !state.transactions.some(x => x.flag && x.id !== t.id);
+    commit();
+    if (first) toast('Flagged. Flagged transactions collect under Transactions › flagged, and on Overview, until you pick a category.');
+  },
+  'bulk-flag': () => {
+    const ids = new Set($$('.tx-cb:checked').map(c => c.value));
+    state.transactions.forEach(t => { if (ids.has(t.id)) t.flag = true; });
+    commit(); toast(`Flagged ${ids.size} transaction${ids.size === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
+  },
+  'bulk-unflag': () => {
+    const ids = new Set($$('.tx-cb:checked').map(c => c.value));
+    state.transactions.forEach(t => { if (ids.has(t.id)) delete t.flag; });
+    commit(); toast(`Cleared ${ids.size} flag${ids.size === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
   },
   'bulk-del': async () => {
     const ids = new Set($$('.tx-cb:checked').map(c => c.value));
@@ -243,7 +261,11 @@ document.addEventListener('change', e => {
     t.categoryId = el.value || null;
     el.closest('tr')?.classList.toggle('needs', !t.categoryId);
     const pill = el.parentElement?.querySelector('.cat-pill-text'); if (pill) pill.textContent = catName(t.categoryId);
+    const resolved = !!(t.flag && t.categoryId);   // picking a category is how a flagged transaction gets sorted out
+    if (resolved) { delete t.flag; const fb = el.closest('tr')?.querySelector('.flag-btn'); if (fb) { fb.classList.remove('on'); fb.setAttribute('aria-pressed', 'false'); } }
     commit({ silent: true });
+    if (resolved) toast(`Flag cleared on “${t.payee}”.`, { label: 'Keep flag', fn: () => { t.flag = true; commit(); } });
+    if (resolved && route().params.flag) setTimeout(render, 700);   // in the flagged list, a sorted-out one drops off
     offerRule(t, t.categoryId);
     return;
   }

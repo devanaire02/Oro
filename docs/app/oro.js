@@ -1090,6 +1090,8 @@ function attentionItems() {
   if (stale.length) items.push({ tone: 'info', text: `${stale.length} balance${stale.length > 1 ? 's are' : ' is'} more than ${state.settings.staleDays} days old`, go: '#/accounts?update=1' });
   const marks = state.holdings.filter(h => h.private && daysBetween(h.priceDate || '2000-01-01', today()) > 90);
   if (marks.length) items.push({ tone: 'info', text: `${marks.length} private holding${marks.length > 1 ? 's' : ''} last valued over 90 days ago`, go: '#/investments' });
+  const nFlag = state.transactions.filter(t => t.flag).length;
+  if (nFlag) items.push({ tone: 'warn', text: `${nFlag} flagged transaction${nFlag > 1 ? 's' : ''} to sort out`, go: '#/transactions?flag=1&m=all' });
   const mk = thisMonth();
   const over = state.categories.filter(c => c.kind === 'expense' && c.budget > 0).map(c => ({ c, v: budgetView(c, mk) })).filter(x => x.v.period === 'year' ? x.v.actual > x.v.budget * 1.0001 : x.v.available < -0.01);
   if (over.length) items.push({ tone: 'bad', text: `${over.length} categor${over.length > 1 ? 'ies are' : 'y is'} over budget: ${over.slice(0, 3).map(x => x.c.name).join(', ')}${over.length > 3 ? '…' : ''}`, go: '#/budget' });
@@ -3118,6 +3120,7 @@ function paintTopbar(page) {
   const st = $('#side-tools');
   if (st) st.innerHTML = `<button class="icon-btn" data-act="palette" aria-label="Search">${SEARCH_ICON}</button><button class="icon-btn eye" data-act="privacy" aria-pressed="${state.settings.privacy ? 'true' : 'false'}" aria-label="${state.settings.privacy ? 'Show amounts' : 'Hide amounts'}">${state.settings.privacy ? EYE_OFF : EYE}</button>`;
 }
+const FLAG_ICON = '<svg class="flag-ico" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 14.5V2.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/><path d="M4.7 2.6h8.1l-1.9 3.1 1.9 3.1H4.7z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 const EYE = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>';
 const EYE_OFF = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.1 6.1C3.6 7.8 2 12 2 12s3.6 7 10 7a9.6 9.6 0 0 0 4.5-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>';
@@ -3224,7 +3227,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = 'c394920';
+const ORO_BUILD = '86d2bb4';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -3524,6 +3527,7 @@ VIEWS.transactions = p => {
   if (p.acct) list = list.filter(t => t.accountId === p.acct);
   if (p.cat === '_none') list = list.filter(isUncat);
   else if (p.cat) list = list.filter(t => txHasCat(t, p.cat));
+  if (p.flag) list = list.filter(t => t.flag);
   if (p.who) list = list.filter(t => personOf(t) === p.who);
   if (p.tag) list = list.filter(t => (t.tags || []).includes(p.tag));
   if (S.tags.length) list = list.filter(t => S.tags.every(x => (t.tags || []).some(y => y.includes(x))));
@@ -3541,28 +3545,31 @@ VIEWS.transactions = p => {
   }
   inflow = round2(inflow); outflow = round2(outflow); moved = round2(moved);
   const opts = catOptions(null, true);
-  const unc = state.transactions.filter(isUncat).length;
+  const unc = state.transactions.filter(isUncat).length, nFlag = state.transactions.filter(t => t.flag).length;
   const tags = allTags();
   const multi = members().length > 1;
-  const nFilters = ['acct', 'cat', 'who', 'tag'].filter(k => p[k]).length;
-  const fOpen = UI.txFilters === undefined ? nFilters > 0 : UI.txFilters;
+  const nFilters = ['acct', 'cat', 'who', 'tag', 'flag'].filter(k => p[k]).length;
+  const fOpen = UI.txFilters === undefined ? nFilters - (p.flag ? 1 : 0) > 0 : UI.txFilters;   // the flagged list keeps the filters folded
 
-  return pageHead('Transactions', `${list.length.toLocaleString()} shown${unc ? ` · <a href="#/transactions?cat=_none&m=all">${unc} uncategorized</a>` : ''}`,
+  return pageHead('Transactions', `${list.length.toLocaleString()} shown${unc ? ` · <a href="#/transactions?cat=_none&m=all">${unc} uncategorized</a>` : ''}${nFlag ? ` · <a href="#/transactions?flag=1&m=all" class="flag-link">${FLAG_ICON}${nFlag} flagged</a>` : ''}`,
     `${unc ? `<button class="btn ghost" data-act="run-rules" title="Fill in uncategorized transactions using your rules, your past choices and Ọrọ̀’s merchant list">Auto-categorize</button>` : ''}<button class="btn" data-act="import">Import</button><button class="btn primary" data-act="add-txn">Add transaction</button>`) + lensNote() + `
   <div class="filters ${fOpen ? 'open' : ''}">
     <label class="field inline"><span>Month</span><select data-filter="m"><option value="all" ${month === 'all' ? 'selected' : ''}>All months</option>${months.map(m => `<option value="${m}" ${m === month ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}</select></label>
     <label class="field inline more"><span>Account</span><select data-filter="acct">${acctOptions(p.acct, null, 'All accounts')}</select></label>
     <label class="field inline more"><span>Category</span><select data-filter="cat"><option value="">All categories</option><option value="_none" ${p.cat === '_none' ? 'selected' : ''}>Uncategorized</option>${catOptions(p.cat, false)}</select></label>
     ${multi && !UI.lens ? `<label class="field inline more"><span>Person</span><select data-filter="who"><option value="">Everyone</option>${memberOptions(p.who)}</select></label>` : ''}
+    <label class="field inline more"><span>Flag</span><select data-filter="flag"><option value="">Any</option><option value="1" ${p.flag ? 'selected' : ''}>Flagged only</option></select></label>
     ${tags.length ? `<label class="field inline more"><span>Tag</span><select data-filter="tag"><option value="">Any tag</option>${tags.map(t => `<option ${t === p.tag ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>` : ''}
     <label class="field inline grow"><span>Search</span><input type="search" id="tx-search" data-filter="q" value="${esc(p.q || '')}" placeholder="Payee, memo, #tag, >100"></label>
     <div class="filters-sm"><button class="btn small ghost" data-act="tx-filters" aria-expanded="${fOpen ? 'true' : 'false'}">${fOpen ? 'Fewer filters' : 'More filters'}${nFilters ? ` · ${nFilters} on` : ''}</button>${shown.length ? `<button class="btn small ghost" data-act="tx-select" aria-pressed="${UI.txSelect ? 'true' : 'false'}">${UI.txSelect ? 'Done selecting' : 'Select'}</button>` : ''}</div>
   </div>
+  ${p.flag && shown.length ? `<p class="lens-note flag-note">${FLAG_ICON} Showing flagged transactions. Pick the right category and each one drops off this list. <a href="#/transactions">Show all</a></p>` : ''}
   <div class="bulk" id="bulk" hidden>
     <span id="bulk-count"></span>
     <select id="bulk-cat" aria-label="Category">${catOptions(null, true)}</select><button class="btn small" data-act="bulk-cat">Set category</button>
     ${multi ? `<select id="bulk-who" aria-label="Person">${memberOptions('', 'Account owner')}</select><button class="btn small" data-act="bulk-who">Set person</button>` : ''}
     <input id="bulk-tag" placeholder="tag" list="tag-list" style="width:8em"><datalist id="tag-list">${tags.map(t => `<option value="${esc(t)}">`).join('')}</datalist><button class="btn small" data-act="bulk-tag">Add tag</button>
+    <button class="btn small" data-act="bulk-flag">Flag</button><button class="btn small ghost" data-act="bulk-unflag">Clear flag</button>
     <button class="btn small ghost danger-text" data-act="bulk-del">Delete</button>
   </div>
   ${shown.length ? `<div class="scroll-table"><table class="ledger tx-table ${UI.txSelect ? 'selecting' : ''}" id="tx-table">
@@ -3572,7 +3579,7 @@ VIEWS.transactions = p => {
       return `<tr data-id="${t.id}" class="${isUncat(t) ? 'needs' : ''}">
       <td class="cb"><input type="checkbox" class="tx-cb" value="${t.id}" aria-label="Select"></td>
       <td class="nowrap muted tx-date">${dateLabel(t.date)}${t.reconciled ? ' <span class="rec" title="Reconciled">✓</span>' : ''}<span class="tx-acct-sm"> · ${esc(acctById(t.accountId)?.name || '—')}</span></td>
-      <td class="tx-payee"><button class="linklike" data-edit-txn="${t.id}">${esc(t.payee || '(no description)')}</button>${t.attachments?.length ? ' <span class="clip" title="Has a receipt">⎘</span>' : ''}
+      <td class="tx-payee"><span class="payee-line"><button class="linklike" data-edit-txn="${t.id}">${esc(t.payee || '(no description)')}</button>${t.attachments?.length ? ' <span class="clip" title="Has a receipt">⎘</span>' : ''}<button class="flag-btn ${t.flag ? 'on' : ''}" data-act="tx-flag" data-id="${t.id}" aria-pressed="${t.flag ? 'true' : 'false'}" aria-label="${t.flag ? 'Flagged. Clear the flag' : 'Flag to come back to'}" title="${t.flag ? 'Flagged. Click to clear' : 'Not sure what this was? Flag it to come back to'}">${FLAG_ICON}</button></span>
         ${memoWorthShowing(t) || t.tags?.length ? `<div class="tx-meta">${(t.tags || []).map(x => `<button class="tagchip" data-tagfilter="${esc(x)}">#${esc(x)}</button>`).join('')}${memoWorthShowing(t) ? `<span class="muted small">${esc(t.memo)}</span>` : ''}</div>` : ''}</td>
       <td class="tx-cat">${isSplit(t) ? `<button class="split-btn" data-edit-txn="${t.id}">Split · ${t.splits.length}</button>` : `<span class="cat-pill"><span class="cat-pill-text" aria-hidden="true">${esc(catName(t.categoryId))}</span><select class="cat-select" data-txcat="${t.id}" aria-label="Category">${t.categoryId ? opts.replace(`value="${t.categoryId}"`, `value="${t.categoryId}" selected`) : opts}</select></span>`}</td>
       ${multi ? `<td class="hide-sm detail-only nowrap"><span class="person-dot" style="background:${memberColor(who)}"></span>${esc(memberName(who))}</td>` : ''}
@@ -3582,6 +3589,7 @@ VIEWS.transactions = p => {
     <tfoot><tr><td colspan="${multi ? 4 : 3}" class="tx-foot-pad"></td><td class="hide-sm"></td><td class="muted">Money in<br>Money out<br><strong>Net</strong>${nMoved ? '<br><span class="small">Transfers (not counted)</span>' : ''}</td><td class="num total">${money(inflow)}<br>${money(outflow)}<br><strong class="${signClass(inflow + outflow)}">${money(round2(inflow + outflow))}</strong>${nMoved ? `<br><span class="small muted">${money(moved, { sign: true })}</span>` : ''}</td></tr></tfoot>
   </table></div>
   ${list.length > limit ? `<p class="center"><button class="btn ghost" data-more="${limit + 250}">Show ${Math.min(250, list.length - limit)} more</button></p>` : ''}`
+  : p.flag ? emptyState('Nothing flagged', 'When you’re not sure what a transaction was for, tap its flag (or check “Flag it” when you open it). Flagged ones collect here until you pick a category.', `<a class="btn" href="#/transactions">Back to transactions</a>`)
   : emptyState(state.transactions.length ? 'Nothing matches these filters' : 'No transactions yet',
     state.transactions.length ? 'Try another month or clear the search.' : 'Import an OFX, QFX, CSV, QIF or PDF from your bank or card, or bring your history over from YNAB, Monarch, Mint or Copilot.',
     state.transactions.length ? `<a class="btn" href="#/transactions?m=all">Show all months</a>` : `<button class="btn primary" data-act="import">Import a file</button>`)}`;
@@ -4545,7 +4553,8 @@ function txnModal(id) {
       <div class="field" id="cat-field"></div>
       ${multi ? `<label class="field"><span>Whose</span><select name="person">${memberOptions(v.person || '', `Account owner (${memberName(acctById(v.accountId)?.owner || 'joint')})`)}</select></label>` : ''}
       <label class="field ${multi ? '' : 'wide'}"><span>Tags</span><input name="tags" value="${esc((v.tags || []).join(', '))}" placeholder="e.g. vacation, tax" list="tag-list-m"><datalist id="tag-list-m">${allTags().map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>
-      <label class="field wide"><span>Memo</span><input name="memo" value="${esc(v.memo || '')}"></label>
+      <label class="field wide"><span>Memo</span><input name="memo" value="${esc(v.memo || '')}" placeholder="${v.flag ? 'What to check, e.g. ask Julissa' : ''}"></label>
+      <label class="check wide flag-check"><input type="checkbox" name="flag" id="tx-flag" ${v.flag ? 'checked' : ''}> ${FLAG_ICON} Flag it: not sure what this was for</label>
       <div class="wide" id="split-box"></div>
       <div class="wide attach-box"><span class="field-label">Receipts</span><div id="att-list"></div>
         <label class="btn small ${hasFolder() ? '' : 'disabled'}" title="${hasFolder() ? 'Saved into receipts/ in your Ọrọ̀ folder' : isCompanion() ? 'Attach receipts in Ọrọ̀ on your Mac' : 'Choose your Ọrọ̀ folder in Settings first'}">Attach a file<input type="file" id="att-input" accept="image/*,application/pdf" hidden ${hasFolder() ? '' : 'disabled'}></label></div>
@@ -4555,6 +4564,7 @@ function txnModal(id) {
     actions: `${t ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${t ? 'Save' : 'Add transaction'}</button>`,
   });
   const total = () => parseAmount($('#tx-amount').value);
+  if (v.flag) $('#f').addEventListener('change', e => { if (e.target.id === 'tx-cat' && e.target.value && $('#tx-flag').checked) { $('#tx-flag').checked = false; toast('Unticked the flag, since you picked a category. Tick it again to keep it flagged.'); } });
   const paintCat = () => {
     $('#cat-field').innerHTML = splits
       ? `<span class="field-label">Category</span><button type="button" class="btn small" id="unsplit">Remove split</button>`
@@ -4600,7 +4610,7 @@ function txnModal(id) {
       if (Math.abs(rem) > 0.004) return toast(`The split lines are ${money(rem)} short of the total.`);
     }
     const prevCat = t?.categoryId;
-    const rec = { date: d.date, payee: d.payee.trim(), amount: round2(amount), accountId: d.accountId, memo: d.memo, tags: parseTags(d.tags), attachments: atts };
+    const rec = { date: d.date, payee: d.payee.trim(), amount: round2(amount), accountId: d.accountId, memo: d.memo, tags: parseTags(d.tags), attachments: atts, flag: d.flag || undefined };
     if (multi) rec.person = d.person || undefined;
     if (splits) { rec.splits = splits.filter(s => +s.amount || s.categoryId).map(s => ({ categoryId: s.categoryId || null, amount: round2(+s.amount || 0), memo: s.memo || '' })); rec.categoryId = '__split'; }
     else { rec.splits = undefined; rec.categoryId = d.categoryId || null; }
@@ -4609,6 +4619,7 @@ function txnModal(id) {
     if (!target.tags.length) delete target.tags;
     if (!target.attachments.length) delete target.attachments;
     if (!target.splits) delete target.splits;
+    if (!target.flag) delete target.flag;
     state.transactions.sort((a, b) => b.date.localeCompare(a.date));
     closeModal(); commit();
     if (t && !splits && prevCat !== target.categoryId) offerRule(target, target.categoryId);
@@ -5231,8 +5242,9 @@ const ACTIONS = {
   },
   'bulk-cat': () => {
     const ids = new Set($$('.tx-cb:checked').map(c => c.value)), cat = $('#bulk-cat').value || null;
-    state.transactions.forEach(t => { if (ids.has(t.id)) { t.categoryId = cat; delete t.splits; } });
-    commit(); toast(`Updated ${ids.size} transaction${ids.size === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
+    let unflagged = 0;
+    state.transactions.forEach(t => { if (ids.has(t.id)) { t.categoryId = cat; delete t.splits; if (cat && t.flag) { delete t.flag; unflagged++; } } });
+    commit(); toast(`Updated ${ids.size} transaction${ids.size === 1 ? '' : 's'}${unflagged ? ` and cleared ${unflagged} flag${unflagged === 1 ? '' : 's'}` : ''}.`, { label: 'Undo', fn: undo });
   },
   'bulk-who': () => {
     const ids = new Set($$('.tx-cb:checked').map(c => c.value)), who = $('#bulk-who').value;
@@ -5244,6 +5256,23 @@ const ACTIONS = {
     if (!tags.length) return toast('Type a tag first.');
     state.transactions.forEach(t => { if (ids.has(t.id)) t.tags = [...new Set([...(t.tags || []), ...tags])]; });
     commit(); toast(`Tagged ${ids.size} transaction${ids.size === 1 ? '' : 's'}.`);
+  },
+  'tx-flag': el => {
+    const t = state.transactions.find(x => x.id === el.dataset.id); if (!t) return;
+    if (t.flag) delete t.flag; else t.flag = true;
+    const first = t.flag && !state.transactions.some(x => x.flag && x.id !== t.id);
+    commit();
+    if (first) toast('Flagged. Flagged transactions collect under Transactions › flagged, and on Overview, until you pick a category.');
+  },
+  'bulk-flag': () => {
+    const ids = new Set($$('.tx-cb:checked').map(c => c.value));
+    state.transactions.forEach(t => { if (ids.has(t.id)) t.flag = true; });
+    commit(); toast(`Flagged ${ids.size} transaction${ids.size === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
+  },
+  'bulk-unflag': () => {
+    const ids = new Set($$('.tx-cb:checked').map(c => c.value));
+    state.transactions.forEach(t => { if (ids.has(t.id)) delete t.flag; });
+    commit(); toast(`Cleared ${ids.size} flag${ids.size === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
   },
   'bulk-del': async () => {
     const ids = new Set($$('.tx-cb:checked').map(c => c.value));
@@ -5404,7 +5433,11 @@ document.addEventListener('change', e => {
     t.categoryId = el.value || null;
     el.closest('tr')?.classList.toggle('needs', !t.categoryId);
     const pill = el.parentElement?.querySelector('.cat-pill-text'); if (pill) pill.textContent = catName(t.categoryId);
+    const resolved = !!(t.flag && t.categoryId);   // picking a category is how a flagged transaction gets sorted out
+    if (resolved) { delete t.flag; const fb = el.closest('tr')?.querySelector('.flag-btn'); if (fb) { fb.classList.remove('on'); fb.setAttribute('aria-pressed', 'false'); } }
     commit({ silent: true });
+    if (resolved) toast(`Flag cleared on “${t.payee}”.`, { label: 'Keep flag', fn: () => { t.flag = true; commit(); } });
+    if (resolved && route().params.flag) setTimeout(render, 700);   // in the flagged list, a sorted-out one drops off
     offerRule(t, t.categoryId);
     return;
   }
