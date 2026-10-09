@@ -205,7 +205,13 @@ function toast(text, action) {
   const kill = () => { t.classList.add('out'); setTimeout(() => t.remove(), 200); };
   if (action) t.querySelector('.btn').onclick = () => { action.fn(); kill(); };
   t.querySelector('.icon-btn').onclick = kill;
-  setTimeout(kill, action ? 9000 : 4500);
+  // Long enough to read: 7 seconds for a short note, more for longer ones (up to 20), at least 12 with an Undo button.
+  // Hovering or touching a message holds it until you move away.
+  const ms = Math.min(20000, Math.max(action ? 12000 : 7000, 4000 + text.length * 60));
+  let timer = setTimeout(kill, ms);
+  const hold = () => clearTimeout(timer), resume = () => { clearTimeout(timer); timer = setTimeout(kill, 4000); };
+  t.addEventListener('pointerenter', hold); t.addEventListener('pointerleave', resume);
+  t.addEventListener('touchstart', () => { hold(); timer = setTimeout(kill, Math.max(ms, 10000)); }, { passive: true });
 }
 
 /* ---------- small builders ---------- */
