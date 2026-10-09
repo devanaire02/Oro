@@ -1771,10 +1771,29 @@ function pickCol(headers, patterns, exclude) {
   }
   return -1;
 }
+/* A holdings file lists symbols and quantities but no dates or actions. Brokerage activity files (Fidelity's
+   "Run Date, Account, Action, Symbol, Quantity, Amount…") have both, so they're read as transactions instead. */
 function isPositionsHeader(h) {
-  return pickCol(h, [/^symbol$|^ticker|symbol/i]) >= 0 && pickCol(h, [/quantity|shares|units/i]) >= 0;
+  const activity = pickCol(h, [/^(run |trade |settlement |transaction |posted? )?date$/i, /^action$/i, /^activity( type)?$/i]) >= 0;
+  return !activity && pickCol(h, [/^symbol$|^ticker|symbol/i]) >= 0 && pickCol(h, [/quantity|shares|units/i]) >= 0;
 }
 function guessTxnMapping(h) {
+  // brokerage activity (Fidelity and others): "Action" says what happened, "Description" is the security
+  const action = pickCol(h, [/^action$/i]), brokerage = action >= 0 && pickCol(h, [/^symbol$/i]) >= 0;
+  const m = guessTxnMappingPlain(h);
+  if (brokerage) { if (m.memo < 0 && m.payee >= 0) m.memo = m.payee; m.payee = action; m.brokerage = true; }
+  m.acctNum = pickCol(h, [/^account (number|no\.?|#)$/i]);
+  if (m.account < 0 && m.acctNum >= 0) { m.account = m.acctNum; m.acctNum = -1; }   // only a number column: split by that
+  return m;
+}
+/* Fidelity-style action text: "DEBIT CARD PURCHASE JEWEL OSCO 3345 PARK RIDGE IL (Cash)" → "JEWEL OSCO 3345 PARK RIDGE IL" */
+function cleanBrokerageAction(s) {
+  let x = String(s || '').replace(/\s*\((cash|margin|shares?)\)\s*$/i, '').trim();
+  x = x.replace(/\b[A-Z]{0,3}\d{2,3}-\d{4,}(-\d+)?\b/gi, m => '…' + m.replace(/\D/g, '').slice(-4)).replace(/\b[A-Z]{0,3}\d{7,}\b/g, m => '…' + m.slice(-4));
+  x = x.replace(/^(DEBIT CARD PURCHASE|BILL PAYMENT|DIRECT DEBIT|DIRECT DEPOSIT|ELECTRONIC FUNDS TRANSFER (PAID|RECEIVED))\s+/i, '');
+  return x.replace(/^CHECK PAID\s*#?\s*(\d+)/i, 'Check #$1');
+}
+function guessTxnMappingPlain(h) {
   return {
     date: pickCol(h, [/^trans(action)?\.? ?date/i, /^date$/i, /^posted? ?date|posting date/i, /date/i]),
     payee: pickCol(h, [/^description$/i, /^payee|merchant/i, /^name$/i, /description|details/i, /^memo$/i], /category|type/i),
@@ -2419,11 +2438,16 @@ function matchInvAccount(src) {
   const a = activeAccounts().find(a => (a.importName && a.importName.toLowerCase() === s) || (digits && a.last4 === digits) || a.name.toLowerCase() === s);
   return a ? a.id : '__new';
 }
+const INVEST_NAME = /\bira\b|401\s?\(?k|403\s?\(?b|457|roth|rollover|brokerage|\btod\b|\bhsa\b|529|utma|ugma|trust|individual\b(?!.*cash management)/i;
 function matchTxnAccount(src) {
   if (!src) return '';
   const s = src.toLowerCase().trim(), digits = src.replace(/\D/g, '').slice(-4);
-  const a = txnAccounts().find(a => (a.importName && a.importName.toLowerCase() === s) || a.name.toLowerCase() === s || (digits.length === 4 && a.last4 === digits));
-  return a ? a.id : '__new';
+  const hit = a => (a.importName && a.importName.toLowerCase() === s) || a.name.toLowerCase() === s || (digits.length === 4 && a.last4 === digits);
+  const any = activeAccounts().find(hit);
+  if (any && (holdingsFor(any.id).length || ACCOUNT_TYPES[any.type]?.bucket === 'invest')) return '__skip';
+  const a = txnAccounts().find(hit);
+  if (a) return a.id;
+  return INVEST_NAME.test(src) && !/cash management|checking|savings|spend/i.test(src) ? '__skip' : '__new';
 }
 function setupAccountMap(rows, last4) {
   const srcs = [...new Set(rows.map(r => r.srcAccount || ''))];
@@ -2433,6 +2457,13 @@ function setupAccountMap(rows, last4) {
 }
 
 /* ---- CSV mapping → rows ---- */
+/* "Individual - TOD" + "X12345678" → "Individual - TOD …5678". Full account numbers are never kept, only the last 4 for matching. */
+const maskNum = s => String(s || '').replace(/\b[A-Z]{0,3}\d{5,}\b/gi, m => '…' + m.replace(/\D/g, '').slice(-4));
+const acctLabel = (name, num) => {
+  name = maskNum(String(name || '').trim()); num = String(num || '').replace(/\D/g, '');
+  const tail = num ? '…' + num.slice(-4) : '';
+  return tail && !name.includes(tail) ? `${name} ${tail}`.trim() : name;
+};
 function csvMappedRows() {
   const m = IMP.map, out = [];
   const typeVals = m.ttype >= 0 ? new Set(IMP.csv.slice(IMP.headerRow + 1, IMP.headerRow + 40).map(r => (r[m.ttype] || '').toLowerCase())) : null;
@@ -2448,7 +2479,8 @@ function csvMappedRows() {
     } else { amount = parseAmount(r[m.amount]); if (!isFinite(amount)) continue; }
     if (useType) amount = Math.abs(amount) * ((r[m.ttype] || '').toLowerCase() === 'debit' ? -1 : 1);
     if (IMP.flip) amount = -amount;
-    out.push({ date, payee: (r[m.payee] || '').trim(), amount: round2(amount), memo: m.memo >= 0 ? r[m.memo] : '', bankCategory: m.category >= 0 ? (r[m.category] || '').trim() : '', mcc: m.mcc >= 0 ? (r[m.mcc] || '').trim() : '', tags: m.tags >= 0 ? parseTags(r[m.tags]) : [], srcAccount: IMP.useAcctCol && m.account >= 0 ? (r[m.account] || '').trim() : '', fitid: '' });
+    const memo = m.memo >= 0 ? String(r[m.memo] || '').trim() : '';
+    out.push({ date, payee: m.brokerage ? cleanBrokerageAction(r[m.payee]) : (r[m.payee] || '').trim(), amount: round2(amount), memo: m.brokerage && /^no description$/i.test(memo) ? '' : memo, bankCategory: m.category >= 0 ? (r[m.category] || '').trim() : '', mcc: m.mcc >= 0 ? (r[m.mcc] || '').trim() : '', tags: m.tags >= 0 ? parseTags(r[m.tags]) : [], srcAccount: IMP.useAcctCol && m.account >= 0 ? acctLabel(r[m.account], m.acctNum >= 0 ? r[m.acctNum] : '') : '', fitid: '' });
   }
   return out;
 }
@@ -2490,7 +2522,7 @@ function buildTxRows(list) {
     // money coming into a credit card is almost always a payment
     if (type === 'credit' && t.amount > 0 && cardPayId && (!categoryId || categoryId === transferId) && /payment|thank you|autopay|pymt|transfer from|ach deposit/i.test(t.payee)) categoryId = cardPayId;
     const willCreate = !categoryId && IMP.createCats && t.bankCategory && !/^(uncategori[sz]ed|none|transfer.*|.*ready to assign|to be budgeted|split.*)$/i.test(t.bankCategory);
-    return { ...t, importId, status, include: status === 'new', categoryId: categoryId || '', guess: auto && categoryId === auto.id ? auto.how : '', newCat: willCreate ? t.bankCategory : '', rename: rule?.rename, person: rule?.person };
+    return { ...t, importId, status, include: status === 'new' && acctId !== '__skip', skipAcct: acctId === '__skip', categoryId: categoryId || '', guess: auto && categoryId === auto.id ? auto.how : '', newCat: willCreate ? t.bankCategory : '', rename: rule?.rename, person: rule?.person };
   }).sort((a, b) => b.date.localeCompare(a.date));
   IMP._seen = {};
 }
@@ -2536,7 +2568,8 @@ function colSelect(id, val, allowNone) {
 }
 function acctMapBlock() {
   const srcs = Object.keys(IMP.acctMap || {});
-  return `<div class="map-list"><p class="muted small">This file has ${srcs.length} account${srcs.length === 1 ? '' : 's'}. Match each one, or let Ọrọ̀ create it.</p>${srcs.map((src, k) => `<div class="map-row"><span class="map-src">${esc(src || '(no account name)')}</span><select data-amap="${k}">${txnAccountOptions(IMP.acctMap[src], `New account “${src || 'Imported'}”`)}</select></div>`).join('')}</div>`;
+  const skipped = srcs.filter(s => IMP.acctMap[s] === '__skip').length;
+  return `<div class="map-list"><p class="muted small">This file has ${srcs.length} account${srcs.length === 1 ? '' : 's'}. Match each one, let Ọrọ̀ create it, or leave it out.${skipped ? ' Investment accounts are left out to start with: their value comes from holdings (a Positions download), and buys, sells and dividends aren’t spending.' : ''}</p>${srcs.map((src, k) => `<div class="map-row"><span class="map-src">${esc(src || '(no account name)')}</span><select data-amap="${k}">${txnAccountOptions(IMP.acctMap[src], `New account “${src || 'Imported'}”`)}<option value="__skip" ${IMP.acctMap[src] === '__skip' ? 'selected' : ''}>Don’t import this account</option></select></div>`).join('')}</div>`;
 }
 function renderMapStep(box) {
   const m = IMP.map;
@@ -2712,6 +2745,7 @@ function applyTxItem(it) {
   const dest = {}, fresh = [];
   if (it.multi) {
     for (const [src, v] of Object.entries(it.acctMap)) {
+      if (v === '__skip') continue;
       if (v === '__new') { const a = makeAccount(src || 'Imported account', guessTypeFromName(src)); a.importName = src; dest[src] = a; fresh.push(a); }
       else { dest[src] = acctById(v); dest[src].importName = dest[src].importName || src; }
     }
@@ -2737,6 +2771,7 @@ function applyTxItem(it) {
   let added = 0, skipped = 0, unc = 0;
   for (const r of rows) {
     const acct = it.multi ? dest[r.srcAccount || ''] : dest[''];
+    if (!acct) continue;   // an account you chose not to import
     if (r.importId) {
       const ids = have[acct.id] || (have[acct.id] = new Set(state.transactions.filter(t => t.accountId === acct.id && t.importId).map(t => t.importId)));
       if (ids.has(r.importId)) { skipped++; continue; }   // e.g. two overlapping downloads in one batch
@@ -3266,7 +3301,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '7c16bd9';
+const ORO_BUILD = '7a8a431';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';

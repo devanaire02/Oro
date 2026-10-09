@@ -36,10 +36,29 @@ function pickCol(headers, patterns, exclude) {
   }
   return -1;
 }
+/* A holdings file lists symbols and quantities but no dates or actions. Brokerage activity files (Fidelity's
+   "Run Date, Account, Action, Symbol, Quantity, Amount…") have both, so they're read as transactions instead. */
 function isPositionsHeader(h) {
-  return pickCol(h, [/^symbol$|^ticker|symbol/i]) >= 0 && pickCol(h, [/quantity|shares|units/i]) >= 0;
+  const activity = pickCol(h, [/^(run |trade |settlement |transaction |posted? )?date$/i, /^action$/i, /^activity( type)?$/i]) >= 0;
+  return !activity && pickCol(h, [/^symbol$|^ticker|symbol/i]) >= 0 && pickCol(h, [/quantity|shares|units/i]) >= 0;
 }
 function guessTxnMapping(h) {
+  // brokerage activity (Fidelity and others): "Action" says what happened, "Description" is the security
+  const action = pickCol(h, [/^action$/i]), brokerage = action >= 0 && pickCol(h, [/^symbol$/i]) >= 0;
+  const m = guessTxnMappingPlain(h);
+  if (brokerage) { if (m.memo < 0 && m.payee >= 0) m.memo = m.payee; m.payee = action; m.brokerage = true; }
+  m.acctNum = pickCol(h, [/^account (number|no\.?|#)$/i]);
+  if (m.account < 0 && m.acctNum >= 0) { m.account = m.acctNum; m.acctNum = -1; }   // only a number column: split by that
+  return m;
+}
+/* Fidelity-style action text: "DEBIT CARD PURCHASE JEWEL OSCO 3345 PARK RIDGE IL (Cash)" → "JEWEL OSCO 3345 PARK RIDGE IL" */
+function cleanBrokerageAction(s) {
+  let x = String(s || '').replace(/\s*\((cash|margin|shares?)\)\s*$/i, '').trim();
+  x = x.replace(/\b[A-Z]{0,3}\d{2,3}-\d{4,}(-\d+)?\b/gi, m => '…' + m.replace(/\D/g, '').slice(-4)).replace(/\b[A-Z]{0,3}\d{7,}\b/g, m => '…' + m.slice(-4));
+  x = x.replace(/^(DEBIT CARD PURCHASE|BILL PAYMENT|DIRECT DEBIT|DIRECT DEPOSIT|ELECTRONIC FUNDS TRANSFER (PAID|RECEIVED))\s+/i, '');
+  return x.replace(/^CHECK PAID\s*#?\s*(\d+)/i, 'Check #$1');
+}
+function guessTxnMappingPlain(h) {
   return {
     date: pickCol(h, [/^trans(action)?\.? ?date/i, /^date$/i, /^posted? ?date|posting date/i, /date/i]),
     payee: pickCol(h, [/^description$/i, /^payee|merchant/i, /^name$/i, /description|details/i, /^memo$/i], /category|type/i),
