@@ -34,11 +34,13 @@ function accountValue(a) {
   const hs = holdingsFor(a.id);
   if (hs.length) return round2(sum(hs.map(holdingValue)) + (Number(a.cash) || 0));
   if (a.ledger) return ledgerBalance(a);
+  if (isTrackedLoan(a)) return loanTrack(a).balance;   // statement balance less principal paid since (26-loans.js)
   return round2(Number(a.balance) || 0);
 }
 function accountAsOf(a) {
   const hs = holdingsFor(a.id);
   if (hs.length) return hs.map(h => h.priceDate || '').sort()[0] || a.balanceDate;
+  if (isTrackedLoan(a)) return loanTrack(a).last;
   if (a.ledger) { const last = txByAccount(a.id).reduce((m, t) => t.date > m ? t.date : m, ''); const ad = a.anchorDate || a.balanceDate || ''; return last > ad ? last : ad; }
   return a.balanceDate;
 }

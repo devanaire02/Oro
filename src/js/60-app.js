@@ -16,6 +16,7 @@ const ACTIONS = {
   'add-goal': () => goalModal(),
   'palette': () => openPalette(),
   'more-pages': () => morePagesSheet(),
+  'loan-detail': el => loanModal(el.dataset.id),
   'tx-filters': () => { UI.txFilters = !$('.filters')?.classList.contains('open'); render(); },
   'tx-select': () => { UI.txSelect = !UI.txSelect; if (!UI.txSelect) { $$('.tx-cb:checked').forEach(c => { c.checked = false; }); } render(); },
   'more-money-date': () => { closeModal(true); ACTIONS['money-date'](); },

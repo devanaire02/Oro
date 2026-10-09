@@ -681,6 +681,16 @@ body.presenting { overflow: hidden; }
 
 /* ---------- sync with the Mac (phone and tablet) ---------- */
 .sync-block { border-top: 1px solid var(--rule); padding: 14px 0 2px; margin-top: 14px; }
+/* mortgage and loan detail */
+.loan-kpis { margin-top: 0; }
+.loan-cands { display: flex; flex-wrap: wrap; gap: 6px; }
+.loan-cands .btn { font-weight: 500; }
+.loan-link { flex-direction: column; align-items: flex-start; gap: 4px; }
+.loan-setup, .loan-next, .loan-years { margin-top: 14px; border-top: 1px solid var(--rule); padding-top: 10px; }
+.loan-setup > summary, .loan-next > summary, .loan-years > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.loan-setup .form-grid { margin-top: 10px; }
+.loan-whatif { margin-top: 14px; }
+.loan-whatif .field.inline { max-width: 340px; }
 .sync-note { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--rule); }
 .sync-block h3 { font: 600 15px/1.3 var(--sans); margin: 0 0 4px; }
 .sync-block .btn { margin-top: 10px; }

@@ -147,7 +147,8 @@ function acctModal(id, presetType) {
   const hasHoldings = a && holdingsFor(a.id).length;
   const loans = activeAccounts().filter(x => ['mortgage', 'loan', 'otherLiability'].includes(x.type));
   const rentalGroups = [...new Set(state.categories.filter(c => c.rental).map(c => c.group))];
-  const curVal = a ? accountValue(a) : '';
+  const tracked = isTrackedLoan(a);
+  const curVal = a ? (tracked ? round2(Math.abs(Number(a.balance) || 0)) : accountValue(a)) : '';
   openModal({
     title: a ? 'Edit account' : 'Add account',
     body: `<form id="f" class="form-grid" data-type="${v.type}">
@@ -157,13 +158,14 @@ function acctModal(id, presetType) {
       ${members().length > 1 ? `<label class="field"><span>Owner</span><select name="owner">${memberOptions(v.owner || 'joint')}</select></label>` : ''}
       <label class="field"><span>Last 4 digits</span><input name="last4" value="${esc(v.last4 || '')}" maxlength="4" inputmode="numeric" placeholder="Matches imports"></label>
       ${hasHoldings ? `<p class="muted small wide">Value comes from ${hasHoldings} holding${hasHoldings > 1 ? 's' : ''}: ${money(accountValue(a))}.</p><label class="field"><span>Uninvested cash</span><input name="cash" inputmode="decimal" value="${a.cash || ''}" placeholder="0"></label>`
-        : `<label class="field"><span id="bal-label">${ACCOUNT_TYPES[v.type].side === 'liability' ? 'Amount owed' : 'Balance or value'}</span><input name="balance" inputmode="decimal" value="${curVal === '' ? (v.balance === '' ? '' : round2(v.balance)) : round2(curVal)}" placeholder="0.00"></label>
+        : `<label class="field"><span id="bal-label">${tracked ? 'Statement balance' : ACCOUNT_TYPES[v.type].side === 'liability' ? 'Amount owed' : 'Balance or value'}</span><input name="balance" inputmode="decimal" value="${curVal === '' ? (v.balance === '' ? '' : round2(v.balance)) : round2(curVal)}" placeholder="0.00"></label>
            <label class="field"><span>As of</span><input type="date" name="balanceDate" value="${(a && a.ledger ? a.anchorDate : v.balanceDate) || today()}"></label>`}
       <div class="when-ledger wide"><label class="check"><input type="checkbox" name="ledger" ${(v.ledger ?? ACCOUNT_TYPES[v.type].ledger) ? 'checked' : ''}> Keep the balance up to date from transactions</label><small class="muted">The balance above is the starting point; imported transactions after that date move it. Lets you reconcile against statements.</small></div>
       <div class="when-cash wide"><label class="check"><input type="checkbox" name="forecast" ${(v.forecast ?? ACCOUNT_TYPES[v.type].forecast) ? 'checked' : ''}> Include in the cash-flow forecast</label></div>
       <label class="field when-invest"><span>Treat as (when no holdings)</span><select name="assetClass">${ASSET_CLASSES.map(c => `<option ${c === (v.assetClass || 'US stocks') ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
       <label class="field when-debt"><span>Interest rate (%)</span><input name="rate" inputmode="decimal" value="${v.rate ?? ''}"></label>
-      <label class="field when-debt"><span>Minimum payment</span><input name="minPayment" inputmode="decimal" value="${v.minPayment ?? ''}"></label>
+      <label class="field when-debt"><span id="minpay-label">${LOAN_TYPES.has(v.type) ? 'Principal and interest per month' : 'Minimum payment'}</span><input name="minPayment" inputmode="decimal" value="${v.minPayment ?? ''}"></label>
+      ${a && LOAN_TYPES.has(a.type) ? `<div class="wide when-debt loan-link"><button type="button" class="btn small" id="open-loan">Payments and schedule…</button><small class="muted">${tracked ? `Owed now: ${money(accountValue(a), { cents: false })}, estimated from payments since the statement balance above. To correct it, enter a newer statement’s balance and date.` : 'Have Ọrọ̀ lower the balance as payments come in, and see the amortization schedule.'}</small></div>` : ''}
       <div class="when-property wide form-grid">
         <label class="field"><span>Mortgage</span><select name="mortgageId" id="mort-pick"><option value="">None</option>${loans.map(l => `<option value="${l.id}" ${l.id === v.mortgageId ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}<option value="__new">Add a mortgage…</option></select></label>
         <div class="new-mort wide form-grid" id="new-mort" hidden>
@@ -171,8 +173,8 @@ function acctModal(id, presetType) {
           <label class="field"><span>Amount owed</span><input name="mort-owed" data-key="mortOwed" inputmode="decimal" placeholder="From your latest statement"></label>
           <label class="field"><span>As of</span><input type="date" name="mort-date" data-key="mortDate" value="${today()}"></label>
           <label class="field"><span>Interest rate (%)</span><input name="mort-rate" data-key="mortRate" inputmode="decimal" placeholder="e.g. 6.25"></label>
-          <label class="field"><span>Monthly payment</span><input name="mort-payment" data-key="mortPayment" inputmode="decimal" placeholder="Optional"></label>
-          <p class="muted small wide">Adds the mortgage under Accounts › Liabilities, linked to this property, so its equity and net worth count the loan. Keep importing the payments from your bank; there’s no need to import the mortgage statement. Update what you owe from the statement now and then.</p>
+          <label class="field"><span>Principal and interest per month</span><input name="mort-payment" data-key="mortPayment" inputmode="decimal" placeholder="Optional"></label>
+          <p class="muted small wide">Adds the mortgage under Accounts › Liabilities, linked to this property, so its equity and net worth count the loan. Keep importing the payments from your bank; there’s no need to import the mortgage statement. Afterwards, open <strong>Payments and schedule</strong> on the Property page to have the balance come down as payments arrive.</p>
         </div>
         <label class="check"><input type="checkbox" name="rental" ${v.rental ? 'checked' : ''}> This is a rental property</label>
         <label class="field"><span>Rental category group</span><select name="rentalGroup">${(rentalGroups.length ? rentalGroups : ['Rental property']).map(g => `<option ${g === v.rentalGroup ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select></label>
@@ -190,7 +192,9 @@ function acctModal(id, presetType) {
     const T = ACCOUNT_TYPES[e.target.value]; f.dataset.type = e.target.value;
     const l = $('#bal-label'); if (l) l.textContent = T.side === 'liability' ? 'Amount owed' : 'Balance or value';
     f.querySelector('[name=forecast]').checked = !!T.forecast; f.querySelector('[name=ledger]').checked = !!T.ledger;
+    const mp = $('#minpay-label'); if (mp) mp.textContent = LOAN_TYPES.has(e.target.value) ? 'Principal and interest per month' : 'Minimum payment';
   };
+  if ($('#open-loan')) $('#open-loan').onclick = () => loanModal(a.id);
   $('#mort-pick').onchange = e => { $('#new-mort').hidden = e.target.value !== '__new'; fitModal(); };
   $('#save').onclick = () => {
     const d = formData(f);

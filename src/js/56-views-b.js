@@ -117,7 +117,7 @@ VIEWS.property = () => {
         <header class="panel-head"><h2><button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button></h2><span class="muted small">${a.rental ? `Rental${a.units ? `, ${a.units} units` : ''}` : 'Residence'}. Value as of ${dateLabel(a.balanceDate, true)}</span></header>
         <dl class="kpis">
           <div><dt>Value</dt><dd>${money(value, { cents: false })}</dd></div>
-          <div><dt>Mortgage</dt><dd>${loan ? money(debt, { cents: false }) : '—'}</dd>${loan ? `<span class="muted small">${esc(loan.name)}${loan.rate ? ` at ${loan.rate}%` : ''}</span>` : `<span class="muted small"><button class="linklike" data-edit-acct="${a.id}">Link a mortgage</button></span>`}</div>
+          <div><dt>Mortgage</dt><dd>${loan ? money(debt, { cents: false }) : '—'}</dd>${loan ? `<span class="muted small">${esc(loan.name)}${loan.rate ? ` at ${loan.rate}%` : ''}${LOAN_TYPES.has(loan.type) ? ` · <button class="linklike" data-act="loan-detail" data-id="${loan.id}">${isTrackedLoan(loan) ? 'Payments and schedule' : 'Track payments'}</button>` : ''}</span>` : `<span class="muted small"><button class="linklike" data-edit-acct="${a.id}">Link a mortgage</button></span>`}</div>
           <div><dt>Equity</dt><dd>${money(equity, { cents: false })}</dd></div>
           <div><dt>Loan to value</dt><dd>${loan && value ? pct(debt / value, 0) : '—'}</dd></div>
         </dl>

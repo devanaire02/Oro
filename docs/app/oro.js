@@ -856,11 +856,13 @@ function accountValue(a) {
   const hs = holdingsFor(a.id);
   if (hs.length) return round2(sum(hs.map(holdingValue)) + (Number(a.cash) || 0));
   if (a.ledger) return ledgerBalance(a);
+  if (isTrackedLoan(a)) return loanTrack(a).balance;   // statement balance less principal paid since (26-loans.js)
   return round2(Number(a.balance) || 0);
 }
 function accountAsOf(a) {
   const hs = holdingsFor(a.id);
   if (hs.length) return hs.map(h => h.priceDate || '').sort()[0] || a.balanceDate;
+  if (isTrackedLoan(a)) return loanTrack(a).last;
   if (a.ledger) { const last = txByAccount(a.id).reduce((m, t) => t.date > m ? t.date : m, ''); const ad = a.anchorDate || a.balanceDate || ''; return last > ad ? last : ad; }
   return a.balanceDate;
 }
@@ -1328,6 +1330,99 @@ function sankeyData(from, to) {
   else if (spending > income) inc.push({ name: 'From savings', value: spending - income, drawn: true });
   inc.sort((a, b) => (a.drawn ? 1 : 0) - (b.drawn ? 1 : 0) || b.value - a.value);
   return { left: inc, right: outs, income, spending };
+}
+
+/* ================= Mortgages and loans: payments and amortization =================
+   A tracked loan starts from the balance on a statement (the account's balance and "as of" date). Every payment
+   after that date that matches the loan's payee text is split the way a servicer would: this month's interest on
+   the balance, then escrow, then principal (anything above the regular payment is extra principal).
+   Entering a new statement balance moves the starting point, so a drift is corrected by one edit. */
+const LOAN_TYPES = new Set(['mortgage', 'loan']);
+const isTrackedLoan = a => !!a && LOAN_TYPES.has(a.type) && !a.ledger && !!a.amort?.track && !!String(a.amort.match || '').trim();
+
+/* Monthly principal and interest: what you entered, or what the original terms imply. */
+function loanPI(a) {
+  const pi = Number(a.minPayment);
+  if (pi > 0) return round2(pi);
+  const am = a.amort || {}, L = Number(am.original), n = Math.round((Number(am.termYears) || 0) * 12), r = (Number(a.rate) || 0) / 1200;
+  if (L > 0 && n > 0) return round2(r ? L * r / (1 - Math.pow(1 + r, -n)) : L / n);
+  return 0;
+}
+function loanMatches(a, t, match = a.amort?.match) {
+  const m = String(match || '').trim().toLowerCase();
+  if (!m || t.accountId === a.id || !(t.amount < 0)) return false;
+  return String(t.payee || '').toLowerCase().includes(m) || String(t.rawPayee || '').toLowerCase().includes(m);
+}
+
+/* The balance now, and how each payment since the statement was applied. */
+function loanTrack(a) {
+  return memo('loan:' + a.id, () => {
+    const am = a.amort || {}, r = (Number(a.rate) || 0) / 1200, pi = loanPI(a), escrow = Math.max(0, Number(am.escrow) || 0);
+    const from = a.balanceDate || '0000-00-00', anchor = round2(Math.abs(Number(a.balance) || 0));
+    const regular = pi ? pi + escrow : 0;
+    let bal = anchor;
+    const applied = [];
+    if (isTrackedLoan(a)) {
+      const pays = state.transactions.filter(t => t.date > from && loanMatches(a, t)).sort((x, y) => x.date.localeCompare(y.date) || (x.amount - y.amount));
+      for (const t of pays) {
+        const A = round2(-t.amount);
+        const installment = !regular || A >= regular * 0.9;            // a regular monthly payment (anything smaller is extra principal)
+        const interest = installment && bal > 0 ? round2(bal * r) : 0;
+        const esc = installment ? round2(Math.min(escrow, Math.max(0, A - interest))) : 0;
+        const principal = round2(Math.max(0, Math.min(bal, A - interest - esc)));
+        const extra = installment && pi ? round2(Math.max(0, principal - Math.max(0, pi - interest))) : (installment ? 0 : principal);
+        bal = round2(bal - principal);
+        applied.push({ id: t.id, date: t.date, payee: t.payee, amount: A, interest, escrow: esc, principal, extra, balance: bal });
+      }
+    }
+    const last = applied.length ? applied[applied.length - 1].date : from;
+    return { anchor, from, balance: bal, applied, pi, escrow, rate: Number(a.rate) || 0, last, tracked: isTrackedLoan(a) };
+  });
+}
+
+/* Month-by-month from `bal`, starting with the payment due in `startMonth`, with optional extra principal each month. */
+function loanProjection(a, bal, startMonth, extra = 0) {
+  const r = (Number(a.rate) || 0) / 1200, pi = loanPI(a);
+  if (!pi || !(bal > 0.005)) return null;
+  if (pi + extra <= bal * r + 0.005) return { never: true };
+  const rows = [];
+  let m = startMonth, interest = 0;
+  while (bal > 0.005 && rows.length < 720) {
+    const i = round2(bal * r), p = round2(Math.min(bal, pi + extra - i));
+    bal = round2(bal - p); interest += i;
+    rows.push({ m, interest: i, principal: p, balance: bal });
+    m = addMonths(m, 1);
+  }
+  return { rows, months: rows.length, payoff: rows[rows.length - 1].m, interest: round2(interest) };
+}
+
+/* Where the original terms say the balance should be by now (needs original amount, first payment and term). */
+function loanOriginalNow(a, asOf = today()) {
+  const am = a.amort || {}, L = Number(am.original), n = Math.round((Number(am.termYears) || 0) * 12), first = am.firstPayment;
+  if (!(L > 0) || !n || !first) return null;
+  const r = (Number(a.rate) || 0) / 1200;
+  const P = r ? L * r / (1 - Math.pow(1 + r, -n)) : L / n;
+  let k = monthsBetween(first.slice(0, 7), asOf.slice(0, 7)) + (asOf.slice(8) >= first.slice(8) ? 1 : 0);
+  k = clamp(k, 0, n);
+  const g = Math.pow(1 + r, k);
+  const owed = r ? L * g - P * (g - 1) / r : L - P * k;
+  return { owed: round2(Math.max(0, owed)), paymentsMade: k, payoff: addMonths(first.slice(0, 7), n - 1), payment: round2(P) };
+}
+
+/* Payees that look like loan payments, to pick from when setting up tracking. */
+function loanPaymentCandidates(a) {
+  const re = /mortgage|mtg|home ?loan|\bloans?\b|lending|servicing|escrow|heloc/i;
+  const groups = new Map();
+  for (const t of state.transactions) {
+    if (!(t.amount < 0) || t.accountId === a.id) continue;
+    const c = catById(t.categoryId);
+    if (!(re.test(t.payee || '') || re.test(t.rawPayee || '') || (c && re.test(c.name)))) continue;
+    const key = String(t.payee || '').trim(); if (!key) continue;
+    const g = groups.get(key) || { payee: key, n: 0, last: '', amount: 0 };
+    g.n++; if (t.date > g.last) { g.last = t.date; g.amount = round2(-t.amount); }
+    groups.set(key, g);
+  }
+  return [...groups.values()].sort((x, y) => y.n - x.n || y.last.localeCompare(x.last)).slice(0, 8);
 }
 
 /* Charts are drawn at the host's real pixel width after each render, so text stays legible on any screen. */
@@ -3129,7 +3224,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '4c060ee';
+const ORO_BUILD = 'c394920';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -3709,7 +3804,7 @@ VIEWS.property = () => {
         <header class="panel-head"><h2><button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button></h2><span class="muted small">${a.rental ? `Rental${a.units ? `, ${a.units} units` : ''}` : 'Residence'}. Value as of ${dateLabel(a.balanceDate, true)}</span></header>
         <dl class="kpis">
           <div><dt>Value</dt><dd>${money(value, { cents: false })}</dd></div>
-          <div><dt>Mortgage</dt><dd>${loan ? money(debt, { cents: false }) : '—'}</dd>${loan ? `<span class="muted small">${esc(loan.name)}${loan.rate ? ` at ${loan.rate}%` : ''}</span>` : `<span class="muted small"><button class="linklike" data-edit-acct="${a.id}">Link a mortgage</button></span>`}</div>
+          <div><dt>Mortgage</dt><dd>${loan ? money(debt, { cents: false }) : '—'}</dd>${loan ? `<span class="muted small">${esc(loan.name)}${loan.rate ? ` at ${loan.rate}%` : ''}${LOAN_TYPES.has(loan.type) ? ` · <button class="linklike" data-act="loan-detail" data-id="${loan.id}">${isTrackedLoan(loan) ? 'Payments and schedule' : 'Track payments'}</button>` : ''}</span>` : `<span class="muted small"><button class="linklike" data-edit-acct="${a.id}">Link a mortgage</button></span>`}</div>
           <div><dt>Equity</dt><dd>${money(equity, { cents: false })}</dd></div>
           <div><dt>Loan to value</dt><dd>${loan && value ? pct(debt / value, 0) : '—'}</dd></div>
         </dl>
@@ -4256,6 +4351,129 @@ async function paintBackups() {
   box.innerHTML = `<details><summary>${list.length} backup${list.length > 1 ? 's' : ''} in your folder</summary><ul class="plain">${list.slice(0, 40).map(b => `<li><span>${dateLabel(b.date, true)}</span> <button class="linklike small" data-restore="${esc(b.name)}">Restore</button></li>`).join('')}</ul></details>`;
 }
 
+/* ---------- mortgage or loan: payments since the statement, schedule ahead, what-if ---------- */
+function loanModal(id) {
+  const a = acctById(id); if (!a || !LOAN_TYPES.has(a.type)) return;
+  const am = a.amort || {}, L = loanTrack(a), pi = L.pi;
+  const sm = n => money(n, { cents: false });
+  const prop = state.accounts.find(x => x.type === 'realestate' && x.mortgageId === a.id);
+  const cands = loanPaymentCandidates(a);
+  const lastPay = L.applied.length ? L.last : (a.balanceDate || today());
+  const startM = addMonths(monthKey(lastPay), 1);
+  const proj = loanProjection(a, L.balance, startM);
+  const orig = loanOriginalNow(a);
+  const prinSince = round2(sum(L.applied.map(p => p.principal))), intSince = round2(sum(L.applied.map(p => p.interest)));
+  const yrsLeft = m => { const y = Math.floor(m / 12), r = m % 12; return [y && `${y} year${y === 1 ? '' : 's'}`, r && `${r} month${r === 1 ? '' : 's'}`].filter(Boolean).join(' ') || '0 months'; };
+  const n = L.applied.length;
+  const my = mk => `${MON[+mk.slice(5, 7) - 1]} ${mk.slice(0, 4)}`;   // Sep 2045
+
+  const status = !L.tracked
+    ? `Ọrọ̀ isn’t following payments for this loan yet, so it shows what you last entered: ${sm(L.anchor)} on ${dateLabel(L.from, true)}. Turn it on below and the balance comes down as payments show up in your bank imports.`
+    : n ? `Starting from your statement balance of <strong>${sm(L.anchor)}</strong> on ${dateLabel(L.from, true)}, ${n} payment${n === 1 ? '' : 's'} since paid <strong>${money(prinSince)}</strong> of principal and ${money(intSince)} of interest.`
+    : `Following payments that match “${esc(am.match)}”. None has come in since your statement balance of ${sm(L.anchor)} on ${dateLabel(L.from, true)}.`;
+
+  const kpis = `<dl class="kpis loan-kpis">
+      <div><dt>Owed now</dt><dd>${sm(L.balance)}</dd><span class="muted small">${L.tracked && n ? 'Estimated from payments' : `As of ${dateLabel(L.from, true)}`}</span></div>
+      <div><dt>Monthly payment</dt><dd>${pi ? sm(pi + L.escrow) : '—'}</dd><span class="muted small">${pi ? `${money(pi)} principal and interest${L.escrow ? ` + ${money(L.escrow)} escrow` : ''}` : 'Add it below'}</span></div>
+      <div><dt>Paid off</dt><dd>${proj && !proj.never ? my(proj.payoff) : '—'}</dd><span class="muted small">${proj && !proj.never ? `${yrsLeft(proj.months)} left` : proj?.never ? 'Payment doesn’t cover interest' : 'Needs rate and payment'}</span></div>
+      <div><dt>Interest left</dt><dd>${proj && !proj.never ? sm(proj.interest) : '—'}</dd><span class="muted small">${a.rate ? `At ${a.rate}%` : 'Add the rate below'}</span></div>
+    </dl>`;
+
+  const origLine = orig ? (() => {
+    const diff = round2(orig.owed - L.balance);
+    return `<p class="small">On the original schedule (${orig.paymentsMade} payments so far, paid off ${monthLabel(orig.payoff)}), you’d owe ${sm(orig.owed)} now. ${Math.abs(diff) < 50 ? 'You’re right on schedule.' : diff > 0 ? `You’re <strong>${sm(diff)} ahead</strong>.` : `You’re ${sm(-diff)} behind it.`}</p>`;
+  })() : '';
+
+  const paysTable = n ? `<h3>Payments since your statement</h3>
+    <div class="scroll-table"><table class="ledger compact loan-pays"><thead><tr><th>Date</th><th class="num">Paid</th><th class="num">Interest</th><th class="num hide-sm">Escrow</th><th class="num">Principal</th><th class="num">Owed after</th></tr></thead><tbody>
+    ${L.applied.slice().reverse().slice(0, 36).map(p => `<tr><td class="nowrap">${dateLabel(p.date)}</td><td class="num">${money(p.amount)}</td><td class="num">${money(p.interest)}</td><td class="num hide-sm">${p.escrow ? money(p.escrow) : '—'}</td><td class="num">${money(p.principal)}${p.extra > 0.5 ? `<br><span class="muted small">${money(p.extra)} extra</span>` : ''}</td><td class="num">${sm(p.balance)}</td></tr>`).join('')}
+    </tbody></table></div>` : '';
+
+  let sched = '';
+  if (proj && !proj.never) {
+    const years = [];
+    for (const r of proj.rows) {
+      const y = r.m.slice(0, 4); let g = years[years.length - 1];
+      if (!g || g.y !== y) years.push(g = { y, n: 0, interest: 0, principal: 0, balance: 0 });
+      g.n++; g.interest += r.interest; g.principal += r.principal; g.balance = r.balance;
+    }
+    const pts = proj.rows.filter((r, i) => i === proj.rows.length - 1 || r.m.endsWith('-12')).map(r => ({ x: r.m, y: r.balance }));
+    pts.unshift({ x: addMonths(startM, -1), y: L.balance });
+    sched = `<h3>The road to payoff</h3>
+      ${chartHost({ h: 170, label: 'Loan balance by year', series: [{ points: pts, color: 'var(--ink-accent)', area: true }], xFmt: x => x.slice(0, 4), tip: i => `<strong>${monthLabel(pts[i].x)}</strong><br>${sm(pts[i].y)} owed` })}
+      <details class="loan-next"><summary>Next 12 payments</summary>
+        <div class="scroll-table"><table class="ledger compact"><thead><tr><th>Month</th><th class="num">Interest</th><th class="num">Principal</th><th class="num">Owed after</th></tr></thead><tbody>
+        ${proj.rows.slice(0, 12).map(r => `<tr><td>${my(r.m)}</td><td class="num">${money(r.interest)}</td><td class="num">${money(r.principal)}</td><td class="num">${sm(r.balance)}</td></tr>`).join('')}
+        </tbody></table></div></details>
+      <details class="loan-years"><summary>Every year until it’s paid off</summary>
+        <div class="scroll-table"><table class="ledger compact"><thead><tr><th>Year</th><th class="num hide-sm">Payments</th><th class="num">Interest</th><th class="num">Principal</th><th class="num">Owed at year end</th></tr></thead><tbody>
+        ${years.map(g => `<tr><td>${g.y}</td><td class="num hide-sm">${g.n}</td><td class="num">${sm(g.interest)}</td><td class="num">${sm(g.principal)}</td><td class="num">${sm(g.balance)}</td></tr>`).join('')}
+        </tbody></table></div></details>
+      <div class="loan-whatif"><label class="field inline"><span>Pay extra each month</span><input id="loan-extra" inputmode="decimal" placeholder="e.g. 250"></label><p class="small" id="loan-whatif-out"></p></div>`;
+  }
+
+  const lastCand = cands.find(c => c.payee === am.match) || cands[0];
+  const escrowHint = pi && lastCand && lastCand.amount > pi + 1 && !am.escrow
+    ? `<small class="muted">Your last payment to ${esc(lastCand.payee)} was ${money(lastCand.amount)}, ${money(lastCand.amount - pi)} more than principal and interest. If that difference is escrow, enter it here so it isn’t counted as extra principal.</small>` : '';
+  const setup = `<details class="loan-setup" ${L.tracked ? '' : 'open'}><summary>Payment tracking and loan terms</summary>
+    <form id="loan-f" class="form-grid">
+      <label class="check wide"><input type="checkbox" name="loan-track" data-key="track" ${am.track ? 'checked' : ''}> Lower the balance as payments come in from my bank</label>
+      <label class="field wide"><span>Payments look like</span><input name="loan-match" data-key="match" id="loan-match" value="${esc(am.match || '')}" placeholder="Text in the payee, e.g. Lakeshore Mtg" autocomplete="off"><small class="muted" id="loan-count"></small></label>
+      ${cands.length ? `<div class="wide loan-cands">${cands.map(c => `<button type="button" class="btn small ghost" data-fill="${esc(c.payee)}">${esc(c.payee)} · ${money(c.amount, { cents: false })} · ${c.n}×</button>`).join('')}</div>` : ''}
+      <label class="field"><span>Interest rate (%)</span><input name="loan-rate" data-key="rate" inputmode="decimal" value="${a.rate ?? ''}"></label>
+      <label class="field"><span>Principal and interest per month</span><input name="loan-pi" data-key="pi" inputmode="decimal" value="${a.minPayment ?? ''}" placeholder="${loanPI({ ...a, minPayment: null }) || ''}"></label>
+      <label class="field"><span>Escrow per month (taxes, insurance)</span><input name="loan-escrow" data-key="escrow" inputmode="decimal" value="${am.escrow ?? ''}" placeholder="0">${escrowHint}</label>
+      <p class="muted small wide">Optional, for comparing against the original schedule:</p>
+      <label class="field"><span>Original amount</span><input name="loan-original" data-key="original" inputmode="decimal" value="${am.original ?? ''}"></label>
+      <label class="field"><span>First payment</span><input type="date" name="loan-first" data-key="firstPayment" value="${am.firstPayment || ''}"></label>
+      <label class="field"><span>Term (years)</span><input name="loan-term" data-key="termYears" inputmode="numeric" value="${am.termYears ?? ''}" placeholder="30"></label>
+    </form></details>`;
+
+  openModal({
+    title: a.name, wide: true,
+    body: `${prop ? `<p class="muted small">Mortgage on ${esc(prop.name)}${a.institution ? ` · ${esc(a.institution)}` : ''}</p>` : a.institution ? `<p class="muted small">${esc(a.institution)}</p>` : ''}
+      ${kpis}<p>${status}</p>${origLine}
+      <p class="muted small">If a statement shows a different balance, use <strong>Enter a statement balance</strong>. Payments after that date are counted from there.</p>
+      ${paysTable}${sched}${setup}`,
+    actions: `<button class="btn ghost left" id="loan-stmt">Enter a statement balance</button><button class="btn ghost" data-close>Close</button><button class="btn primary" id="loan-save">Save</button>`,
+  });
+  drawCharts($('#modal'));
+
+  const matchEl = $('#loan-match'), countEl = $('#loan-count');
+  const showCount = () => {
+    const v = matchEl.value.trim();
+    if (!v) { countEl.textContent = ''; return; }
+    const all = state.transactions.filter(t => loanMatches(a, t, v)), since = all.filter(t => t.date > (a.balanceDate || ''));
+    countEl.textContent = all.length ? `Matches ${all.length} payment${all.length === 1 ? '' : 's'}, ${since.length} since your statement on ${dateLabel(a.balanceDate, true)}.` : 'No payments match this yet.';
+  };
+  matchEl.oninput = showCount; showCount();
+  $$('#modal [data-fill]').forEach(b => b.onclick = () => { matchEl.value = b.dataset.fill; $('#loan-f [data-key=track]').checked = true; showCount(); });
+
+  const ex = $('#loan-extra'), out = $('#loan-whatif-out');
+  if (ex) ex.oninput = () => {
+    const x = parseAmount(ex.value || '');
+    if (!isFinite(x) || x <= 0) { out.textContent = ''; return; }
+    const q = loanProjection(a, L.balance, startM, x);
+    if (!q || q.never) { out.textContent = ''; return; }
+    const sooner = proj.months - q.months;
+    out.innerHTML = `Paid off ${monthLabel(q.payoff)}, <strong>${yrsLeft(sooner)} sooner</strong>, saving <strong>${sm(proj.interest - q.interest)}</strong> in interest.`;
+  };
+
+  $('#loan-stmt').onclick = () => acctModal(a.id);
+  $('#loan-save').onclick = () => {
+    const d = formData($('#loan-f'));
+    const num = v => { const x = parseAmount(String(v || '')); return isFinite(x) && x ? round2(Math.abs(x)) : null; };
+    if (d.track && !d.match.trim()) return toast('Choose or type what the payments look like, so Ọrọ̀ can find them.');
+    const rate = parseFloat(d.rate);
+    a.rate = isFinite(rate) ? rate : null;
+    a.minPayment = num(d.pi);
+    a.amort = { track: !!d.track, match: d.match.trim(), escrow: num(d.escrow), original: num(d.original), firstPayment: d.firstPayment || null, termYears: parseFloat(d.termYears) || null };
+    commit({ silent: true }); render();
+    loanModal(a.id);
+    toast(a.amort.track ? `Following payments to ${a.name}. ${loanTrack(a).applied.length} found since your statement.` : `Saved ${a.name}.`);
+  };
+}
+
 /* ================= edit dialogs ================= */
 /* The merchant part of a bank description: skip leading clutter (POS, SQ, TST…), stop at store codes,
    PENDING, .COM and similar, and drop a trailing state. "FITNESS FORMULA CLUB" stays whole. */
@@ -4405,7 +4623,8 @@ function acctModal(id, presetType) {
   const hasHoldings = a && holdingsFor(a.id).length;
   const loans = activeAccounts().filter(x => ['mortgage', 'loan', 'otherLiability'].includes(x.type));
   const rentalGroups = [...new Set(state.categories.filter(c => c.rental).map(c => c.group))];
-  const curVal = a ? accountValue(a) : '';
+  const tracked = isTrackedLoan(a);
+  const curVal = a ? (tracked ? round2(Math.abs(Number(a.balance) || 0)) : accountValue(a)) : '';
   openModal({
     title: a ? 'Edit account' : 'Add account',
     body: `<form id="f" class="form-grid" data-type="${v.type}">
@@ -4415,13 +4634,14 @@ function acctModal(id, presetType) {
       ${members().length > 1 ? `<label class="field"><span>Owner</span><select name="owner">${memberOptions(v.owner || 'joint')}</select></label>` : ''}
       <label class="field"><span>Last 4 digits</span><input name="last4" value="${esc(v.last4 || '')}" maxlength="4" inputmode="numeric" placeholder="Matches imports"></label>
       ${hasHoldings ? `<p class="muted small wide">Value comes from ${hasHoldings} holding${hasHoldings > 1 ? 's' : ''}: ${money(accountValue(a))}.</p><label class="field"><span>Uninvested cash</span><input name="cash" inputmode="decimal" value="${a.cash || ''}" placeholder="0"></label>`
-        : `<label class="field"><span id="bal-label">${ACCOUNT_TYPES[v.type].side === 'liability' ? 'Amount owed' : 'Balance or value'}</span><input name="balance" inputmode="decimal" value="${curVal === '' ? (v.balance === '' ? '' : round2(v.balance)) : round2(curVal)}" placeholder="0.00"></label>
+        : `<label class="field"><span id="bal-label">${tracked ? 'Statement balance' : ACCOUNT_TYPES[v.type].side === 'liability' ? 'Amount owed' : 'Balance or value'}</span><input name="balance" inputmode="decimal" value="${curVal === '' ? (v.balance === '' ? '' : round2(v.balance)) : round2(curVal)}" placeholder="0.00"></label>
            <label class="field"><span>As of</span><input type="date" name="balanceDate" value="${(a && a.ledger ? a.anchorDate : v.balanceDate) || today()}"></label>`}
       <div class="when-ledger wide"><label class="check"><input type="checkbox" name="ledger" ${(v.ledger ?? ACCOUNT_TYPES[v.type].ledger) ? 'checked' : ''}> Keep the balance up to date from transactions</label><small class="muted">The balance above is the starting point; imported transactions after that date move it. Lets you reconcile against statements.</small></div>
       <div class="when-cash wide"><label class="check"><input type="checkbox" name="forecast" ${(v.forecast ?? ACCOUNT_TYPES[v.type].forecast) ? 'checked' : ''}> Include in the cash-flow forecast</label></div>
       <label class="field when-invest"><span>Treat as (when no holdings)</span><select name="assetClass">${ASSET_CLASSES.map(c => `<option ${c === (v.assetClass || 'US stocks') ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
       <label class="field when-debt"><span>Interest rate (%)</span><input name="rate" inputmode="decimal" value="${v.rate ?? ''}"></label>
-      <label class="field when-debt"><span>Minimum payment</span><input name="minPayment" inputmode="decimal" value="${v.minPayment ?? ''}"></label>
+      <label class="field when-debt"><span id="minpay-label">${LOAN_TYPES.has(v.type) ? 'Principal and interest per month' : 'Minimum payment'}</span><input name="minPayment" inputmode="decimal" value="${v.minPayment ?? ''}"></label>
+      ${a && LOAN_TYPES.has(a.type) ? `<div class="wide when-debt loan-link"><button type="button" class="btn small" id="open-loan">Payments and schedule…</button><small class="muted">${tracked ? `Owed now: ${money(accountValue(a), { cents: false })}, estimated from payments since the statement balance above. To correct it, enter a newer statement’s balance and date.` : 'Have Ọrọ̀ lower the balance as payments come in, and see the amortization schedule.'}</small></div>` : ''}
       <div class="when-property wide form-grid">
         <label class="field"><span>Mortgage</span><select name="mortgageId" id="mort-pick"><option value="">None</option>${loans.map(l => `<option value="${l.id}" ${l.id === v.mortgageId ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}<option value="__new">Add a mortgage…</option></select></label>
         <div class="new-mort wide form-grid" id="new-mort" hidden>
@@ -4429,8 +4649,8 @@ function acctModal(id, presetType) {
           <label class="field"><span>Amount owed</span><input name="mort-owed" data-key="mortOwed" inputmode="decimal" placeholder="From your latest statement"></label>
           <label class="field"><span>As of</span><input type="date" name="mort-date" data-key="mortDate" value="${today()}"></label>
           <label class="field"><span>Interest rate (%)</span><input name="mort-rate" data-key="mortRate" inputmode="decimal" placeholder="e.g. 6.25"></label>
-          <label class="field"><span>Monthly payment</span><input name="mort-payment" data-key="mortPayment" inputmode="decimal" placeholder="Optional"></label>
-          <p class="muted small wide">Adds the mortgage under Accounts › Liabilities, linked to this property, so its equity and net worth count the loan. Keep importing the payments from your bank; there’s no need to import the mortgage statement. Update what you owe from the statement now and then.</p>
+          <label class="field"><span>Principal and interest per month</span><input name="mort-payment" data-key="mortPayment" inputmode="decimal" placeholder="Optional"></label>
+          <p class="muted small wide">Adds the mortgage under Accounts › Liabilities, linked to this property, so its equity and net worth count the loan. Keep importing the payments from your bank; there’s no need to import the mortgage statement. Afterwards, open <strong>Payments and schedule</strong> on the Property page to have the balance come down as payments arrive.</p>
         </div>
         <label class="check"><input type="checkbox" name="rental" ${v.rental ? 'checked' : ''}> This is a rental property</label>
         <label class="field"><span>Rental category group</span><select name="rentalGroup">${(rentalGroups.length ? rentalGroups : ['Rental property']).map(g => `<option ${g === v.rentalGroup ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select></label>
@@ -4448,7 +4668,9 @@ function acctModal(id, presetType) {
     const T = ACCOUNT_TYPES[e.target.value]; f.dataset.type = e.target.value;
     const l = $('#bal-label'); if (l) l.textContent = T.side === 'liability' ? 'Amount owed' : 'Balance or value';
     f.querySelector('[name=forecast]').checked = !!T.forecast; f.querySelector('[name=ledger]').checked = !!T.ledger;
+    const mp = $('#minpay-label'); if (mp) mp.textContent = LOAN_TYPES.has(e.target.value) ? 'Principal and interest per month' : 'Minimum payment';
   };
+  if ($('#open-loan')) $('#open-loan').onclick = () => loanModal(a.id);
   $('#mort-pick').onchange = e => { $('#new-mort').hidden = e.target.value !== '__new'; fitModal(); };
   $('#save').onclick = () => {
     const d = formData(f);
@@ -4955,6 +5177,7 @@ const ACTIONS = {
   'add-goal': () => goalModal(),
   'palette': () => openPalette(),
   'more-pages': () => morePagesSheet(),
+  'loan-detail': el => loanModal(el.dataset.id),
   'tx-filters': () => { UI.txFilters = !$('.filters')?.classList.contains('open'); render(); },
   'tx-select': () => { UI.txSelect = !UI.txSelect; if (!UI.txSelect) { $$('.tx-cb:checked').forEach(c => { c.checked = false; }); } render(); },
   'more-money-date': () => { closeModal(true); ACTIONS['money-date'](); },
