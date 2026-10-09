@@ -2505,8 +2505,13 @@ function newAccountFields(prefix, def = {}) {
   return `<div class="inline-new">
     <label class="field"><span>Account name</span><input id="${prefix}-name" value="${esc(def.name || '')}" placeholder="e.g. Checking"></label>
     <label class="field"><span>Type</span><select id="${prefix}-type">${types.map(t => `<option value="${t}" ${t === def.type ? 'selected' : ''}>${ACCOUNT_TYPES[t].label}</option>`).join('')}</select></label>
+    ${ownerField(`${prefix}-owner`, def.owner)}
     <label class="field"><span>Institution</span><input id="${prefix}-inst" value="${esc(def.inst || '')}" placeholder="Optional"></label>
   </div>`;
+}
+/* Whose a new account is, chosen right in the import (only when there's more than one person) */
+function ownerField(id, sel, attrs = '') {
+  return members().length > 1 ? `<label class="field"><span>Owner</span><select id="${id}" ${attrs} aria-label="Owner">${memberOptions(sel || defaultOwner())}</select></label>` : '';
 }
 const guessTypeFromName = n => /card|visa|amex|american express|mastercard|discover|sapphire|freedom/i.test(n) ? 'credit' : /saving|reserve|money market|hysa/i.test(n) ? 'savings' : /loan|mortgage/i.test(n) ? 'loan' : 'checking';
 
@@ -2716,7 +2721,7 @@ function colSelect(id, val, allowNone) {
 function acctMapBlock() {
   const srcs = Object.keys(IMP.acctMap || {});
   const skipped = srcs.filter(s => IMP.acctMap[s] === '__skip').length;
-  return `<div class="map-list"><p class="muted small">This file has ${srcs.length} account${srcs.length === 1 ? '' : 's'}. Match each one, let Ọrọ̀ create it, or leave it out.${skipped ? ' Investment accounts are left out to start with: their value comes from holdings (a Positions download), and buys, sells and dividends aren’t spending.' : ''}</p>${srcs.map((src, k) => `<div class="map-row"><span class="map-src">${esc(src || '(no account name)')}</span><select data-amap="${k}">${txnAccountOptions(IMP.acctMap[src], `New account “${src || 'Imported'}”`)}<option value="__skip" ${IMP.acctMap[src] === '__skip' ? 'selected' : ''}>Don’t import this account</option></select></div>`).join('')}</div>`;
+  return `<div class="map-list"><p class="muted small">This file has ${srcs.length} account${srcs.length === 1 ? '' : 's'}. Match each one, let Ọrọ̀ create it, or leave it out.${skipped ? ' Investment accounts are left out to start with: their value comes from holdings (a Positions download), and buys, sells and dividends aren’t spending.' : ''}</p>${srcs.map((src, k) => `<div class="map-row"><span class="map-src">${esc(src || '(no account name)')}</span><select data-amap="${k}">${txnAccountOptions(IMP.acctMap[src], `New account “${src || 'Imported'}”`)}<option value="__skip" ${IMP.acctMap[src] === '__skip' ? 'selected' : ''}>Don’t import this account</option></select>${members().length > 1 ? `<select class="map-owner" data-aowner="${k}" aria-label="Owner of the new account" ${IMP.acctMap[src] === '__new' ? '' : 'hidden'}>${memberOptions(IMP.acctOwners?.[src] || defaultOwner())}</select>` : ''}</div>`).join('')}</div>`;
 }
 function renderMapStep(box) {
   const m = IMP.map;
@@ -2755,14 +2760,15 @@ function renderMapStep(box) {
   };
   box.onchange = e => {
     const el = e.target;
-    if (el.dataset.amap != null) { IMP.acctMap[Object.keys(IMP.acctMap)[+el.dataset.amap]] = el.value; return; }
+    if (el.dataset.amap != null) { IMP.acctMap[Object.keys(IMP.acctMap)[+el.dataset.amap]] = el.value; const o = el.closest('.map-row')?.querySelector('[data-aowner]'); if (o) o.hidden = el.value !== '__new'; return; }
+    if (el.dataset.aowner != null) { (IMP.acctOwners ||= {})[Object.keys(IMP.acctMap)[+el.dataset.aowner]] = el.value; return; }
     if (el.closest('.inline-new')) return;
     upd();
   };
   setModalActions(`<button class="btn ghost" data-imp="back">Back</button><button class="btn primary" data-imp="to-review">Continue</button>`);
 }
 function stashNewAcct() {
-  if ($('#imp-new-name')) IMP.newDefaults = { name: $('#imp-new-name').value, type: $('#imp-new-type').value, inst: $('#imp-new-inst').value };
+  if ($('#imp-new-name')) IMP.newDefaults = { name: $('#imp-new-name').value, type: $('#imp-new-type').value, inst: $('#imp-new-inst').value, owner: $('#imp-new-owner')?.value || defaultOwner() };
 }
 
 function renderReviewStep(box) {
@@ -2801,6 +2807,7 @@ function renderReviewStep(box) {
   box.onchange = e => {
     const t = e.target;
     if (t.dataset.amap != null) { IMP.acctMap[Object.keys(IMP.acctMap)[+t.dataset.amap]] = t.value; return rebuild(); }
+    if (t.dataset.aowner != null) { (IMP.acctOwners ||= {})[Object.keys(IMP.acctMap)[+t.dataset.aowner]] = t.value; return; }
     if (t.dataset.row != null) { rows[+t.dataset.row].include = t.checked; t.closest('tr').classList.toggle('off', !t.checked); updateImportCount(); }
     if (t.dataset.cat != null) { rows[+t.dataset.cat].categoryId = t.value; rows[+t.dataset.cat].guess = ''; }
     if (t.id === 'imp-bal') IMP.setBal = t.checked;
@@ -2824,7 +2831,7 @@ function renderPositionsStep(box) {
       <div class="map-row">
         <span class="map-src">${esc(src || IMP.fileName)}</span>
         <select data-src="${k}">${invAccountOptions(IMP.srcMap[src])}</select>
-        ${IMP.srcMap[src] === '__new' ? `<input data-srcname="${k}" value="${esc(IMP.srcNames?.[src] ?? (src || 'Brokerage'))}" placeholder="Account name"><select data-srctype="${k}">${['brokerage', 'retirement', 'education', 'hsa', 'crypto'].map(t => `<option value="${t}" ${(IMP.srcTypes?.[src] || guessInvType(src)) === t ? 'selected' : ''}>${ACCOUNT_TYPES[t].label}</option>`).join('')}</select>` : ''}
+        ${IMP.srcMap[src] === '__new' ? `<input data-srcname="${k}" value="${esc(IMP.srcNames?.[src] ?? (src || 'Brokerage'))}" placeholder="Account name"><select data-srctype="${k}">${['brokerage', 'retirement', 'education', 'hsa', 'crypto'].map(t => `<option value="${t}" ${(IMP.srcTypes?.[src] || guessInvType(src)) === t ? 'selected' : ''}>${ACCOUNT_TYPES[t].label}</option>`).join('')}</select>${members().length > 1 ? `<select data-srcowner="${k}" aria-label="Owner of the new account">${memberOptions(IMP.srcOwners?.[src] || defaultOwner())}</select>` : ''}` : ''}
       </div>`).join('')}</div>
     <label class="check"><input type="checkbox" id="imp-replace" ${IMP.replace !== false ? 'checked' : ''}> Replace the current holdings in these accounts (recommended: positions files are a full snapshot)</label>
     <div class="scroll-table"><table class="ledger compact" id="pos-table"><thead><tr><th class="cb"></th><th>Symbol</th><th>Name</th><th>Class</th><th class="num">Shares</th><th class="num">Price</th><th class="num">Value</th><th class="num">Cost basis</th></tr></thead><tbody>
@@ -2838,6 +2845,7 @@ function renderPositionsStep(box) {
     if (t.dataset.src != null) { IMP.srcMap[srcs[+t.dataset.src]] = t.value; renderImport(); }
     if (t.dataset.srcname != null) (IMP.srcNames = IMP.srcNames || {})[srcs[+t.dataset.srcname]] = t.value;
     if (t.dataset.srctype != null) (IMP.srcTypes = IMP.srcTypes || {})[srcs[+t.dataset.srctype]] = t.value;
+    if (t.dataset.srcowner != null) (IMP.srcOwners = IMP.srcOwners || {})[srcs[+t.dataset.srcowner]] = t.value;
     if (t.dataset.row != null) { P[+t.dataset.row].include = t.checked; t.closest('tr').classList.toggle('off', !t.checked); }
     if (t.dataset.cls != null) P[+t.dataset.cls].assetClass = t.value;
     if (t.id === 'imp-replace') IMP.replace = t.checked;
@@ -2866,9 +2874,9 @@ function importAction(act) {
   if (act === 'commit-pos') return commitPositions();
   if (act.startsWith('b')) return batchAction(act);
 }
-function makeAccount(name, type, inst) {
+function makeAccount(name, type, inst, owner) {
   const T = ACCOUNT_TYPES[type] || ACCOUNT_TYPES.checking;
-  const a = { id: uid(), name, type, institution: inst || '', balance: 0, balanceDate: today(), owner: UI.lens || 'joint', forecast: !!T.forecast };
+  const a = { id: uid(), name, type, institution: inst || '', balance: 0, balanceDate: today(), owner: owner || defaultOwner(), forecast: !!T.forecast };
   if (T.ledger) { a.ledger = true; a.anchorBalance = 0; a.anchorDate = '0000-00-00'; }
   state.accounts.push(a);
   return a;
@@ -2893,12 +2901,12 @@ function applyTxItem(it) {
   if (it.multi) {
     for (const [src, v] of Object.entries(it.acctMap)) {
       if (v === '__skip') continue;
-      if (v === '__new') { const a = makeAccount(src || 'Imported account', guessTypeFromName(src)); a.importName = src; dest[src] = a; fresh.push(a); }
+      if (v === '__new') { const a = makeAccount(src || 'Imported account', guessTypeFromName(src), '', it.acctOwners?.[src]); a.importName = src; dest[src] = a; fresh.push(a); }
       else { dest[src] = acctById(v); dest[src].importName = dest[src].importName || src; }
     }
   } else {
     let acct = acctById(it.accountId);
-    if (it.accountId === '__new') { const d = it.newDefaults || {}; acct = makeAccount(d.name.trim(), d.type || 'checking', d.inst); fresh.push(acct); }
+    if (it.accountId === '__new') { const d = it.newDefaults || {}; acct = makeAccount(d.name.trim(), d.type || 'checking', d.inst, d.owner); fresh.push(acct); }
     dest[''] = acct;
   }
   // categories from other apps' exports
@@ -2959,7 +2967,7 @@ function applyPositionsItem(it) {
   const targets = {};
   for (const [src, val] of Object.entries(it.srcMap)) {
     if (val === '__new') {
-      const a = { id: uid(), name: (it.srcNames?.[src] ?? (src || 'Brokerage')).trim() || 'Brokerage', type: it.srcTypes?.[src] || guessInvType(src), institution: '', balance: 0, balanceDate: today(), importName: src, owner: UI.lens || 'joint' };
+      const a = { id: uid(), name: (it.srcNames?.[src] ?? (src || 'Brokerage')).trim() || 'Brokerage', type: it.srcTypes?.[src] || guessInvType(src), institution: '', balance: 0, balanceDate: today(), importName: src, owner: it.srcOwners?.[src] || defaultOwner() };
       if (it.ofx?.last4) a.last4 = it.ofx.last4;
       state.accounts.push(a); targets[src] = a.id;
     } else { targets[src] = val; const a = acctById(val); if (a && src) a.importName = src; }
@@ -3127,7 +3135,7 @@ function renderBatchStep(box) {
       const srcs = Object.keys(it.srcMap);
       return `<section class="batch-item ${it.include ? '' : 'off'}">${head}<span class="muted small">Holdings · ${P.length} position${P.length === 1 ? '' : 's'} · ${money(total, { cents: false })}</span></header>
         ${srcs.map((src, j) => `<div class="batch-row"><label class="field"><span>${esc(src || 'Into')}</span><select data-bsrc="${k}|${j}">${invAccountOptions(it.srcMap[src])}</select></label>
-          ${it.srcMap[src] === '__new' ? `<label class="field"><span>New account name</span><input data-bsrcname="${k}|${j}" value="${esc(it.srcNames?.[src] ?? (src || 'Brokerage'))}"></label>` : ''}</div>`).join('')}
+          ${it.srcMap[src] === '__new' ? `<label class="field"><span>New account name</span><input data-bsrcname="${k}|${j}" value="${esc(it.srcNames?.[src] ?? (src || 'Brokerage'))}"></label>${members().length > 1 ? `<label class="field"><span>Owner</span><select data-bsrcowner="${k}|${j}">${memberOptions(it.srcOwners?.[src] || defaultOwner())}</select></label>` : ''}` : ''}</div>`).join('')}
         <p class="muted small">Replaces the current holdings in ${srcs.length === 1 ? 'that account' : 'those accounts'} with this snapshot.</p></section>`;
     }
     const c = batchCounts(it), rows = it.txRows || [], dates = rows.map(r => r.date).sort();
@@ -3162,12 +3170,13 @@ function renderBatchStep(box) {
       if (it.autoFlipped) { it.rawList = it.rawList.map(r => ({ ...r, amount: -r.amount })); it.flipped = !it.flipped; it.autoFlipped = false; }
       rebuildItem(it); autoFlipForCard(it); return renderImport();
     }
-    const nm = /^b(\d+)-new-(name|type|inst)$/.exec(el.id || '');
+    const nm = /^b(\d+)-new-(name|type|inst|owner)$/.exec(el.id || '');
     if (nm) { const it = items[+nm[1]]; it.newDefaults = { ...(it.newDefaults || {}), [nm[2]]: el.value }; if (nm[2] === 'type') { rebuildItem(it); renderImport(); } return; }
     if (d.bmaybe != null) { const it = items[+d.bmaybe]; it.txRows.forEach(r => { if (r.status === 'maybe') r.include = el.checked; }); return renderImport(); }
     if (d.bbal != null) { items[+d.bbal].setBal = el.checked; return; }
     if (d.bsrc != null) { const [k, j] = at(d.bsrc), it = items[k]; it.srcMap[Object.keys(it.srcMap)[j]] = el.value; return renderImport(); }
     if (d.bsrcname != null) { const [k, j] = at(d.bsrcname), it = items[k]; (it.srcNames = it.srcNames || {})[Object.keys(it.srcMap)[j]] = el.value; return; }
+    if (d.bsrcowner != null) { const [k, j] = at(d.bsrcowner), it = items[k]; (it.srcOwners = it.srcOwners || {})[Object.keys(it.srcMap)[j]] = el.value; return; }
   };
   const parts = [];
   if (nTx) parts.push(`${nTx.toLocaleString()} transaction${nTx === 1 ? '' : 's'}`);
@@ -3254,6 +3263,8 @@ const members = () => state.settings.members || [{ id: 'joint', name: 'Joint' }]
 const memberName = id => members().find(m => m.id === id)?.name || 'Joint';
 const memberColor = id => { const i = members().findIndex(m => m.id === id); return `var(--c${((i < 0 ? 0 : i) % 8) + 1})`; };
 function personOf(t) { return t.person || acctById(t.accountId)?.owner || 'joint'; }
+/* A new account's owner: the person the menu is showing, otherwise joint */
+function defaultOwner() { return UI.lens && members().some(m => m.id === UI.lens) ? UI.lens : 'joint'; }
 function lensed(txs) { return UI.lens ? txs.filter(t => personOf(t) === UI.lens) : txs; }
 function memberOptions(sel, inherit) {
   return (inherit ? `<option value="">${esc(inherit)}</option>` : '') + members().map(m => `<option value="${m.id}" ${m.id === sel ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
@@ -3458,7 +3469,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '308ee88';
+const ORO_BUILD = '08b0645';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -7900,7 +7911,7 @@ function gapSpeech(item) {
    "rename the Amex to Blue Cash", "change the owner of the brokerage to Julissa", "the mortgage rate is 6.125 percent",
    "Sam's card ends in 1234", "archive the SUV". Ọrọ̀ finds the account by its name (and type, owner, last 4), shows each
    change as old → new, asks which one when two accounts could match, and saves only after "yes". */
-const UPD_VERB = /^(?:(?:can you|could you|please|let'?s|i want to|i need to)\s+)*(update|set|change|make|rename|archive|close|mark|correct|fix)\b/;
+const UPD_VERB = /^(?:(?:can you|could you|please|let'?s|i want to|i need to)\s+)*(update|set|change|make|rename|name|call|archive|close|mark|correct|fix)\b/;
 const UPD_STRIP = /^(?:(?:can you|could you|please|let'?s|i want to|i need to)\s+)*(update|set|change|correct|fix)\b/;
 const UPD_FIELDS = { balance: 'Balance', value: 'Value', owner: 'Owner', name: 'Name', last4: 'Last 4', rate: 'Interest rate', minPayment: 'Monthly payment', rental: 'Rental', archived: 'Archive', coinPrice: 'Price' };
 /* what a change is about: an account, or a coin's price (27-crypto.js) */
@@ -7928,12 +7939,36 @@ function updByType(seg) {
   const same = activeAccounts().filter(a => a.type === type);
   return same.length && same.length <= 4 ? same.map(a => ({ a, s: same.length === 1 ? 1.6 : 1.5 })) : [];
 }
+/* A new name, and which account it's for, kept apart so the words of the new name never pick the account
+   ("call it Fidelity #1234–Deejay–Savings" is about the open account, not the savings account).
+   "rename the Amex to Blue Cash", "rename it Blue Cash", "name this account …", "call it …", "change the name of this
+   account to …", "change its name to …", "its name should be …", "the Amex should be called …". */
+const UPD_PRONOUN = /^(?:it|its|this|that|this (?:account|card|one)|that (?:account|card|one)|the (?:account|card)|this account's|its own)$/i;
+function updRename(seg) {
+  const s = String(seg).replace(/[’‘]/g, "'").trim().replace(/^(?:(?:can you|could you|please|let'?s|i want to|i need to|update|change|set)\s+)+/i, '');
+  const pr = '(it|this(?:\\s+(?:account|card|one))?|that(?:\\s+(?:account|card|one))?)';
+  let m, target, name;
+  if ((m = s.match(new RegExp(`^(?:re)?name\\s+${pr}\\s+(?:to\\s+|as\\s+)?(.+)$`, 'i')))) [, target, name] = m;   // "name this account Fidelity …", "rename it Blue Cash"
+  else if ((m = s.match(new RegExp(`^call\\s+${pr}\\s+(?:to\\s+)?(.+)$`, 'i')))) [, target, name] = m;
+  else if ((m = s.match(/^rename\s+(.+?)\s+(?:to|as)\s+(.+)$/i))) [, target, name] = m;                     // "rename the Amex to Blue Cash"
+  else if ((m = s.match(/^call\s+(.+?)\s+to\s+(.+)$/i))) [, target, name] = m;
+  else if ((m = s.match(/^(?:the\s+)?name\s+(?:of\s+)?(.+?)\s+to\s+(.+)$/i))) [, target, name] = m;         // "(change) the name of this account to …"
+  else if ((m = s.match(/^(its|(?:the\s+)?.+?'s)\s+name\s+(?:to|should be|is now|is)\s+(.+)$/i))) { [, target, name] = m; target = target.replace(/'s$/i, ''); }
+  else if ((m = s.match(/^(?:the\s+)?name\s+(?:should be|is now|to)\s+(.+)$/i))) { target = 'it'; name = m[1]; }
+  else if ((m = s.match(/^(.*?)\s*(?:should be called|is now called)\s+(.+)$/i))) { target = m[1] || 'it'; name = m[2]; }
+  else return null;
+  name = name.replace(/[.!?]+$/, '').replace(/^["“”'‘’]+|["“”'‘’]+$/g, '').trim()
+    .replace(/\b(?:number|pound|hashtag|hash)\s+(?=\d)/gi, '#')                  // said aloud: "number 1234" → #1234
+    .replace(/\s+(?:dash|hyphen)\s+/gi, '–');                                    // "Deejay dash Savings" → Deejay–Savings
+  target = target.trim().replace(/^(?:the|my|our)\s+(?=account$|card$)/i, 'the ');
+  return name ? { name, target, pronoun: UPD_PRONOUN.test(target) } : null;
+}
 /* What one stretch of words wants changed (without the account) */
 function updFields(seg) {
   const raw = seg, s = seg.toLowerCase().replace(/[’‘]/g, "'"), out = {};
   if (/^(archive|close)\b|\b(archive|close (out )?(the|my|our)|closed (the|my|our|it|that)|no longer have|don'?t have (it|that) anymore)\b/.test(s)) out.archived = true;
-  const rn = raw.match(/\b(?:rename|call)\b.*?\bto\b\s+(.+?)\s*$/i) || raw.match(/\b(?:call it|name it|should be called)\s+(.+?)\s*$/i);
-  if (rn) { out.name = rn[1].replace(/[.!?]+$/, '').replace(/^["“”'‘’]+|["“”'‘’]+$/g, '').trim(); return out; }
+  const rn = updRename(raw);
+  if (rn) { out.name = rn.name; return out; }
   const its = s.match(/^(?:it'?s|its|this is|this one is)\s+(?:for\s+)?([a-z]+)(?:'s)?(?:\s+(?:account|card|now))?[.!]?$/);
   if (its) { const p = ciFindPerson(its[1]); if (p) { out.owner = p.id; return out; } }
   const mk = s.match(/^make (?:the |my |our )?.+?\s+([a-z]+)'s$/);
@@ -7963,24 +7998,40 @@ function updFields(seg) {
 }
 /* A whole sentence: { changes: [...], pending: [{ seg, fields, options }] } or null when it isn't an update */
 function updParse(text, { force = false, ctxAcct = null } = {}) {
-  const raw = String(text || '').replace(/[’‘]/g, "'").trim();
+  const raw = String(text || '').replace(/[’‘]/g, "'").trim().replace(/^(?:(?:hey|hi|ok(?:ay)?|so|um+|uh+|alright|all right|oro|ọrọ̀)[,!.]?\s+)+/i, '');
   const verb = UPD_VERB.test(raw.toLowerCase());
   const body = raw.replace(UPD_STRIP, ' ');
   let segs;
-  if (/^\s*(rename|call)\b/i.test(body)) {
+  if (/^\s*(rename|call|name\s+(it|this|that)\b)/i.test(body)) {
     // "rename Sam's card to Food and Gas card" keeps its "and"; "… to Family SUV and the checking to Bills" is two renames
     segs = []; let rest = body;
     for (let guard = 0; rest && guard < 6; guard++) {
-      const m = rest.match(/^(.*?\bto\s+.+?)\s+and\s+(?:rename\s+)?((?:the |my |our )?[^,]+?\s+to\s+.+)$/i);
-      if (m && updFindAccounts(m[2].split(/\s+to\s+/i)[0]).some(x => x.s >= 1.2)) { segs.push(m[1]); rest = 'rename ' + m[2]; } else { segs.push(rest); rest = ''; }
+      // every " and " after the first "to" could start the next rename; take the latest one whose words name an account,
+      // so "to Food and Gas card and the checking to Bills" keeps "Food and Gas card" whole
+      const first = rest.search(/\bto\s+/i), cuts = [];
+      if (first >= 0) for (const m of rest.slice(first).matchAll(/\s+and\s+(?:rename\s+)?/gi)) cuts.push([first + m.index, first + m.index + m[0].length]);
+      let cut = null;
+      for (const [a, b] of cuts.reverse()) {
+        const next = rest.slice(b), target = next.split(/\s+to\s+/i);
+        if (target.length > 1 && /\S\s+to\s+\S/i.test(next) && updFindAccounts(target[0]).some(x => x.s >= 1.2)) { cut = [a, b]; break; }
+      }
+      if (cut) { segs.push(rest.slice(0, cut[0])); rest = 'rename ' + rest.slice(cut[1]); } else { segs.push(rest); rest = ''; }
     }
-  } else segs = body.split(/\s*(?:;|\band also\b|\band then\b|\band\b|,(?!\d{3}\b))\s*/i).map(x => x.trim()).filter(Boolean);
+  } else if (updRename(body)) segs = [body];   // "the name of this account to Food, Gas and Fun" stays one piece
+  else segs = body.split(/\s*(?:;|\band also\b|\band then\b|\band\b|,(?!\d{3}\b))\s*/i).map(x => x.trim()).filter(Boolean);
   const changes = [], pending = [];
-  let lastAcct = null;
+  let lastAcct = null, hint = '';
   for (const seg of segs) {
     const fields = updFields(seg);
     if (!Object.keys(fields).length) continue;
-    const who = seg.replace(/\b(?:rename|call)\b.*?\bto\b.*$/i, m => m.replace(/\bto\b.*$/i, ''));
+    const rn = updRename(seg);
+    if (rn?.pronoun) {   // "call it …", "name this account …": the account that's open (or the one just mentioned)
+      const a = ctxAcct || lastAcct;
+      if (a) { lastAcct = a; changes.push(...updChanges(a, { name: rn.name })); }
+      else hint = `Which account should be called “${rn.name}”? Open it first, or say “rename Chase savings to ${rn.name}”.`;
+      continue;
+    }
+    const who = rn ? rn.target : seg;
     // "it's for Sam", "the balance is 12,400": about the account that's open, whatever other names it mentions
     if (ctxAcct && /^\s*(it'?s?|its|this( one| account| card)?|the (balance|rate|value|payment|owner|name)|balance|rate)\b/i.test(seg)) { lastAcct = ctxAcct; changes.push(...updChanges(ctxAcct, fields)); continue; }
     let found = updFindAccounts(who);
@@ -8000,7 +8051,7 @@ function updParse(text, { force = false, ctxAcct = null } = {}) {
     else if (!found.length && lastAcct && ((verb || force) && Object.keys(fields).some(k => k !== 'balance') || /^(its?\b|it'?s\b|the (balance|rate|value|payment)\b|balance\b|rate\b|value\b)/i.test(seg))) changes.push(...updChanges(lastAcct, fields));   // "…and its rate is 6.1", "…and the balance is 9,000"
     else if (!found.length && ctxAcct) { lastAcct = ctxAcct; changes.push(...updChanges(ctxAcct, fields)); }   // the account that's open: "the balance is 12,400"
   }
-  return changes.length || pending.length ? { changes, pending } : null;
+  return changes.length || pending.length ? { changes, pending } : hint ? { changes, pending, hint } : null;
 }
 function updChanges(a, f) {
   const out = [];
@@ -8034,7 +8085,10 @@ function updSay(c) {
 }
 
 /* ---------- the conversation ---------- */
-function updStart(p) { CI.draft = { step: 'update', changes: p.changes, pending: p.pending }; CI.choose = null; CI.heard = ''; return updPrompt(); }
+function updStart(p) {
+  if (p.hint && !p.changes.length && !p.pending.length) { CI.heard = p.hint; return p.hint; }   // nothing to change yet: say what's missing
+  CI.draft = { step: 'update', changes: p.changes, pending: p.pending }; CI.choose = null; CI.heard = ''; return updPrompt();
+}
 function updPrompt() {
   const d = CI.draft; if (!d) return '';
   if (d.pending.length) { const p = d.pending[0]; const names = p.options.map(id => acctById(id)?.name); return `Which account did you mean${p.fields.balance != null ? ` for ${money(p.fields.balance, { cents: false })}` : ''}: ${names.length > 1 ? names.slice(0, -1).join(', ') + ' or ' + names[names.length - 1] : names[0]}?`; }
@@ -8221,6 +8275,7 @@ function talkClauses(text) {
   return text.split(/\s*(?:;\s*|\.\s+(?=\S)|(?:,\s*(?:and|also|then)?|\s+(?:and|also|then))\s+(?!(?:the|this|that)\s+(?:rest|remainder|other half)\b)(?=(?:the|this|that|these|those|my|our)\s+[^,]*?\s+(?:is|are|was|were|should|goes|go|belongs?|needs?)\b))/i).map(x => x.trim().replace(/[.]+$/, '')).filter(Boolean);
 }
 function talkUnderstand(text, { split = true } = {}) {
+  text = String(text).replace(/^\s*(?:(?:hey|hi|ok(?:ay)?|so|um+|uh+|alright|all right|oro|ọrọ̀)[,!.]?\s+)+(?=\S)/i, '');   // "hey, …", "okay so …"
   const low = text.trim().toLowerCase().replace(/[’‘]/g, "'").replace(/[.!?]+$/, '');
   if (/^(cancel|never ?mind|stop|close)$/.test(low) && !CI.draft) { closeTalk(); return ''; }
   if (/^undo( that)?$/.test(low)) { if (CI.draft) { CI.draft = null; TALK.queue = []; CI.heard = 'OK, nothing was changed.'; return CI.heard; } return talkUndo(); }
@@ -8235,6 +8290,7 @@ function talkUnderstand(text, { split = true } = {}) {
   // "it's for Sam", "the balance is 12,400" with an account open (or "this card" with a transaction open) are about that account
   if (!TX_INTENT.test(low)) { const cp = coinParse(text); if (cp) return updStart(cp); }   // "bitcoin is 62,000"
   const ctxAcct = ctx.a || (ctx.t && /\bthis (card|account)\b/.test(low) ? acctById(ctx.t.accountId) : null);
+  if (ctxAcct && updRename(text)?.pronoun) { const u = updParse(text, { ctxAcct }); if (u) return updStart(u); }   // "name this account …" with it open
   if (ctxAcct && /^\s*(it'?s?|its|this( one| account| card)?|the (balance|rate|value|payment|owner|name) (on|of|for) (it|this)|the (balance|rate|value|payment|owner|name))\b/.test(low)) { const u = updParse(text, { ctxAcct }); if (u) return updStart(u); }
   // a sentence that names an account and says what to change is about the account, even with a transaction open
   const up0 = updParse(text);

@@ -138,7 +138,7 @@ function renderBatchStep(box) {
       const srcs = Object.keys(it.srcMap);
       return `<section class="batch-item ${it.include ? '' : 'off'}">${head}<span class="muted small">Holdings · ${P.length} position${P.length === 1 ? '' : 's'} · ${money(total, { cents: false })}</span></header>
         ${srcs.map((src, j) => `<div class="batch-row"><label class="field"><span>${esc(src || 'Into')}</span><select data-bsrc="${k}|${j}">${invAccountOptions(it.srcMap[src])}</select></label>
-          ${it.srcMap[src] === '__new' ? `<label class="field"><span>New account name</span><input data-bsrcname="${k}|${j}" value="${esc(it.srcNames?.[src] ?? (src || 'Brokerage'))}"></label>` : ''}</div>`).join('')}
+          ${it.srcMap[src] === '__new' ? `<label class="field"><span>New account name</span><input data-bsrcname="${k}|${j}" value="${esc(it.srcNames?.[src] ?? (src || 'Brokerage'))}"></label>${members().length > 1 ? `<label class="field"><span>Owner</span><select data-bsrcowner="${k}|${j}">${memberOptions(it.srcOwners?.[src] || defaultOwner())}</select></label>` : ''}` : ''}</div>`).join('')}
         <p class="muted small">Replaces the current holdings in ${srcs.length === 1 ? 'that account' : 'those accounts'} with this snapshot.</p></section>`;
     }
     const c = batchCounts(it), rows = it.txRows || [], dates = rows.map(r => r.date).sort();
@@ -173,12 +173,13 @@ function renderBatchStep(box) {
       if (it.autoFlipped) { it.rawList = it.rawList.map(r => ({ ...r, amount: -r.amount })); it.flipped = !it.flipped; it.autoFlipped = false; }
       rebuildItem(it); autoFlipForCard(it); return renderImport();
     }
-    const nm = /^b(\d+)-new-(name|type|inst)$/.exec(el.id || '');
+    const nm = /^b(\d+)-new-(name|type|inst|owner)$/.exec(el.id || '');
     if (nm) { const it = items[+nm[1]]; it.newDefaults = { ...(it.newDefaults || {}), [nm[2]]: el.value }; if (nm[2] === 'type') { rebuildItem(it); renderImport(); } return; }
     if (d.bmaybe != null) { const it = items[+d.bmaybe]; it.txRows.forEach(r => { if (r.status === 'maybe') r.include = el.checked; }); return renderImport(); }
     if (d.bbal != null) { items[+d.bbal].setBal = el.checked; return; }
     if (d.bsrc != null) { const [k, j] = at(d.bsrc), it = items[k]; it.srcMap[Object.keys(it.srcMap)[j]] = el.value; return renderImport(); }
     if (d.bsrcname != null) { const [k, j] = at(d.bsrcname), it = items[k]; (it.srcNames = it.srcNames || {})[Object.keys(it.srcMap)[j]] = el.value; return; }
+    if (d.bsrcowner != null) { const [k, j] = at(d.bsrcowner), it = items[k]; (it.srcOwners = it.srcOwners || {})[Object.keys(it.srcMap)[j]] = el.value; return; }
   };
   const parts = [];
   if (nTx) parts.push(`${nTx.toLocaleString()} transaction${nTx === 1 ? '' : 's'}`);

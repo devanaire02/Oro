@@ -21,8 +21,13 @@ function newAccountFields(prefix, def = {}) {
   return `<div class="inline-new">
     <label class="field"><span>Account name</span><input id="${prefix}-name" value="${esc(def.name || '')}" placeholder="e.g. Checking"></label>
     <label class="field"><span>Type</span><select id="${prefix}-type">${types.map(t => `<option value="${t}" ${t === def.type ? 'selected' : ''}>${ACCOUNT_TYPES[t].label}</option>`).join('')}</select></label>
+    ${ownerField(`${prefix}-owner`, def.owner)}
     <label class="field"><span>Institution</span><input id="${prefix}-inst" value="${esc(def.inst || '')}" placeholder="Optional"></label>
   </div>`;
+}
+/* Whose a new account is, chosen right in the import (only when there's more than one person) */
+function ownerField(id, sel, attrs = '') {
+  return members().length > 1 ? `<label class="field"><span>Owner</span><select id="${id}" ${attrs} aria-label="Owner">${memberOptions(sel || defaultOwner())}</select></label>` : '';
 }
 const guessTypeFromName = n => /card|visa|amex|american express|mastercard|discover|sapphire|freedom/i.test(n) ? 'credit' : /saving|reserve|money market|hysa/i.test(n) ? 'savings' : /loan|mortgage/i.test(n) ? 'loan' : 'checking';
 
@@ -232,7 +237,7 @@ function colSelect(id, val, allowNone) {
 function acctMapBlock() {
   const srcs = Object.keys(IMP.acctMap || {});
   const skipped = srcs.filter(s => IMP.acctMap[s] === '__skip').length;
-  return `<div class="map-list"><p class="muted small">This file has ${srcs.length} account${srcs.length === 1 ? '' : 's'}. Match each one, let Ọrọ̀ create it, or leave it out.${skipped ? ' Investment accounts are left out to start with: their value comes from holdings (a Positions download), and buys, sells and dividends aren’t spending.' : ''}</p>${srcs.map((src, k) => `<div class="map-row"><span class="map-src">${esc(src || '(no account name)')}</span><select data-amap="${k}">${txnAccountOptions(IMP.acctMap[src], `New account “${src || 'Imported'}”`)}<option value="__skip" ${IMP.acctMap[src] === '__skip' ? 'selected' : ''}>Don’t import this account</option></select></div>`).join('')}</div>`;
+  return `<div class="map-list"><p class="muted small">This file has ${srcs.length} account${srcs.length === 1 ? '' : 's'}. Match each one, let Ọrọ̀ create it, or leave it out.${skipped ? ' Investment accounts are left out to start with: their value comes from holdings (a Positions download), and buys, sells and dividends aren’t spending.' : ''}</p>${srcs.map((src, k) => `<div class="map-row"><span class="map-src">${esc(src || '(no account name)')}</span><select data-amap="${k}">${txnAccountOptions(IMP.acctMap[src], `New account “${src || 'Imported'}”`)}<option value="__skip" ${IMP.acctMap[src] === '__skip' ? 'selected' : ''}>Don’t import this account</option></select>${members().length > 1 ? `<select class="map-owner" data-aowner="${k}" aria-label="Owner of the new account" ${IMP.acctMap[src] === '__new' ? '' : 'hidden'}>${memberOptions(IMP.acctOwners?.[src] || defaultOwner())}</select>` : ''}</div>`).join('')}</div>`;
 }
 function renderMapStep(box) {
   const m = IMP.map;
@@ -271,14 +276,15 @@ function renderMapStep(box) {
   };
   box.onchange = e => {
     const el = e.target;
-    if (el.dataset.amap != null) { IMP.acctMap[Object.keys(IMP.acctMap)[+el.dataset.amap]] = el.value; return; }
+    if (el.dataset.amap != null) { IMP.acctMap[Object.keys(IMP.acctMap)[+el.dataset.amap]] = el.value; const o = el.closest('.map-row')?.querySelector('[data-aowner]'); if (o) o.hidden = el.value !== '__new'; return; }
+    if (el.dataset.aowner != null) { (IMP.acctOwners ||= {})[Object.keys(IMP.acctMap)[+el.dataset.aowner]] = el.value; return; }
     if (el.closest('.inline-new')) return;
     upd();
   };
   setModalActions(`<button class="btn ghost" data-imp="back">Back</button><button class="btn primary" data-imp="to-review">Continue</button>`);
 }
 function stashNewAcct() {
-  if ($('#imp-new-name')) IMP.newDefaults = { name: $('#imp-new-name').value, type: $('#imp-new-type').value, inst: $('#imp-new-inst').value };
+  if ($('#imp-new-name')) IMP.newDefaults = { name: $('#imp-new-name').value, type: $('#imp-new-type').value, inst: $('#imp-new-inst').value, owner: $('#imp-new-owner')?.value || defaultOwner() };
 }
 
 function renderReviewStep(box) {
@@ -317,6 +323,7 @@ function renderReviewStep(box) {
   box.onchange = e => {
     const t = e.target;
     if (t.dataset.amap != null) { IMP.acctMap[Object.keys(IMP.acctMap)[+t.dataset.amap]] = t.value; return rebuild(); }
+    if (t.dataset.aowner != null) { (IMP.acctOwners ||= {})[Object.keys(IMP.acctMap)[+t.dataset.aowner]] = t.value; return; }
     if (t.dataset.row != null) { rows[+t.dataset.row].include = t.checked; t.closest('tr').classList.toggle('off', !t.checked); updateImportCount(); }
     if (t.dataset.cat != null) { rows[+t.dataset.cat].categoryId = t.value; rows[+t.dataset.cat].guess = ''; }
     if (t.id === 'imp-bal') IMP.setBal = t.checked;
@@ -340,7 +347,7 @@ function renderPositionsStep(box) {
       <div class="map-row">
         <span class="map-src">${esc(src || IMP.fileName)}</span>
         <select data-src="${k}">${invAccountOptions(IMP.srcMap[src])}</select>
-        ${IMP.srcMap[src] === '__new' ? `<input data-srcname="${k}" value="${esc(IMP.srcNames?.[src] ?? (src || 'Brokerage'))}" placeholder="Account name"><select data-srctype="${k}">${['brokerage', 'retirement', 'education', 'hsa', 'crypto'].map(t => `<option value="${t}" ${(IMP.srcTypes?.[src] || guessInvType(src)) === t ? 'selected' : ''}>${ACCOUNT_TYPES[t].label}</option>`).join('')}</select>` : ''}
+        ${IMP.srcMap[src] === '__new' ? `<input data-srcname="${k}" value="${esc(IMP.srcNames?.[src] ?? (src || 'Brokerage'))}" placeholder="Account name"><select data-srctype="${k}">${['brokerage', 'retirement', 'education', 'hsa', 'crypto'].map(t => `<option value="${t}" ${(IMP.srcTypes?.[src] || guessInvType(src)) === t ? 'selected' : ''}>${ACCOUNT_TYPES[t].label}</option>`).join('')}</select>${members().length > 1 ? `<select data-srcowner="${k}" aria-label="Owner of the new account">${memberOptions(IMP.srcOwners?.[src] || defaultOwner())}</select>` : ''}` : ''}
       </div>`).join('')}</div>
     <label class="check"><input type="checkbox" id="imp-replace" ${IMP.replace !== false ? 'checked' : ''}> Replace the current holdings in these accounts (recommended: positions files are a full snapshot)</label>
     <div class="scroll-table"><table class="ledger compact" id="pos-table"><thead><tr><th class="cb"></th><th>Symbol</th><th>Name</th><th>Class</th><th class="num">Shares</th><th class="num">Price</th><th class="num">Value</th><th class="num">Cost basis</th></tr></thead><tbody>
@@ -354,6 +361,7 @@ function renderPositionsStep(box) {
     if (t.dataset.src != null) { IMP.srcMap[srcs[+t.dataset.src]] = t.value; renderImport(); }
     if (t.dataset.srcname != null) (IMP.srcNames = IMP.srcNames || {})[srcs[+t.dataset.srcname]] = t.value;
     if (t.dataset.srctype != null) (IMP.srcTypes = IMP.srcTypes || {})[srcs[+t.dataset.srctype]] = t.value;
+    if (t.dataset.srcowner != null) (IMP.srcOwners = IMP.srcOwners || {})[srcs[+t.dataset.srcowner]] = t.value;
     if (t.dataset.row != null) { P[+t.dataset.row].include = t.checked; t.closest('tr').classList.toggle('off', !t.checked); }
     if (t.dataset.cls != null) P[+t.dataset.cls].assetClass = t.value;
     if (t.id === 'imp-replace') IMP.replace = t.checked;
@@ -382,9 +390,9 @@ function importAction(act) {
   if (act === 'commit-pos') return commitPositions();
   if (act.startsWith('b')) return batchAction(act);
 }
-function makeAccount(name, type, inst) {
+function makeAccount(name, type, inst, owner) {
   const T = ACCOUNT_TYPES[type] || ACCOUNT_TYPES.checking;
-  const a = { id: uid(), name, type, institution: inst || '', balance: 0, balanceDate: today(), owner: UI.lens || 'joint', forecast: !!T.forecast };
+  const a = { id: uid(), name, type, institution: inst || '', balance: 0, balanceDate: today(), owner: owner || defaultOwner(), forecast: !!T.forecast };
   if (T.ledger) { a.ledger = true; a.anchorBalance = 0; a.anchorDate = '0000-00-00'; }
   state.accounts.push(a);
   return a;
@@ -409,12 +417,12 @@ function applyTxItem(it) {
   if (it.multi) {
     for (const [src, v] of Object.entries(it.acctMap)) {
       if (v === '__skip') continue;
-      if (v === '__new') { const a = makeAccount(src || 'Imported account', guessTypeFromName(src)); a.importName = src; dest[src] = a; fresh.push(a); }
+      if (v === '__new') { const a = makeAccount(src || 'Imported account', guessTypeFromName(src), '', it.acctOwners?.[src]); a.importName = src; dest[src] = a; fresh.push(a); }
       else { dest[src] = acctById(v); dest[src].importName = dest[src].importName || src; }
     }
   } else {
     let acct = acctById(it.accountId);
-    if (it.accountId === '__new') { const d = it.newDefaults || {}; acct = makeAccount(d.name.trim(), d.type || 'checking', d.inst); fresh.push(acct); }
+    if (it.accountId === '__new') { const d = it.newDefaults || {}; acct = makeAccount(d.name.trim(), d.type || 'checking', d.inst, d.owner); fresh.push(acct); }
     dest[''] = acct;
   }
   // categories from other apps' exports
@@ -475,7 +483,7 @@ function applyPositionsItem(it) {
   const targets = {};
   for (const [src, val] of Object.entries(it.srcMap)) {
     if (val === '__new') {
-      const a = { id: uid(), name: (it.srcNames?.[src] ?? (src || 'Brokerage')).trim() || 'Brokerage', type: it.srcTypes?.[src] || guessInvType(src), institution: '', balance: 0, balanceDate: today(), importName: src, owner: UI.lens || 'joint' };
+      const a = { id: uid(), name: (it.srcNames?.[src] ?? (src || 'Brokerage')).trim() || 'Brokerage', type: it.srcTypes?.[src] || guessInvType(src), institution: '', balance: 0, balanceDate: today(), importName: src, owner: it.srcOwners?.[src] || defaultOwner() };
       if (it.ofx?.last4) a.last4 = it.ofx.last4;
       state.accounts.push(a); targets[src] = a.id;
     } else { targets[src] = val; const a = acctById(val); if (a && src) a.importName = src; }

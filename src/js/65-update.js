@@ -3,7 +3,7 @@
    "rename the Amex to Blue Cash", "change the owner of the brokerage to Julissa", "the mortgage rate is 6.125 percent",
    "Sam's card ends in 1234", "archive the SUV". Ọrọ̀ finds the account by its name (and type, owner, last 4), shows each
    change as old → new, asks which one when two accounts could match, and saves only after "yes". */
-const UPD_VERB = /^(?:(?:can you|could you|please|let'?s|i want to|i need to)\s+)*(update|set|change|make|rename|archive|close|mark|correct|fix)\b/;
+const UPD_VERB = /^(?:(?:can you|could you|please|let'?s|i want to|i need to)\s+)*(update|set|change|make|rename|name|call|archive|close|mark|correct|fix)\b/;
 const UPD_STRIP = /^(?:(?:can you|could you|please|let'?s|i want to|i need to)\s+)*(update|set|change|correct|fix)\b/;
 const UPD_FIELDS = { balance: 'Balance', value: 'Value', owner: 'Owner', name: 'Name', last4: 'Last 4', rate: 'Interest rate', minPayment: 'Monthly payment', rental: 'Rental', archived: 'Archive', coinPrice: 'Price' };
 /* what a change is about: an account, or a coin's price (27-crypto.js) */
@@ -31,12 +31,36 @@ function updByType(seg) {
   const same = activeAccounts().filter(a => a.type === type);
   return same.length && same.length <= 4 ? same.map(a => ({ a, s: same.length === 1 ? 1.6 : 1.5 })) : [];
 }
+/* A new name, and which account it's for, kept apart so the words of the new name never pick the account
+   ("call it Fidelity #1234–Deejay–Savings" is about the open account, not the savings account).
+   "rename the Amex to Blue Cash", "rename it Blue Cash", "name this account …", "call it …", "change the name of this
+   account to …", "change its name to …", "its name should be …", "the Amex should be called …". */
+const UPD_PRONOUN = /^(?:it|its|this|that|this (?:account|card|one)|that (?:account|card|one)|the (?:account|card)|this account's|its own)$/i;
+function updRename(seg) {
+  const s = String(seg).replace(/[’‘]/g, "'").trim().replace(/^(?:(?:can you|could you|please|let'?s|i want to|i need to|update|change|set)\s+)+/i, '');
+  const pr = '(it|this(?:\\s+(?:account|card|one))?|that(?:\\s+(?:account|card|one))?)';
+  let m, target, name;
+  if ((m = s.match(new RegExp(`^(?:re)?name\\s+${pr}\\s+(?:to\\s+|as\\s+)?(.+)$`, 'i')))) [, target, name] = m;   // "name this account Fidelity …", "rename it Blue Cash"
+  else if ((m = s.match(new RegExp(`^call\\s+${pr}\\s+(?:to\\s+)?(.+)$`, 'i')))) [, target, name] = m;
+  else if ((m = s.match(/^rename\s+(.+?)\s+(?:to|as)\s+(.+)$/i))) [, target, name] = m;                     // "rename the Amex to Blue Cash"
+  else if ((m = s.match(/^call\s+(.+?)\s+to\s+(.+)$/i))) [, target, name] = m;
+  else if ((m = s.match(/^(?:the\s+)?name\s+(?:of\s+)?(.+?)\s+to\s+(.+)$/i))) [, target, name] = m;         // "(change) the name of this account to …"
+  else if ((m = s.match(/^(its|(?:the\s+)?.+?'s)\s+name\s+(?:to|should be|is now|is)\s+(.+)$/i))) { [, target, name] = m; target = target.replace(/'s$/i, ''); }
+  else if ((m = s.match(/^(?:the\s+)?name\s+(?:should be|is now|to)\s+(.+)$/i))) { target = 'it'; name = m[1]; }
+  else if ((m = s.match(/^(.*?)\s*(?:should be called|is now called)\s+(.+)$/i))) { target = m[1] || 'it'; name = m[2]; }
+  else return null;
+  name = name.replace(/[.!?]+$/, '').replace(/^["“”'‘’]+|["“”'‘’]+$/g, '').trim()
+    .replace(/\b(?:number|pound|hashtag|hash)\s+(?=\d)/gi, '#')                  // said aloud: "number 1234" → #1234
+    .replace(/\s+(?:dash|hyphen)\s+/gi, '–');                                    // "Deejay dash Savings" → Deejay–Savings
+  target = target.trim().replace(/^(?:the|my|our)\s+(?=account$|card$)/i, 'the ');
+  return name ? { name, target, pronoun: UPD_PRONOUN.test(target) } : null;
+}
 /* What one stretch of words wants changed (without the account) */
 function updFields(seg) {
   const raw = seg, s = seg.toLowerCase().replace(/[’‘]/g, "'"), out = {};
   if (/^(archive|close)\b|\b(archive|close (out )?(the|my|our)|closed (the|my|our|it|that)|no longer have|don'?t have (it|that) anymore)\b/.test(s)) out.archived = true;
-  const rn = raw.match(/\b(?:rename|call)\b.*?\bto\b\s+(.+?)\s*$/i) || raw.match(/\b(?:call it|name it|should be called)\s+(.+?)\s*$/i);
-  if (rn) { out.name = rn[1].replace(/[.!?]+$/, '').replace(/^["“”'‘’]+|["“”'‘’]+$/g, '').trim(); return out; }
+  const rn = updRename(raw);
+  if (rn) { out.name = rn.name; return out; }
   const its = s.match(/^(?:it'?s|its|this is|this one is)\s+(?:for\s+)?([a-z]+)(?:'s)?(?:\s+(?:account|card|now))?[.!]?$/);
   if (its) { const p = ciFindPerson(its[1]); if (p) { out.owner = p.id; return out; } }
   const mk = s.match(/^make (?:the |my |our )?.+?\s+([a-z]+)'s$/);
@@ -66,24 +90,40 @@ function updFields(seg) {
 }
 /* A whole sentence: { changes: [...], pending: [{ seg, fields, options }] } or null when it isn't an update */
 function updParse(text, { force = false, ctxAcct = null } = {}) {
-  const raw = String(text || '').replace(/[’‘]/g, "'").trim();
+  const raw = String(text || '').replace(/[’‘]/g, "'").trim().replace(/^(?:(?:hey|hi|ok(?:ay)?|so|um+|uh+|alright|all right|oro|ọrọ̀)[,!.]?\s+)+/i, '');
   const verb = UPD_VERB.test(raw.toLowerCase());
   const body = raw.replace(UPD_STRIP, ' ');
   let segs;
-  if (/^\s*(rename|call)\b/i.test(body)) {
+  if (/^\s*(rename|call|name\s+(it|this|that)\b)/i.test(body)) {
     // "rename Sam's card to Food and Gas card" keeps its "and"; "… to Family SUV and the checking to Bills" is two renames
     segs = []; let rest = body;
     for (let guard = 0; rest && guard < 6; guard++) {
-      const m = rest.match(/^(.*?\bto\s+.+?)\s+and\s+(?:rename\s+)?((?:the |my |our )?[^,]+?\s+to\s+.+)$/i);
-      if (m && updFindAccounts(m[2].split(/\s+to\s+/i)[0]).some(x => x.s >= 1.2)) { segs.push(m[1]); rest = 'rename ' + m[2]; } else { segs.push(rest); rest = ''; }
+      // every " and " after the first "to" could start the next rename; take the latest one whose words name an account,
+      // so "to Food and Gas card and the checking to Bills" keeps "Food and Gas card" whole
+      const first = rest.search(/\bto\s+/i), cuts = [];
+      if (first >= 0) for (const m of rest.slice(first).matchAll(/\s+and\s+(?:rename\s+)?/gi)) cuts.push([first + m.index, first + m.index + m[0].length]);
+      let cut = null;
+      for (const [a, b] of cuts.reverse()) {
+        const next = rest.slice(b), target = next.split(/\s+to\s+/i);
+        if (target.length > 1 && /\S\s+to\s+\S/i.test(next) && updFindAccounts(target[0]).some(x => x.s >= 1.2)) { cut = [a, b]; break; }
+      }
+      if (cut) { segs.push(rest.slice(0, cut[0])); rest = 'rename ' + rest.slice(cut[1]); } else { segs.push(rest); rest = ''; }
     }
-  } else segs = body.split(/\s*(?:;|\band also\b|\band then\b|\band\b|,(?!\d{3}\b))\s*/i).map(x => x.trim()).filter(Boolean);
+  } else if (updRename(body)) segs = [body];   // "the name of this account to Food, Gas and Fun" stays one piece
+  else segs = body.split(/\s*(?:;|\band also\b|\band then\b|\band\b|,(?!\d{3}\b))\s*/i).map(x => x.trim()).filter(Boolean);
   const changes = [], pending = [];
-  let lastAcct = null;
+  let lastAcct = null, hint = '';
   for (const seg of segs) {
     const fields = updFields(seg);
     if (!Object.keys(fields).length) continue;
-    const who = seg.replace(/\b(?:rename|call)\b.*?\bto\b.*$/i, m => m.replace(/\bto\b.*$/i, ''));
+    const rn = updRename(seg);
+    if (rn?.pronoun) {   // "call it …", "name this account …": the account that's open (or the one just mentioned)
+      const a = ctxAcct || lastAcct;
+      if (a) { lastAcct = a; changes.push(...updChanges(a, { name: rn.name })); }
+      else hint = `Which account should be called “${rn.name}”? Open it first, or say “rename Chase savings to ${rn.name}”.`;
+      continue;
+    }
+    const who = rn ? rn.target : seg;
     // "it's for Sam", "the balance is 12,400": about the account that's open, whatever other names it mentions
     if (ctxAcct && /^\s*(it'?s?|its|this( one| account| card)?|the (balance|rate|value|payment|owner|name)|balance|rate)\b/i.test(seg)) { lastAcct = ctxAcct; changes.push(...updChanges(ctxAcct, fields)); continue; }
     let found = updFindAccounts(who);
@@ -103,7 +143,7 @@ function updParse(text, { force = false, ctxAcct = null } = {}) {
     else if (!found.length && lastAcct && ((verb || force) && Object.keys(fields).some(k => k !== 'balance') || /^(its?\b|it'?s\b|the (balance|rate|value|payment)\b|balance\b|rate\b|value\b)/i.test(seg))) changes.push(...updChanges(lastAcct, fields));   // "…and its rate is 6.1", "…and the balance is 9,000"
     else if (!found.length && ctxAcct) { lastAcct = ctxAcct; changes.push(...updChanges(ctxAcct, fields)); }   // the account that's open: "the balance is 12,400"
   }
-  return changes.length || pending.length ? { changes, pending } : null;
+  return changes.length || pending.length ? { changes, pending } : hint ? { changes, pending, hint } : null;
 }
 function updChanges(a, f) {
   const out = [];
@@ -137,7 +177,10 @@ function updSay(c) {
 }
 
 /* ---------- the conversation ---------- */
-function updStart(p) { CI.draft = { step: 'update', changes: p.changes, pending: p.pending }; CI.choose = null; CI.heard = ''; return updPrompt(); }
+function updStart(p) {
+  if (p.hint && !p.changes.length && !p.pending.length) { CI.heard = p.hint; return p.hint; }   // nothing to change yet: say what's missing
+  CI.draft = { step: 'update', changes: p.changes, pending: p.pending }; CI.choose = null; CI.heard = ''; return updPrompt();
+}
 function updPrompt() {
   const d = CI.draft; if (!d) return '';
   if (d.pending.length) { const p = d.pending[0]; const names = p.options.map(id => acctById(id)?.name); return `Which account did you mean${p.fields.balance != null ? ` for ${money(p.fields.balance, { cents: false })}` : ''}: ${names.length > 1 ? names.slice(0, -1).join(', ') + ' or ' + names[names.length - 1] : names[0]}?`; }

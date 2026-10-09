@@ -98,6 +98,7 @@ function talkClauses(text) {
   return text.split(/\s*(?:;\s*|\.\s+(?=\S)|(?:,\s*(?:and|also|then)?|\s+(?:and|also|then))\s+(?!(?:the|this|that)\s+(?:rest|remainder|other half)\b)(?=(?:the|this|that|these|those|my|our)\s+[^,]*?\s+(?:is|are|was|were|should|goes|go|belongs?|needs?)\b))/i).map(x => x.trim().replace(/[.]+$/, '')).filter(Boolean);
 }
 function talkUnderstand(text, { split = true } = {}) {
+  text = String(text).replace(/^\s*(?:(?:hey|hi|ok(?:ay)?|so|um+|uh+|alright|all right|oro|ọrọ̀)[,!.]?\s+)+(?=\S)/i, '');   // "hey, …", "okay so …"
   const low = text.trim().toLowerCase().replace(/[’‘]/g, "'").replace(/[.!?]+$/, '');
   if (/^(cancel|never ?mind|stop|close)$/.test(low) && !CI.draft) { closeTalk(); return ''; }
   if (/^undo( that)?$/.test(low)) { if (CI.draft) { CI.draft = null; TALK.queue = []; CI.heard = 'OK, nothing was changed.'; return CI.heard; } return talkUndo(); }
@@ -112,6 +113,7 @@ function talkUnderstand(text, { split = true } = {}) {
   // "it's for Sam", "the balance is 12,400" with an account open (or "this card" with a transaction open) are about that account
   if (!TX_INTENT.test(low)) { const cp = coinParse(text); if (cp) return updStart(cp); }   // "bitcoin is 62,000"
   const ctxAcct = ctx.a || (ctx.t && /\bthis (card|account)\b/.test(low) ? acctById(ctx.t.accountId) : null);
+  if (ctxAcct && updRename(text)?.pronoun) { const u = updParse(text, { ctxAcct }); if (u) return updStart(u); }   // "name this account …" with it open
   if (ctxAcct && /^\s*(it'?s?|its|this( one| account| card)?|the (balance|rate|value|payment|owner|name) (on|of|for) (it|this)|the (balance|rate|value|payment|owner|name))\b/.test(low)) { const u = updParse(text, { ctxAcct }); if (u) return updStart(u); }
   // a sentence that names an account and says what to change is about the account, even with a transaction open
   const up0 = updParse(text);

@@ -40,6 +40,8 @@ const members = () => state.settings.members || [{ id: 'joint', name: 'Joint' }]
 const memberName = id => members().find(m => m.id === id)?.name || 'Joint';
 const memberColor = id => { const i = members().findIndex(m => m.id === id); return `var(--c${((i < 0 ? 0 : i) % 8) + 1})`; };
 function personOf(t) { return t.person || acctById(t.accountId)?.owner || 'joint'; }
+/* A new account's owner: the person the menu is showing, otherwise joint */
+function defaultOwner() { return UI.lens && members().some(m => m.id === UI.lens) ? UI.lens : 'joint'; }
 function lensed(txs) { return UI.lens ? txs.filter(t => personOf(t) === UI.lens) : txs; }
 function memberOptions(sel, inherit) {
   return (inherit ? `<option value="">${esc(inherit)}</option>` : '') + members().map(m => `<option value="${m.id}" ${m.id === sel ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
