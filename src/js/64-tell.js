@@ -175,6 +175,7 @@ function tellStart(text, kind) {
 /* What Ọrọ̀ says next: the next question, or that it's ready */
 function tellPrompt() {
   const d = CI.draft; if (!d) return '';
+  if (d.step === 'tx') return txPrompt();   // Claude's suggestion for a Check-in card (67-claude.js)
   if (d.step === 'after') return tellAfterText(d);
   if (d.step === 'update') return updPrompt();
   const q = tellQuestions(d)[0];
@@ -187,6 +188,7 @@ const TELL_NO = /^(no|nope|nah|there isn'?t|it isn'?t|not really|none|we don'?t|
 const TELL_SKIP = /^(skip|pass|not sure|don'?t know|i don'?t know|no idea|later|leave it( blank)?|none|no)$/;
 function tellAnswer(raw) {
   const d = CI.draft; if (!d) return '';
+  if (d.step === 'tx') return ciTxStep(() => txAnswer(raw));
   if (d.step === 'update') return updAnswer(raw);
   const s = String(raw).toLowerCase().replace(/[’‘]/g, "'").replace(/[.!?]+$/, '').trim();
   if (/^(cancel|never ?mind|stop|forget it|don'?t add it|scratch that)$/.test(s)) { CI.draft = null; CI.heard = 'OK, nothing was added.'; return CI.heard; }
@@ -329,6 +331,7 @@ function tellAfter(what) {
 /* ---------- the card ---------- */
 function tellCardHtml() {
   const d = CI.draft; if (!d) return '';
+  if (d.step === 'tx') return txCardHtml();
   if (d.step === 'update') return updCardHtml();
   if (d.step === 'after') {
     const a = acctById(d.added); if (!a) return '';

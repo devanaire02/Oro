@@ -79,5 +79,6 @@ Use **Money date** (top right) for a slide-by-slide walkthrough of any month, ma
 - `inbox/` is where your iPhone's changes arrive. Processed ones move to `inbox/merged/`.
 - If this folder syncs through iCloud Drive, Apple stores a copy, so turn on the passphrase.
 - Taxes and planning pages are organizers and projections, not tax or investment advice.
+- **Claude help (optional, off by default):** Settings › Claude help lets Ọrọ̀ ask Claude, Anthropic's AI, when it doesn't understand something you said or you ask a question about your spending, using your own API key from the Claude Console. It's the only connection Ọrọ̀ can make (to Anthropic's API, nothing else), and only while it's on. The key is kept on each device, locked with your passphrase; what's sent leaves out account names and numbers, balances and notes, and every change Claude suggests waits for your yes.
 - **Look:** Ọrọ̀ opens in forest, ivory and brass. To switch to the original blue ledger, or to force light or dark, use **Settings › Appearance and privacy**. Each device keeps its own choice.
 - Ọrọ̀ is set in Charis SIL (© SIL International) and Instrument Sans (© The Instrument Sans Project Authors), both used under the SIL Open Font License 1.1 and built into the app, so nothing is downloaded.

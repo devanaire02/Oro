@@ -74,7 +74,7 @@ if web.exists(): shutil.rmtree(web)
 for png in (root / "assets" / "web-icons").glob("*.png"): shutil.copy(png, web / "icons" / png.name)
 csp_mac = html.split('content="default-src', 1)[1].split('"', 1)[0]
 csp_web = ("'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
-           "font-src data:; connect-src 'none'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'")
+           "font-src data:; connect-src https://api.anthropic.com; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'")
 head = (f'<meta name="robots" content="noindex, nofollow">\n'
         f'<link rel="manifest" href="manifest.webmanifest">\n'
         f'<link rel="apple-touch-icon" href="icons/icon-180.png">\n'

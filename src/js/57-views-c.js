@@ -293,7 +293,7 @@ VIEWS.data = () => {
   }
   return pageHead('Settings', '') + `
   <section class="panel">
-    <header class="panel-head"><h2>Where your data lives</h2><span class="muted small">${isCompanion() ? 'Only on your devices and in your iCloud' : 'Nothing ever leaves this Mac'}</span></header>
+    <header class="panel-head"><h2>Where your data lives</h2><span class="muted small">${isCompanion() ? 'Only on your devices and in your iCloud' : 'Nothing ever leaves this Mac'}${aiReady() ? ', except what you send to Claude' : ''}</span></header>
     <p>${where}</p>
     <div class="actions wrap">
       ${Store.canPickFolder ? (Store.dir && Store.perm !== 'granted' ? `<button class="btn primary" data-act="reconnect">Reconnect ${esc(Store.fileName)}</button>` : `<button class="btn ${Store.dir ? '' : 'primary'}" data-act="connect-folder">${Store.dir ? 'Choose a different folder…' : 'Choose your Ọrọ̀ folder…'}</button>`) : ''}
@@ -337,6 +337,8 @@ VIEWS.data = () => {
 
   ${checkinSettings()}
 
+  ${claudeSettings()}
+
   <section class="panel">
     <header class="panel-head"><h2>Categorization rules</h2><span class="muted small">${state.rules.length} rule${state.rules.length === 1 ? '' : 's'}</span></header>
     <p class="muted">When a payee contains the text, and the amount, money in or out, and account match if you set them, it gets that category (and optionally a person), on import and when you auto-categorize. When more than one rule fits, the more specific one wins. Your rules always win. After them Ọrọ̀ uses how you categorized the same merchant before, a built-in list of about 2,000 merchants, the merchant code some banks include, the bank’s own category, and finally words in the name like GRILL, PHARMACY or DENTAL. All of it runs on your device.</p>
@@ -368,7 +370,7 @@ VIEWS.data = () => {
     <p class="muted">${state.accounts.length} accounts, ${n.toLocaleString()} transactions, ${state.holdings.length} holdings, ${state.goals.length} goals${state.meta.sample ? '. This is sample data.' : '.'}</p>
     <div class="actions"><button class="btn" data-act="load-sample">Load sample data</button><button class="btn ghost danger-text" data-act="erase">Erase everything</button></div>
   </section>
-  <p class="muted small center about-line"><span class="wordmark">Ọrọ̀</span> is ${ORO_MEANING}. <em>${ORO_TAGLINE}</em><br>Version 2.2 · build ${typeof ORO_BUILD === 'string' ? ORO_BUILD : ''} · Runs on your own devices. No accounts, servers or tracking.</p>`;
+  <p class="muted small center about-line"><span class="wordmark">Ọrọ̀</span> is ${ORO_MEANING}. <em>${ORO_TAGLINE}</em><br>Version 2.2 · build ${typeof ORO_BUILD === 'string' ? ORO_BUILD : ''} · Runs on your own devices. No accounts, servers or tracking.${aiReady() ? ' Claude help is on: only what you send goes to Anthropic.' : ''}</p>`;
 };
 async function paintBackups() {
   const box = $('#backup-list'); if (!box) return;

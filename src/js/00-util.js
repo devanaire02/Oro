@@ -3,6 +3,7 @@
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const escRe = s => String(s ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');   // text to match literally in a RegExp
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-5);
 const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
 const sum = arr => arr.reduce((a, b) => a + (Number(b) || 0), 0);

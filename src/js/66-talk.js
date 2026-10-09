@@ -4,7 +4,7 @@
    you last opened, transactions you've selected, or the list on screen. It handles transactions ("this one is groceries
    and make a rule", "the Jewel Osco one on Tuesday is for Julissa", "make a rule: Starbucks, Dunkin and Peet's are
    coffee"), account updates ("Chase ending 1234 is 12,400") and new accounts. Nothing changes until you say yes. */
-const TALK = { open: false, draft: null, heard: '', last: null, speak: null, queue: [] };
+const TALK = { open: false, draft: null, heard: '', last: null, speak: null, queue: [], ai: null };   // ai: Claude help (67-claude.js)
 const talkOn = () => voicePrefs().talk !== false;
 const MIC_ICON = '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/></svg>';
 
@@ -62,6 +62,7 @@ function talkExamples(ctx) {
   const coin = cryptoHeld()[0];
   if (coin && coin.price >= 1 && !ctx.t && !ctx.sel.length && ['accounts', 'overview', 'investments', 'checkin'].includes(ctx.page)) ex.unshift(`${coin.name.toLowerCase()} is ${Math.round(coin.price * 1.02).toLocaleString('en-US')}`);
   ex.push('add a savings account at Ally with 40,000');
+  if (aiReady() && !ctx.t && !ctx.sel.length) ex.splice(1, 0, 'how much did we spend eating out last month?');
   return [...new Set(ex)].slice(0, 6);
 }
 function paintTalk() {
@@ -74,15 +75,15 @@ function paintTalk() {
     <span class="talk-ctx">${about ? `<span class="chip flat">About: ${about}</span>` : `<span class="muted small">On ${esc(pageName)}</span>`}</span>${ctx.t || ctx.a ? '<button class="icon-btn talk-clear" data-talk="clear-ctx" aria-label="Not about this" title="Not about this">×</button>' : ''}
     ${canSpeak() ? `<button class="icon-btn" data-talk="speak" aria-pressed="${TALK.speak ? 'true' : 'false'}" title="${TALK.speak ? 'Reading replies aloud' : 'Read replies aloud'}">${SPEAKER_ICON}</button>` : ''}
     <button class="icon-btn" data-talk="close" aria-label="Close">×</button>`;
-  const card = withTalk(() => CI.draft ? (CI.draft.step === 'tx' ? txCardHtml() : tellCardHtml()) : '');
+  const card = withTalk(() => CI.draft ? (CI.draft.step === 'tx' ? txCardHtml() : tellCardHtml()) : '') || aiTalkCardHtml();
   const last = TALK.last ? `<p class="ci-last">${esc(TALK.last.text)}${canUndoLast(TALK.last) ? ' <button class="linklike" data-ci="undo">Undo</button>' : ''}</p>` : '';
   const heard = TALK.heard ? `<p class="ci-heard">${esc(TALK.heard)}</p>` : '';
   const ex = !card ? `<p class="muted small talk-try">Say or type what to change${isTouch() ? ' (tap the box, then the keyboard’s mic)' : ''}. For example:</p>
     <div class="talk-ex">${talkExamples(ctx).map(x => `<button class="ci-chip" data-talk="example" data-v="${esc(x)}">“${esc(x)}”</button>`).join('')}</div>` : '';
-  const queued = TALK.queue.length ? `<p class="muted small talk-next">Then: ${TALK.queue.map(q => `“${esc(q)}”`).join(', ')}</p>` : '';
+  const queued = TALK.queue.length ? `<p class="muted small talk-next">Then: ${TALK.queue.map(q => typeof q === 'string' ? `“${esc(q)}”` : esc(q.say ? `“${q.say}”` : q.label || 'another change')).join(', ')}</p>` : '';
   $('.talk-body', el).innerHTML = last + heard + card + queued + ex;
   const inp = $('#talk-say', el);
-  if (inp) inp.placeholder = isTouch() ? 'Tap here, then the keyboard’s mic' : ctx.t ? '“this one is groceries, and make a rule”' : 'Say or type what to change';
+  if (inp) inp.placeholder = isTouch() ? 'Tap here, then the keyboard’s mic' : ctx.t ? '“this one is groceries, and make a rule”' : aiReady() ? 'Say what to change, or ask about your spending' : 'Say or type what to change';
 }
 
 function talkUndo() {
@@ -103,6 +104,11 @@ function talkUnderstand(text, { split = true } = {}) {
   if (/^(cancel|never ?mind|stop|close)$/.test(low) && !CI.draft) { closeTalk(); return ''; }
   if (/^undo( that)?$/.test(low)) { if (CI.draft) { CI.draft = null; TALK.queue = []; CI.heard = 'OK, nothing was changed.'; return CI.heard; } return talkUndo(); }
   if (CI.draft) return CI.draft.step === 'tx' ? txAnswer(text) : tellAnswer(text);
+  // a question about spending ("how much did we spend…") is for Claude, when Claude help is on
+  if (AI_Q_STRONG.test(low.replace(/^(?:and|so)\s+/, ''))) {
+    if (aiReady()) { aiTalkOffer(text, 'ask'); CI.heard = ''; return 'Asking Claude…'; }
+    CI.heard = 'I can make changes, but answering questions about your spending needs Claude help, which is off. It’s in Settings › Claude help.'; return CI.heard;
+  }
   if (TELL_ADD.test(low) && !/^add (a )?note\b/.test(low) && (tellFindType(low) || /\b(account|property)\b/.test(low))) return tellStart(text);
   const ctx = talkCtx();
   if (split) {
@@ -122,7 +128,10 @@ function talkUnderstand(text, { split = true } = {}) {
   if (tx) return txStart(tx);
   const up = up0 || updParse(text, { ctxAcct });
   if (up) return updStart(up);
-  CI.heard = ctx.t ? 'I didn’t catch that. Try “it’s groceries”, “for Julissa”, “flag it” or “make a rule”.'
+  const q = aiLooksLikeQuestion(low);
+  if (aiReady() && !TALK.noOffer) { aiTalkOffer(text, q ? 'ask' : 'change'); CI.heard = ''; return aiPrefs().auto || q ? 'Asking Claude…' : 'I didn’t catch that. Claude can try.'; }
+  CI.heard = q ? 'I can make changes, but answering questions about your spending needs Claude help, which is off. It’s in Settings › Claude help.'
+    : ctx.t ? 'I didn’t catch that. Try “it’s groceries”, “for Julissa”, “flag it” or “make a rule”.'
     : 'I didn’t catch that. Try naming the transaction or account: “the Jewel Osco one is groceries”, “Chase savings is 12,400”.';
   return CI.heard;
 }
@@ -130,16 +139,18 @@ function talkNext(reply) {
   if (TALK.draft || !TALK.queue.length) return reply;
   if (/^OK, nothing was (changed|added)/.test(reply || '')) { TALK.queue = []; return reply; }
   const next = TALK.queue.shift();
-  const r2 = withTalk(() => talkUnderstand(next, { split: false }));
+  const r2 = withTalk(() => typeof next === 'string' ? talkUnderstand(next, { split: false }) : next.say ? aiSay(next.say) : txStart(next));
   return [reply, `Next: ${r2}`].filter(Boolean).join(' ');
 }
 function talkSubmit(text) {
   if (!text.trim()) return;
   if (!TALK.draft) TALK.queue = [];
+  if (TALK.ai) { if (TALK.ai.status === 'busy') { AI.seq++; aiCancel(); } TALK.ai = null; }
   const reply = talkNext(withTalk(() => { CI.heard = ''; return talkUnderstand(text); }));
   render();   // the page under the panel shows the change too
-  if (TALK.speak && reply) ciSpeak(reply);
+  if (TALK.speak && reply && !TALK.ai?.go) ciSpeak(reply);
   const inp = $('#talk-say'); if (inp) { inp.value = ''; if (TALK.open) inp.focus(); }
+  if (TALK.ai?.go) aiTalkRun();
 }
 function talkClick(act, v) {
   if (act === 'tx-cancel' || act === 'tell-cancel') TALK.queue = [];
@@ -155,7 +166,8 @@ function talkClick(act, v) {
   });
   const reply = talkNext(reply0);
   render();
-  if (TALK.speak && reply) ciSpeak(reply);
+  if (TALK.speak && reply && !TALK.ai?.go) ciSpeak(reply);
+  if (TALK.ai?.go) aiTalkRun();
 }
 
 /* ---------- transactions by talking ---------- */
@@ -477,7 +489,8 @@ function txCardHtml() {
     : d.choose?.length ? d.choose.map(id => [id, catName(id)]) : [];
   const act = pend ? 'tx-pick' : 'tx-cat';
   const ready = !pend && !d.choose?.length && !d.needCat && !txOverSplit(d);
-  return `<section class="panel ci-card tell-card"><div class="ci-top"><span class="ci-kicker">${d.ids.length || pend ? 'Transactions' : d.rules.length === 1 ? 'Rule' : 'Rules'}</span></div>
+  return `<section class="panel ci-card tell-card"><div class="ci-top"><span class="ci-kicker">${d.ids.length || pend ? 'Transactions' : d.rules.length === 1 ? 'Rule' : 'Rules'}${d.fromAi ? ` · ${AI_SPARK} suggested by Claude` : ''}</span></div>
+    ${d.ai ? `<p class="ai-said">${esc(d.ai)}</p>` : ''}
     ${list ? `<ul class="upd-list tx-targets">${list}</ul>` : ''}
     ${changes ? `<ul class="upd-list">${changes}${preview}</ul>` : ''}
     <p class="ci-guess tell-q">${esc(ready ? (changes ? 'Save this?' : 'Nothing to change.') : txPrompt())}</p>
@@ -513,6 +526,7 @@ document.addEventListener('submit', e => {
 document.addEventListener('change', e => {
   if (!e.target.matches('[data-talk-cat]') || !e.target.value) return;
   const v = e.target.value;
+  if (!e.target.closest('#talk')) { const reply = txChooseCat(v); render(); if (CI.talking && reply) ciSpeak(reply); return; }   // a card on the Check-in page
   const reply = withTalk(() => txChooseCat(v));
   render(); if (TALK.speak && reply) ciSpeak(reply);
 });

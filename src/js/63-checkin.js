@@ -6,7 +6,7 @@
 const CI_WINDOWS = [['day', 'Today'], ['week', 'This week'], ['month', 'This month']];
 const CI = { w: 'week', handled: [], skipped: new Set(), older: false, talking: false, heard: '', last: null, back: null, choose: null, wParam: '', sayBack: '', draft: null, addParam: '' };
 function ciReset() {
-  Object.assign(CI, { w: 'week', handled: [], skipped: new Set(), older: false, talking: false, heard: '', last: null, back: null, choose: null, wParam: '', sayBack: '', draft: null, addParam: '', talkParam: '', intro: false });
+  Object.assign(CI, { w: 'week', handled: [], skipped: new Set(), older: false, talking: false, heard: '', last: null, back: null, choose: null, wParam: '', sayBack: '', draft: null, addParam: '', talkParam: '', intro: false, ai: null });
   ciHush();
 }
 const checkinOn = () => state.settings.checkin !== false;
@@ -399,7 +399,7 @@ function ciCardHtml(item, q) {
       <p class="ci-meta">${esc(shortDay(t.date))}${a ? ` · ${esc(a.name)}` : ''}${members().length > 1 ? ` · ${esc(memberName(personOf(t)))}` : ''}</p>
       ${t.memo ? `<p class="ci-memo">${esc(t.memo)}</p>` : ''}
       ${!uncat ? `<p class="ci-guess">Filed under <strong>${esc(catName(t.categoryId))}</strong>. Pick a category to sort it out, or keep it as it is.</p>`
-        : g ? `<p class="ci-guess">I think it’s <strong>${esc(catName(g.id))}</strong><span class="muted"> · ${esc(g.why)}</span></p>` : '<p class="ci-guess muted">No guess for this one yet.</p>'}
+        : g ? `<p class="ci-guess">I think it’s <strong>${esc(catName(g.id))}</strong><span class="muted"> · ${esc(g.why)}</span></p>` : `<p class="ci-guess muted">No guess for this one yet.${aiReady() && !CI.ai ? ` <button class="linklike ai-guess" data-ci="ai-guess">${AI_SPARK} Ask Claude</button>` : ''}</p>`}
       ${choosing ? `<p class="ci-choose">Did you mean:</p><div class="ci-chips">${choosing.map(id => `<button class="ci-chip on" data-ci="cat" data-v="${id}">${esc(catName(id))}</button>`).join('')}</div>` : ''}
       <div class="ci-actions">
         ${g ? `<button class="btn primary ci-yes" data-ci="yes">Yes, ${esc(catName(g.id))}</button>` : !uncat ? '<button class="btn primary ci-yes" data-ci="unflag">Keep it, clear the flag</button>' : ''}
@@ -461,7 +461,7 @@ function checkinSettings() {
   const p = voicePrefs(), dev = isCompanion() ? deviceLabel() : 'Mac', on = checkinOn();
   const rates = [[0.85, 'Slower'], [1, 'Normal'], [1.15, 'Faster'], [1.3, 'Fastest']];
   return `<section class="panel" id="checkin-settings">
-    <header class="panel-head"><h2>Check-in and Talk</h2><span class="muted small">Runs on this ${dev}. Nothing is sent anywhere.</span></header>
+    <header class="panel-head"><h2>Check-in and Talk</h2><span class="muted small">Runs on this ${dev}. ${aiReady() ? 'Only “Ask Claude” sends anything.' : 'Nothing is sent anywhere.'}</span></header>
     <p class="muted">Goes through what needs you today, this week or this month, one item at a time: transactions to sort, flagged ones, bills that haven’t shown up, accounts to import and balances to update.</p>
     <div class="form-grid">
       <label class="check"><input type="checkbox" data-setting-bool="checkin" ${on ? 'checked' : ''}> Show Check-in</label>
@@ -494,7 +494,7 @@ VIEWS.checkin = p => {
   const last = CI.last ? `<p class="ci-last">${esc(CI.last.text)}${canUndoLast(CI.last) ? ' <button class="linklike" data-ci="undo">Undo</button>' : ''}</p>` : '';
   // the answer box sits above the card, so with the phone's keyboard up the card is still in view
   const say = prefs.box ? `<form class="ci-say" data-ci-say autocomplete="off"><input id="ci-say" type="text" enterkeyhint="go" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="${isTouch() ? 'Tap here, then the keyboard’s mic' : q.cur || CI.draft ? 'Type an answer' : 'Say “add a savings account at Chase…”'}" aria-label="Answer"${CI.intro && !isTouch() ? ' autofocus' : ''}><button class="btn" type="submit">Go</button></form>` : '';
-  const hint = (say ? `<p class="ci-hint muted small">${CI.draft?.step === 'update' ? 'Say “yes” to save, “cancel” to stop, or add another change: “and the Roth is 85k”.' : CI.draft ? 'Answer the question, or change anything: “call it Chase Sapphire”, “the balance is 13,000”, “it’s Julissa’s”. Say “cancel” to stop.'
+  const hint = (say ? `<p class="ci-hint muted small">${CI.draft?.step === 'update' ? 'Say “yes” to save, “cancel” to stop, or add another change: “and the Roth is 85k”.' : CI.draft?.step === 'tx' ? 'Say “yes” to save, or change it: “actually groceries”, “for Julissa”, “and make a rule”. Say “cancel” to stop.' : CI.draft ? 'Answer the question, or change anything: “call it Chase Sapphire”, “the balance is 13,000”, “it’s Julissa’s”. Say “cancel” to stop.'
     : 'Say “yes”, a category, a person, “flag it”, “skip”, “back” or “always”. For a split: “half groceries, half household”. Add a note with “note:” and what to write. To add an account: “add a checking account at Chase ending 4321 with 12,400 for Julissa”. To update one: “Chase savings is 12,400”, “rename the Amex to Blue Cash”.'}</p>` : '')
     + (CI.draft ? '' : '<div class="ci-add-row"><button class="btn ghost" data-ci="tell-start" data-v="account">Add an account</button><button class="btn ghost" data-ci="tell-start" data-v="property">Add a property</button></div>');
   let card = CI.draft ? tellCardHtml() : CI.intro ? ciIntroHtml() : q.cur ? ciCardHtml(q.cur, q) : '';
@@ -504,11 +504,20 @@ VIEWS.checkin = p => {
       ${CI.handled.length ? `<p>${did ? `You took care of ${did}` : 'Nothing changed'}${skipped ? `${did ? ' and' : ','} skipped ${skipped}` : ''}.</p>` : ''}
       <div class="actions">${skipped ? `<button class="btn" data-ci="revisit">Go back to the ${skipped} you skipped</button>` : ''}${CI.w !== 'month' ? '<button class="btn" data-ci="w" data-v="month">Check this month</button>' : ''}<a class="btn ghost" href="#/overview">Overview</a></div></section>`;
   }
-  return pageHead('Check-in', sub, seg) + lead + last + say + (CI.heard ? `<p class="ci-heard">${esc(CI.heard)}</p>` : '') + card + hint;
+  return pageHead('Check-in', sub, seg) + lead + last + say + (CI.heard ? `<p class="ci-heard">${esc(CI.heard)}</p>` : '') + (CI.draft ? '' : aiCheckinHtml(q.cur)) + card + hint;
 };
 
 /* ---------- doing things ---------- */
-function ciMark(item, what) { CI.handled.push({ id: item.id, item, what }); CI.back = null; CI.choose = null; }
+function ciMark(item, what) { CI.handled.push({ id: item.id, item, what }); CI.back = null; CI.choose = null; CI.ai = null; }
+/* Claude's suggestion for a card is a change card like Talk's; saving it finishes the card (and Undo brings it back) */
+function ciTxStep(fn) {
+  const d = CI.draft, before = CI.last;
+  // the card, found before saving (once it's filed it's no longer in the list)
+  const item = d?.ciItem ? (ciCurrent()?.id === d.ciItem ? ciCurrent() : ciItems(CI.w).items.find(i => i.id === d.ciItem)) : null;
+  const reply = fn();
+  if (item && !CI.draft && CI.last && CI.last !== before) { ciMark(item, 'sorted'); CI.last.n = 1; }
+  return reply;
+}
 function ciSetCategory(t, catId, opts = {}) {
   t.categoryId = catId; delete t.splits;
   if (t.flag) delete t.flag;
@@ -605,7 +614,13 @@ function ciDo(a, item) {
     case 'again': return 'again';
     case 'stop': CI.talking = false; ciHush(); return '';
     case 'no': CI.heard = 'OK, what is it? Say a category, or pick one.'; return CI.heard;
-    case 'unknown': CI.heard = `I didn’t catch “${a.text || ''}”. Try “yes”, a category, “flag it” or “skip”.`; return CI.heard;
+    case 'unknown':
+      if (t && aiReady() && a.text) {   // Claude can try (67-claude.js)
+        CI.ai = { status: 'offer', item: item.id, text: a.text };
+        if (aiPrefs().auto) setTimeout(() => aiCheckinRun(item, a.text), 0);
+        CI.heard = `I didn’t catch “${a.text}”.${aiPrefs().auto ? '' : ' Claude can try.'}`; return CI.heard;
+      }
+      CI.heard = `I didn’t catch “${a.text || ''}”. Try “yes”, a category, “flag it” or “skip”.`; return CI.heard;
   }
   return '';
 }
@@ -665,6 +680,16 @@ document.addEventListener('click', e => {
   if (act === 'undo') return ciAfter(ciUndo());
   if (act === 'intro-close') { CI.intro = false; return render(); }
   if (act.startsWith('tell-')) { CI.heard = ''; CI.intro = false; const reply = tellClick(act, v); render(); if (CI.talking && reply) ciSpeak(reply); return; }
+  // Claude's suggestion for this card (67-claude.js)
+  if (act.startsWith('tx-') && CI.draft?.step === 'tx') {
+    CI.heard = '';
+    const reply = ciTxStep(() => act === 'tx-save' ? txApply() : act === 'tx-pick' ? txPick(v) : act === 'tx-cat' ? txChooseCat(v) : (CI.draft = null, 'OK, nothing was changed.'));
+    if (act === 'tx-cancel') CI.heard = reply;
+    return ciAfter(reply, !CI.draft);
+  }
+  if (act === 'ai-ask' || act === 'ai-retry') { const item = ciCurrent(); if (item && CI.ai) aiCheckinRun(item, CI.ai.text); return; }
+  if (act === 'ai-guess') { const item = ciCurrent(); if (item) aiCheckinRun(item, ''); return; }
+  if (act === 'ai-cancel') { AI.seq++; aiCancel(); CI.ai = null; return render(); }
   if (act === 'file-sure') {
     const ts = ciItems(CI.w).items.filter(i => i.kind === 'uncat').map(ciTx).filter(t => t && ciGuess(t)?.sure);
     for (const t of ts) { const g = ciGuess(t); t.categoryId = g.id; if (g.person && !t.person) t.person = g.person; }
@@ -706,6 +731,7 @@ document.addEventListener('submit', e => {
     e.preventDefault();
     const inp = $('#ci-say'), text = inp?.value || '';
     if (!text.trim()) return;
+    if (CI.ai) { if (CI.ai.status === 'busy') { AI.seq++; aiCancel(); } CI.ai = null; }
     const low = text.trim().toLowerCase().replace(/[’‘]/g, "'");
     if (CI.draft || (TELL_ADD.test(low) && !/^add (a )?note\b/.test(low) && (tellFindType(low) || /\b(account|property)\b/.test(low)))) {
       CI.heard = ''; CI.intro = false;
