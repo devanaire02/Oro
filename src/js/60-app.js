@@ -191,6 +191,7 @@ const ACTIONS = {
   'set-pass': async () => { const p = await promptPass('Add a passphrase', 'Ọrọ̀ will encrypt your data, backups and receipts with this passphrase. You’ll need it every time you open Ọrọ̀.', { confirm: true, ok: 'Encrypt my data' }); if (p) { await setPassphrase(p); render(); armAutoLock(); toast('Your data is now encrypted.'); } },
   'change-pass': async () => { const p = await promptPass('Change passphrase', 'Choose a new passphrase. Receipts saved earlier still open with the old one, so keep it until you re-attach them.', { confirm: true, ok: 'Change passphrase' }); if (p) { await setPassphrase(p); render(); toast('Passphrase changed.'); } },
   'remove-pass': async () => { if (await confirmBox('Remove passphrase', 'Your data and new backups will be stored without encryption.', 'Remove passphrase', true)) { await setPassphrase(null); render(); toast('Passphrase removed.'); } },
+  'add-entity': () => { const id = 'm' + uid().slice(0, 5); state.settings.members.push({ id, name: 'New trust', role: 'irrevocable' }); commit(); setTimeout(() => { const el = $(`[data-member="${id}"]`); if (el) { el.focus(); el.select(); } }, 30); },
   'add-member': () => { const id = 'm' + uid().slice(0, 5); state.settings.members.push({ id, name: 'New person' }); commit(); setTimeout(() => { const el = $(`[data-member="${id}"]`); if (el) { el.focus(); el.select(); } }, 30); },
 };
 
@@ -322,6 +323,7 @@ document.addEventListener('change', e => {
   }
   if (d.taxint) { const v = parseAmount(el.value || ''); ((state.tax[d.taxint] = state.tax[d.taxint] || {})[d.year] = state.tax[d.taxint][d.year] || {}).interest = isFinite(v) ? round2(v) : null; commit({ silent: true }); setTimeout(render, 0); return; }
   if (d.schede) { const c = catById(d.schede); if (c) { c.schedE = el.value; commit({ silent: true }); setTimeout(render, 0); } return; }
+  if (d.memberRole) { const m = state.settings.members.find(x => x.id === d.memberRole); if (m) { if (el.value === 'adult') delete m.role; else m.role = el.value; commit(); } return; }
   if (d.member) { const m = state.settings.members.find(x => x.id === d.member); if (m && el.value.trim()) { m.name = el.value.trim(); commit({ silent: true }); setTimeout(render, 0); } return; }
   if (el.classList.contains('tx-cb')) return updateBulk();
   if (el.id === 'tx-all') { $$('.tx-cb').forEach(c => c.checked = el.checked); return updateBulk(); }

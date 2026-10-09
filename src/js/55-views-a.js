@@ -68,9 +68,9 @@ function legendList(items, total) {
 function monthlySeries(fn, n = 12) { return Array.from({ length: n }, (_, i) => fn(addMonths(thisMonth(), i - n + 1))); }
 
 function overviewDetailed(sub) {
-  const t = totals(), mk = thisMonth(), prev = addMonths(mk, -1);
-  const prevNW = snapshotNW(prev);
-  const series = netWorthSeries();
+  const t = totals(true), mk = thisMonth(), prev = addMonths(mk, -1);
+  const prevNW = snapshotNW(prev, true);
+  const series = netWorthSeries(true);
   const shown = UI.nwRange === 'all' ? series : series.slice(-13);
   const txs = lensed(txInMonth(mk));
   const f = flowSummary(txs);
@@ -79,13 +79,14 @@ function overviewDetailed(sub) {
   const dim = +monthEnd(mk).slice(8), dayShare = new Date().getDate() / dim;
   const budgeted = state.categories.filter(c => c.kind === 'expense' && c.budget > 0 && c.period !== 'year' && !c.rental && !billCats.has(c.id))
     .map(c => ({ c, v: budgetView(c, mk) })).sort((a, b) => (b.v.actual / (b.v.budget + (b.v.carry || 0) || 1)) - (a.v.actual / (a.v.budget + (a.v.carry || 0) || 1))).slice(0, 6);
-  const up = upcoming(14), att = attentionItems();
+  const up = upcoming(14, true), att = attentionItems();
   const planned = sum(state.categories.filter(c => c.kind === 'expense').map(c => c.period === 'year' ? (c.budget || 0) / 12 : (c.budget || 0)));
   const spendSeries = monthlySeries(m => flowSummary(lensed(txInMonth(m))).spending);
   const keptSeries = monthlySeries(m => flowSummary(lensed(txInMonth(m))).net);
-  const cashSeries = monthlySeries(m => { const s = state.snapshots[m] || {}; return sum(Object.entries(s).filter(([id]) => ACCOUNT_TYPES[acctById(id)?.type]?.bucket === 'cash').map(([, v]) => v)); });
-  const invSeries = monthlySeries(m => { const s = state.snapshots[m] || {}; return sum(Object.entries(s).filter(([id]) => ['invest'].includes(ACCOUNT_TYPES[acctById(id)?.type]?.bucket)).map(([, v]) => v)); });
-  const fc = forecast(60);
+  const inNW = id => { const a = acctById(id); return a && nwIncludes(a, true); };
+  const cashSeries = monthlySeries(m => { const s = state.snapshots[m] || {}; return sum(Object.entries(s).filter(([id]) => inNW(id) && ACCOUNT_TYPES[acctById(id)?.type]?.bucket === 'cash').map(([, v]) => v)); });
+  const invSeries = monthlySeries(m => { const s = state.snapshots[m] || {}; return sum(Object.entries(s).filter(([id]) => inNW(id) && ['invest'].includes(ACCOUNT_TYPES[acctById(id)?.type]?.bucket)).map(([, v]) => v)); });
+  const fc = forecast(60, true);
   const days = {};
   for (const tx of lensed(txInRange(addDays(today(), -53 * 7), today()))) for (const l of txLines(tx)) { const c = catById(l.categoryId); if ((c && c.kind === 'expense' && !c.rental && !/Mortgage|Auto payment|Childcare/.test(c.name)) || (!c && l.amount < 0)) days[tx.date] = (days[tx.date] || 0) - l.amount; }
   const goals = state.goals.slice(0, 4);
@@ -93,7 +94,7 @@ function overviewDetailed(sub) {
   return pageHead('Overview', sub, `${ciButton()}<button class="btn" data-act="import">Import</button><button class="btn primary" data-act="add-txn">Add transaction</button>`) + lensNote() + `
   <section class="hero">
     <div class="hero-figure">
-      <span class="hero-label">Net worth</span>
+      <span class="hero-label">${nwLabel()}</span>
       <span class="hero-num num">${money(t.netWorth, { cents: false })}</span>
       <span class="hero-delta">${prevNW == null ? '<span class="muted">History builds month by month. Add past balances from each account’s History.</span>' : `${deltaChip(t.netWorth, prevNW, { pct: true })} <span class="muted">since the end of ${MONTHS[+prev.slice(5) - 1]}</span>`}</span>
       <dl class="hero-split">
@@ -101,6 +102,7 @@ function overviewDetailed(sub) {
         <div><dt>Liabilities</dt><dd class="num">${money(t.liabilities, { cents: false })}</dd></div>
         <div><dt>Cash and investments</dt><dd class="num">${money(t.liquid, { cents: false })}</dd></div>
       </dl>
+      ${outEstateLine(t)}
     </div>
     <div class="hero-chart">
       <div class="seg small" role="group" aria-label="Range"><button class="${UI.nwRange === '12' ? 'on' : ''}" data-nwrange="12">1Y</button><button class="${UI.nwRange === 'all' ? 'on' : ''}" data-nwrange="all">All</button></div>
@@ -156,15 +158,15 @@ function goalTile(g) {
 }
 
 function overviewSimple(sub) {
-  const t = totals(), mk = thisMonth(), prev = addMonths(mk, -1), prevNW = snapshotNW(prev);
-  const who = UI.lens ? memberName(UI.lens) + ' has' : 'We’ve';
+  const t = totals(true), mk = thisMonth(), prev = addMonths(mk, -1), prevNW = snapshotNW(prev, true);
+  const who = !lensActive() ? 'We’ve' : UI.lens === 'nokids' ? 'We’ve (without the kids)' : memberName(UI.lens) + ' has';
   const txs = lensed(txInMonth(mk)), f = flowSummary(txs);
   const planned = sum(state.categories.filter(c => c.kind === 'expense').map(c => c.period === 'year' ? (c.budget || 0) / 12 : (c.budget || 0)));
   const groups = spendByGroup(txs), items = donutItems(groups, 5), total = sum(groups.map(g => g.value));
   const notes = insights(mk, { limit: 4 });
-  const up = upcoming(21).filter(u => Math.abs(u.amount) >= 100).slice(0, 5);
-  const series = netWorthSeries().slice(-13);
-  return `<header class="page-head simple-head"><div><p class="sub">${sub}</p><h1 class="big-sentence">${who} spent <span class="num">${money(f.spending, { cents: false })}</span>${!UI.lens && planned ? ` of the <span class="num">${money(planned, { cents: false })}</span> we planned` : ''} this month.</h1></div>${checkinOn() ? `<div class="actions">${ciButton()}</div>` : ''}</header>
+  const up = upcoming(21, true).filter(u => Math.abs(u.amount) >= 100).slice(0, 5);
+  const series = netWorthSeries(true).slice(-13);
+  return `<header class="page-head simple-head"><div><p class="sub">${sub}</p><h1 class="big-sentence">${who} spent <span class="num">${money(f.spending, { cents: false })}</span>${!lensActive() && planned ? ` of the <span class="num">${money(planned, { cents: false })}</span> we planned` : ''} this month.</h1></div>${checkinOn() ? `<div class="actions">${ciButton()}</div>` : ''}</header>
   <section class="simple-cards">
     <div class="s-card"><span class="s-label">Came in</span><span class="s-value num">${money(f.income, { cents: false })}</span><span class="s-sub">${MONTHS[+mk.slice(5) - 1]} so far</span></div>
     <div class="s-card"><span class="s-label">Went out</span><span class="s-value num">${money(f.spending, { cents: false })}</span><span class="s-sub">${planned ? `${pct(Math.min(9.99, f.spending / planned), 0)} of the plan` : '&nbsp;'}</span></div>
@@ -182,7 +184,7 @@ function overviewSimple(sub) {
   </div>
   <div class="cols">
     <section class="panel nw-simple">
-      <header class="panel-head"><h2>What we own, minus what we owe</h2></header>
+      <header class="panel-head"><h2>${lensSingleOut() ? `${esc(memberName(UI.lens))}’s accounts` : 'What we own, minus what we owe'}</h2></header>
       <span class="s-value num">${money(t.netWorth, { cents: false })}</span>
       <p class="muted">${prevNW == null ? 'History builds month by month.' : `${t.netWorth >= prevNW ? 'Up' : 'Down'} ${money(Math.abs(t.netWorth - prevNW), { cents: false })} since the end of ${MONTHS[+prev.slice(5) - 1]}.`}</p>
       ${chartHost({ h: 150, padL: 50, label: 'Net worth', series: [{ points: series, color: 'var(--ink-accent)', area: true, nodots: true }], xFmt: x => MON[+x.slice(5) - 1], tip: i => `<strong>${monthLabel(series[i].x)}</strong><br>${money(series[i].y, { cents: false })}` })}
@@ -248,7 +250,7 @@ VIEWS.transactions = p => {
   const nFilters = ['acct', 'cat', 'who', 'tag', 'flag'].filter(k => p[k]).length;
   const fOpen = UI.txFilters === undefined ? nFilters - (p.flag ? 1 : 0) > 0 : UI.txFilters;   // the flagged list keeps the filters folded
   // One click back to everything: all months, every account, category, person, flag and tag, no search, everyone's spending
-  const narrowed = month !== 'all' || nFilters > 0 || !!p.q || !!UI.lens;
+  const narrowed = month !== 'all' || nFilters > 0 || !!p.q || lensActive();
   const clearBtn = cls => narrowed ? `<button class="btn small ghost tx-clear ${cls}" data-act="tx-clear" title="Show every transaction: all months, accounts and categories${multi ? ', everyone' : ''}, no search">${CLEAR_ICON}Clear filters</button>` : '';
 
   return pageHead('Transactions', `${list.length.toLocaleString()} shown${unc ? ` · <a href="#/transactions?cat=_none&m=all">${unc} uncategorized</a>` : ''}${nFlag ? ` · <a href="#/transactions?flag=1&m=all" class="flag-link">${FLAG_ICON}${nFlag} flagged</a>` : ''}`,
@@ -257,7 +259,7 @@ VIEWS.transactions = p => {
     <label class="field inline"><span>Month</span><select data-filter="m"><option value="all" ${month === 'all' ? 'selected' : ''}>All months</option>${months.map(m => `<option value="${m}" ${m === month ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}</select></label>
     <label class="field inline more"><span>Account</span><select data-filter="acct">${acctOptions(p.acct, null, 'All accounts')}</select></label>
     <label class="field inline more"><span>Category</span><select data-filter="cat"><option value="">All categories</option><option value="_none" ${p.cat === '_none' ? 'selected' : ''}>Uncategorized</option>${catOptions(p.cat, false)}</select></label>
-    ${multi && !UI.lens ? `<label class="field inline more"><span>Person</span><select data-filter="who"><option value="">Everyone</option>${memberOptions(p.who)}</select></label>` : ''}
+    ${multi && (!lensActive() || UI.lens === 'nokids') ? `<label class="field inline more"><span>Person</span><select data-filter="who"><option value="">Everyone</option>${memberOptions(p.who, '', true)}</select></label>` : ''}
     <label class="field inline more"><span>Flag</span><select data-filter="flag"><option value="">Any</option><option value="1" ${p.flag ? 'selected' : ''}>Flagged only</option></select></label>
     ${tags.length ? `<label class="field inline more"><span>Tag</span><select data-filter="tag"><option value="">Any tag</option>${tags.map(t => `<option ${t === p.tag ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>` : ''}
     ${txSortSelect(sort, multi)}
@@ -269,7 +271,7 @@ VIEWS.transactions = p => {
   <div class="bulk" id="bulk" hidden>
     <span id="bulk-count"></span>
     <select id="bulk-cat" aria-label="Category">${catOptions(null, true)}</select><button class="btn small" data-act="bulk-cat">Set category</button>
-    ${multi ? `<select id="bulk-who" aria-label="Person">${memberOptions('', 'Account owner')}</select><button class="btn small" data-act="bulk-who">Set person</button>` : ''}
+    ${multi ? `<select id="bulk-who" aria-label="Person">${memberOptions('', 'Account owner', true)}</select><button class="btn small" data-act="bulk-who">Set person</button>` : ''}
     <input id="bulk-tag" placeholder="tag" list="tag-list" style="width:8em"><datalist id="tag-list">${tags.map(t => `<option value="${esc(t)}">`).join('')}</datalist><button class="btn small" data-act="bulk-tag">Add tag</button>
     <button class="btn small" data-act="bulk-flag">Flag</button><button class="btn small ghost" data-act="bulk-unflag">Clear flag</button>
     <button class="btn small ghost danger-text" data-act="bulk-del">Delete</button>
@@ -360,20 +362,23 @@ VIEWS.budget = p => {
 VIEWS.accounts = p => {
   const updating = p.update === '1', byOwner = p.by === 'owner';
   if (!state.accounts.length) return pageHead('Accounts') + emptyState('Add your first account', 'Checking, cards, brokerage, retirement, property, loans: list everything you own and owe to see your full balance sheet.', `<button class="btn primary" data-act="add-account">Add an account</button><button class="btn" data-act="import">Import a file</button>`);
-  const t = totals();
+  const t = totals(true);
+  // the whose-money menu picks the accounts; out-of-estate ones (children, trusts, charities, others) get their own group
+  const shown = lensAccounts(), counted = shown.filter(a => nwIncludes(a, true)), outside = shown.filter(a => !nwIncludes(a, true));
   const groups = byOwner
-    ? members().map(m => ({ label: m.name, accts: activeAccounts().filter(a => (a.owner || 'joint') === m.id), signed: true })).filter(g => g.accts.length)
-    : BUCKETS.map(b => ({ label: b.label, debt: b.id === 'debt', accts: activeAccounts().filter(a => ACCOUNT_TYPES[a.type]?.bucket === b.id) })).filter(g => g.accts.length);
+    ? members().map(m => ({ label: m.name + (inEstate(m.id) || lensSingleOut() ? '' : ' · out of estate'), out: !inEstate(m.id) && !lensSingleOut(), accts: shown.filter(a => (a.owner || 'joint') === m.id), signed: true })).filter(g => g.accts.length)
+    : [...BUCKETS.map(b => ({ label: b.label, debt: b.id === 'debt', accts: counted.filter(a => ACCOUNT_TYPES[a.type]?.bucket === b.id) })),
+       { label: 'Out of estate', out: true, signed: true, accts: outside }].filter(g => g.accts.length);
   const archived = state.accounts.filter(a => a.archived);
   const multi = members().length > 1;
   return pageHead('Accounts', updating ? `Type in current balances from your statements, then save.${cryptoHeld().length ? ' Crypto accounts follow their coin prices: update those on Investments › Crypto prices.' : ''}` : 'Everything you own and owe.',
     updating ? `<a class="btn ghost" href="#/accounts">Cancel</a><button class="btn primary" data-act="save-balances">Save balances</button>`
-      : `${multi ? `<div class="seg small" role="group" aria-label="Group by"><button class="${byOwner ? '' : 'on'}" data-by="">By type</button><button class="${byOwner ? 'on' : ''}" data-by="owner">By owner</button></div>` : ''}<a class="btn" href="#/accounts?update=1">Update balances</a>${checkinOn() ? '<a class="btn" href="#/checkin?talk=1">Add or update by talking</a>' : ''}<button class="btn primary" data-act="add-account">Add account</button>`) + `
+      : `${multi ? `<div class="seg small" role="group" aria-label="Group by"><button class="${byOwner ? '' : 'on'}" data-by="">By type</button><button class="${byOwner ? 'on' : ''}" data-by="owner">By owner</button></div>` : ''}<a class="btn" href="#/accounts?update=1">Update balances</a>${checkinOn() ? '<a class="btn" href="#/checkin?talk=1">Add or update by talking</a>' : ''}<button class="btn primary" data-act="add-account">Add account</button>`) + lensNote() + `
   <section class="alloc-bar-wrap detail-only">${(() => { const segs = [['Cash', t.cash, 'var(--c2)'], ['Investments', t.invest, 'var(--c1)'], ['Property and private', t.illiquid, 'var(--c4)']]; const tot = t.assets || 1; return `<div class="stack tall" role="img" aria-label="Assets by type">${segs.map(([l, v, c]) => v > 0 ? `<span style="width:${v / tot * 100}%;background:${c}" title="${l} ${pct(v / tot, 0)}"></span>` : '').join('')}</div><p class="legend">${segs.map(([l, v, c]) => `<span><i style="background:${c}"></i>${l} ${pct(v / tot, 0)}</span>`).join('')}<span><i style="background:var(--neg)"></i>Debt is ${pct(t.liabilities / tot, 0)} of assets</span></p>`; })()}</section>
   ${groups.map(g => {
     const subtotal = sum(g.accts.map(a => g.signed ? signedValue(a) : accountValue(a)));
-    return `<section class="acct-group"><table class="ledger acct-table" data-sort-id="accounts">
-      <thead><tr><th scope="col">${esc(g.label)}</th><th class="hide-sm">${byOwner ? 'Type' : multi ? 'Owner' : 'Type'}</th><th>As of</th><th class="num">${g.debt ? 'Owed' : byOwner ? 'Net' : 'Value'}</th><th class="acts"></th></tr></thead>
+    return `<section class="acct-group ${g.out ? 'out-group' : ''}"><table class="ledger acct-table" data-sort-id="accounts">
+      <thead><tr><th scope="col">${esc(g.label)}${g.out && !byOwner ? ' <span class="muted small">not in net worth</span>' : ''}</th><th class="hide-sm">${byOwner ? 'Type' : multi ? 'Owner' : 'Type'}</th><th>As of</th><th class="num">${g.debt ? 'Owed' : byOwner ? 'Net' : 'Value'}</th><th class="acts"></th></tr></thead>
       <tbody>${g.accts.map(a => {
         const hs = holdingsFor(a.id).length, v = byOwner ? signedValue(a) : accountValue(a);
         return `<tr>
@@ -390,7 +395,8 @@ VIEWS.accounts = p => {
     <tbody>
       <tr><th scope="row">Total assets</th><td class="num">${money(t.assets)}</td></tr>
       <tr><th scope="row">Total liabilities</th><td class="num">${money(-t.liabilities)}</td></tr>
-      <tr class="grand-total"><th scope="row">Net worth</th><td class="num total double">${money(t.netWorth)}</td></tr>
+      <tr class="grand-total"><th scope="row">${esc(nwLabel())}</th><td class="num total double">${money(t.netWorth)}</td></tr>
+      ${t.outAccounts && !lensSingleOut() ? `<tr class="out-row"><th scope="row"><a href="#/balance?t=out">Out of estate</a> <span class="muted small">not counted</span></th><td class="num muted">${money(t.outEstate)}</td></tr>` : ''}
     </tbody></table></section>
   ${archived.length ? `<details class="archived"><summary>${archived.length} archived account${archived.length > 1 ? 's' : ''}</summary><ul>${archived.map(a => `<li><button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button> <span class="muted">${money(accountValue(a))}</span></li>`).join('')}</ul></details>` : ''}`;
 };

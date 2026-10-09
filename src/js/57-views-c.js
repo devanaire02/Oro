@@ -4,16 +4,16 @@ VIEWS.reports = p => {
   const tab = p.r || 'flow';
   const per = p.p || (tab === 'statement' || tab === 'networth' ? '12m' : 'm');
   const R = periodRange(per, p.from, p.to);
-  const head = pageHead('Reports', `${R.label}${UI.lens && tab !== 'networth' ? ` · ${esc(memberName(UI.lens))} only` : ''}`,
+  const head = pageHead('Reports', `${R.label}${lensActive() ? ` · ${esc(lensLabel())}` : ''}`,
     `<label class="field inline"><span class="sr">Period</span><select data-filter="p">${PERIODS.map(([id, l]) => `<option value="${id}" ${id === per ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
      ${per === 'custom' ? `<input type="date" data-date="from" value="${p.from || R.from}" aria-label="From"><input type="date" data-date="to" value="${p.to || R.to}" aria-label="To">` : ''}`) +
-    tabs('r', tab, [['flow', 'Cash flow'], ['spending', 'Spending'], ['statement', 'Income statement'], ['yoy', 'Year over year'], ...(members().length > 1 ? [['people', 'By person']] : []), ['networth', 'Net worth']]);
+    tabs('r', tab, [['flow', 'Cash flow'], ['spending', 'Spending'], ['statement', 'Income statement'], ['yoy', 'Year over year'], ...(people().length > 1 ? [['people', 'By person']] : []), ['networth', 'Net worth']]);
   const txs = lensed(txInRange(R.from, R.to));
   const acts = categoryActuals(txs);
   const months = monthsIn(R.from, R.to);
 
   if (tab === 'flow') {
-    const sk = UI.lens ? (() => { const all = sankeyFromActs(acts); return all; })() : sankeyData(R.from, R.to);
+    const sk = lensActive() ? (() => { const all = sankeyFromActs(acts); return all; })() : sankeyData(R.from, R.to);
     const f = flowSummary(txs);
     return head + `
     <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Left over</th><th class="num">Savings rate</th></tr></thead>
@@ -93,16 +93,16 @@ VIEWS.reports = p => {
   if (tab === 'people') {
     const ms = months.length >= 2 ? months.slice(-12) : Array.from({ length: 12 }, (_, i) => addMonths(thisMonth(), i - 11));
     const all = txInRange(R.from, R.to);
-    const per = members().map(m => { const t = all.filter(x => personOf(x) === m.id); return { m, f: flowSummary(t), acts: categoryActuals(t) }; });
+    const per = people().map(m => { const t = all.filter(x => personOf(x) === m.id); return { m, f: flowSummary(t), acts: categoryActuals(t) }; });
     const tot = sum(per.map(x => x.f.spending)) || 1;
     const cats = state.categories.filter(c => c.kind === 'expense' && per.some(x => (x.acts[c.id] || 0) > 0)).sort((a, b) => sum(per.map(x => x.acts[b.id] || 0)) - sum(per.map(x => x.acts[a.id] || 0)));
     return head + `
     <div class="people-cards">${per.map(x => `<div class="person-card" style="--pc:${memberColor(x.m.id)}"><span class="person-name">${esc(x.m.name)}</span><span class="s-value num">${money(x.f.spending, { cents: false })}</span><span class="muted">${pct(x.f.spending / tot, 0)} of household spending</span>
       <ul>${Object.entries(x.acts).filter(([id, v]) => v > 0 && catById(id)?.kind === 'expense').sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id, v]) => `<li><span>${esc(catName(id))}</span><span class="num">${money(v, { cents: false })}</span></li>`).join('')}</ul></div>`).join('')}</div>
     <section class="panel"><header class="panel-head"><h2>Spending by person, by month</h2></header>
-      ${chartHost({ type: 'stack', h: 240, labels: ms.map(m => MON[+m.slice(5) - 1]), series: members().map(m => ({ name: m.name, color: memberColor(m.id), values: ms.map(mm => flowSummary(txInMonth(mm).filter(t => personOf(t) === m.id)).spending) })),
-        tip: i => `<strong>${monthLabel(ms[i])}</strong>${members().map(m => `<br>${esc(m.name)} ${money(flowSummary(txInMonth(ms[i]).filter(t => personOf(t) === m.id)).spending, { cents: false })}`).join('')}` })}
-      <p class="legend">${members().map(m => `<span><i style="background:${memberColor(m.id)}"></i>${esc(m.name)}</span>`).join('')}</p></section>
+      ${chartHost({ type: 'stack', h: 240, labels: ms.map(m => MON[+m.slice(5) - 1]), series: people().map(m => ({ name: m.name, color: memberColor(m.id), values: ms.map(mm => flowSummary(txInMonth(mm).filter(t => personOf(t) === m.id)).spending) })),
+        tip: i => `<strong>${monthLabel(ms[i])}</strong>${people().map(m => `<br>${esc(m.name)} ${money(flowSummary(txInMonth(ms[i]).filter(t => personOf(t) === m.id)).spending, { cents: false })}`).join('')}` })}
+      <p class="legend">${people().map(m => `<span><i style="background:${memberColor(m.id)}"></i>${esc(m.name)}</span>`).join('')}</p></section>
     <table class="ledger" data-sort-id="rep-person"><thead><tr><th>Category</th>${per.map(x => `<th class="num">${esc(x.m.name)}</th>`).join('')}<th class="num">Household</th></tr></thead><tbody>
       ${cats.map(c => `<tr><th scope="row">${esc(c.name)}</th>${per.map(x => `<td class="num">${x.acts[c.id] > 0 ? money(x.acts[c.id], { cents: false }) : '<span class="muted">—</span>'}</td>`).join('')}<td class="num">${money(sum(per.map(x => Math.max(0, x.acts[c.id] || 0))), { cents: false })}</td></tr>`).join('')}
     </tbody></table>
@@ -111,8 +111,9 @@ VIEWS.reports = p => {
 
   // net worth
   const ms = Object.keys(state.snapshots).sort();
-  const bucketVals = b => ms.map(m => sum(Object.entries(state.snapshots[m]).filter(([id]) => (ACCOUNT_TYPES[acctById(id)?.type]?.bucket || 'illiquid') === b).map(([, v]) => v)));
-  const nw = ms.map(m => snapshotNW(m));
+  const inNW = id => { const a = acctById(id); return a ? nwIncludes(a, true) : !lensActive(); };   // the estate's, and the menu's people
+  const bucketVals = b => ms.map(m => sum(Object.entries(state.snapshots[m]).filter(([id]) => inNW(id) && (ACCOUNT_TYPES[acctById(id)?.type]?.bucket || 'illiquid') === b).map(([, v]) => v)));
+  const nw = ms.map(m => snapshotNW(m, true));
   const ago = ms[Math.max(0, ms.length - 13)];
   return head + `
   <section class="panel"><header class="panel-head"><h2>Net worth over time</h2><span class="muted small">Areas show what you own by type; debt sits below zero. The line is net worth.</span></header>
@@ -120,8 +121,8 @@ VIEWS.reports = p => {
       tip: i => `<strong>${monthLabel(ms[i])}</strong><br>Net worth ${money(nw[i], { cents: false })}` })}
     <p class="legend"><span><i style="background:var(--c2)"></i>Cash</span><span><i style="background:var(--c1)"></i>Investments</span><span><i style="background:var(--c4)"></i>Property and private</span><span><i style="background:var(--neg)"></i>Debt</span><span><i style="background:var(--ink);height:2px"></i>Net worth</span></p></section>
   <table class="ledger" data-sort-id="rep-nw"><thead><tr><th>Account</th><th class="num">${ago ? monthLabel(ago, true) : ''}</th><th class="num">Now</th><th class="num">Change</th><th class="spark-cell hide-sm" data-nosort>Trend</th></tr></thead><tbody>
-    ${activeAccounts().map(a => { const then = ago ? state.snapshots[ago][a.id] : null, now = signedValue(a); return `<tr><th scope="row">${esc(a.name)}</th><td class="num muted">${then == null ? '—' : money(then, { cents: false })}</td><td class="num">${money(now, { cents: false })}</td><td class="num ${then == null ? '' : signClass(now - then)}">${then == null ? '' : money(now - then, { cents: false, sign: true })}</td><td class="spark-cell hide-sm">${sparkline(ms.slice(-13).map(m => state.snapshots[m][a.id] || 0), { w: 90, h: 22, color: isLiability(a) ? 'var(--neg)' : 'var(--ink-accent)' })}</td></tr>`; }).join('')}
-  </tbody><tfoot><tr><th scope="row">Net worth</th><td class="num total">${ago ? money(snapshotNW(ago), { cents: false }) : ''}</td><td class="num total">${money(totals().netWorth, { cents: false })}</td><td class="num total ${ago ? signClass(totals().netWorth - snapshotNW(ago)) : ''}">${ago ? money(totals().netWorth - snapshotNW(ago), { cents: false, sign: true }) : ''}</td><td class="hide-sm"></td></tr></tfoot></table>`;
+    ${lensAccounts().filter(a => nwIncludes(a, true)).map(a => { const then = ago ? state.snapshots[ago][a.id] : null, now = signedValue(a); return `<tr><th scope="row">${esc(a.name)}</th><td class="num muted">${then == null ? '—' : money(then, { cents: false })}</td><td class="num">${money(now, { cents: false })}</td><td class="num ${then == null ? '' : signClass(now - then)}">${then == null ? '' : money(now - then, { cents: false, sign: true })}</td><td class="spark-cell hide-sm">${sparkline(ms.slice(-13).map(m => state.snapshots[m][a.id] || 0), { w: 90, h: 22, color: isLiability(a) ? 'var(--neg)' : 'var(--ink-accent)' })}</td></tr>`; }).join('')}
+  </tbody><tfoot><tr><th scope="row">${esc(nwLabel())}</th><td class="num total">${ago ? money(snapshotNW(ago, true), { cents: false }) : ''}</td><td class="num total">${money(totals(true).netWorth, { cents: false })}</td><td class="num total ${ago ? signClass(totals(true).netWorth - snapshotNW(ago, true)) : ''}">${ago ? money(totals(true).netWorth - snapshotNW(ago, true), { cents: false, sign: true }) : ''}</td><td class="hide-sm"></td></tr></tfoot></table>`;
 };
 function sankeyFromActs(acts) {
   const inc = [], groups = {};
@@ -316,9 +317,10 @@ VIEWS.data = () => {
 
   <section class="panel">
     <header class="panel-head"><h2>Household</h2></header>
-    <p class="muted">People in the household. Each account has an owner, and each transaction belongs to its account’s owner unless you choose someone else. Use Joint for shared spending.</p>
-    <div class="member-list">${members().map((m, i) => `<div class="member-row"><span class="person-dot big" style="background:${memberColor(m.id)}"></span><input data-member="${m.id}" value="${esc(m.name)}" aria-label="Name">${m.id !== 'joint' ? `<button class="icon-btn" data-member-del="${m.id}" aria-label="Remove ${esc(m.name)}">×</button>` : '<span class="muted small">shared</span>'}</div>`).join('')}</div>
-    <div class="actions"><button class="btn" data-act="add-member">Add a person</button></div>
+    <p class="muted">People in the household, and anyone else who owns accounts you track. Each account has an owner, and each transaction belongs to its account’s owner unless you choose someone else. Use Joint for shared spending.</p>
+    <div class="member-list">${members().map((m, i) => `<div class="member-row"><span class="person-dot big" style="background:${memberColor(m.id)}"></span><input data-member="${m.id}" value="${esc(m.name)}" aria-label="Name">${m.id !== 'joint' ? `<select class="member-role" data-member-role="${m.id}" aria-label="${esc(m.name)}: who they are">${roleOptions(roleOf(m.id))}</select><button class="icon-btn" data-member-del="${m.id}" aria-label="Remove ${esc(m.name)}">×</button>` : '<span class="muted small">shared</span>'}</div>`).join('')}</div>
+    <p class="muted small">Children’s accounts, irrevocable trusts, charities and anyone else’s are outside your estate: they’re listed on <a href="#/balance?t=out">Balance sheet › Out of estate</a> and left out of your net worth. A revocable trust counts as yours. Marking children also adds “Without the kids” to the menu at the top.</p>
+    <div class="actions"><button class="btn" data-act="add-member">Add a person</button><button class="btn ghost" data-act="add-entity">Add a trust, charity or other owner</button></div>
   </section>
 
   <section class="panel">
@@ -373,4 +375,9 @@ async function paintBackups() {
   const list = await listBackups();
   if (!list.length) { box.innerHTML = ''; return; }
   box.innerHTML = `<details><summary>${list.length} backup${list.length > 1 ? 's' : ''} in your folder</summary><ul class="plain">${list.slice(0, 40).map(b => `<li><span>${dateLabel(b.date, true)}</span> <button class="linklike small" data-restore="${esc(b.name)}">Restore</button></li>`).join('')}</ul></details>`;
+}
+
+function roleOptions(sel) {
+  const o = id => `<option value="${id}" ${sel === id ? 'selected' : ''}>${OWNER_ROLES[id]}${id === 'revocable' ? ' (in your estate)' : ''}</option>`;
+  return `<optgroup label="People">${o('adult')}${o('kid')}</optgroup><optgroup label="Others">${o('revocable')}${o('irrevocable')}${o('charity')}${o('other')}</optgroup>`;
 }

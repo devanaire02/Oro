@@ -4,11 +4,13 @@ try { UI.mode = localStorage.getItem('keel.mode') || 'detailed'; UI.lens = sessi
 
 const PAGES = [
   ['overview', 'Overview', ''], ['checkin', 'Check-in', ''], ['transactions', 'Transactions', ''], ['budget', 'Budget', ''], ['cashflow', 'Cash flow', ''],
-  ['accounts', 'Accounts', 'Wealth'], ['investments', 'Investments', 'Wealth'], ['property', 'Property', 'Wealth'],
+  ['accounts', 'Accounts', 'Wealth'], ['balance', 'Balance sheet', 'Wealth'], ['investments', 'Investments', 'Wealth'], ['property', 'Property', 'Wealth'],
   ['reports', 'Reports', 'Plan'], ['planning', 'Planning', 'Plan'], ['taxes', 'Taxes', 'Plan'], ['review', 'Monthly review', 'Plan'],
   ['data', 'Settings', 'end'],
 ];
-const LENS_PAGES = new Set(['overview', 'transactions', 'reports']);
+/* The whose-money menu filters these pages; Simple/Detailed changes these. Each shows only where it does something. */
+const LENS_PAGES = new Set(['overview', 'transactions', 'reports', 'accounts', 'investments', 'cashflow']);
+const MODE_PAGES = new Set(['overview', 'budget', 'transactions', 'accounts', 'reports', 'balance']);
 /* iPhone and iPad portrait: four main sections in a tab bar at the bottom, everything else under More */
 const TAB_PAGES = ['overview', 'transactions', 'budget', 'accounts'];
 const TAB_ICONS = {
@@ -40,11 +42,35 @@ const members = () => state.settings.members || [{ id: 'joint', name: 'Joint' }]
 const memberName = id => members().find(m => m.id === id)?.name || 'Joint';
 const memberColor = id => { const i = members().findIndex(m => m.id === id); return `var(--c${((i < 0 ? 0 : i) % 8) + 1})`; };
 function personOf(t) { return t.person || acctById(t.accountId)?.owner || 'joint'; }
+
+/* Owners: people (adults and children) and others (trusts, charities, someone else). Children's accounts, irrevocable
+   trusts, charities and others are outside your estate: listed on Balance sheet › Out of estate, left out of net worth. */
+const OWNER_ROLES = { adult: 'Adult', kid: 'Child', revocable: 'Revocable trust', irrevocable: 'Irrevocable trust', charity: 'Charity or DAF', other: 'Someone else' };
+const OUT_OF_ESTATE = new Set(['kid', 'irrevocable', 'charity', 'other']);
+const roleOf = id => (id || 'joint') === 'joint' ? 'joint' : (members().find(m => m.id === id)?.role || 'adult');
+const isPerson = id => ['joint', 'adult', 'kid'].includes(roleOf(id));
+const people = () => members().filter(m => isPerson(m.id));
+const inEstate = id => !OUT_OF_ESTATE.has(roleOf(id));
+const acctInEstate = a => inEstate(a.owner || 'joint');
+const hasKids = () => members().some(m => roleOf(m.id) === 'kid');
+
+/* The whose-money menu: '' everyone, 'nokids' everyone but the children, or one person */
+function lensOwners() {
+  if (!UI.lens) return null;
+  if (UI.lens === 'nokids') return hasKids() ? new Set(members().filter(m => roleOf(m.id) !== 'kid').map(m => m.id)) : null;
+  return members().some(m => m.id === UI.lens) ? new Set([UI.lens]) : null;
+}
+const lensActive = () => !!lensOwners();
+const inLens = id => { const s = lensOwners(); return !s || s.has(id || 'joint'); };
+function lensAccounts(list = activeAccounts()) { const s = lensOwners(); return s ? list.filter(a => s.has(a.owner || 'joint')) : list; }
+function lensLabel() { return !lensActive() ? 'Everyone' : UI.lens === 'nokids' ? 'Without the kids' : memberName(UI.lens); }
+/* When the menu shows one child (or a trust), their own accounts are what "net worth" means on screen */
+const lensSingleOut = () => lensActive() && UI.lens !== 'nokids' && !inEstate(UI.lens);
 /* A new account's owner: the person the menu is showing, otherwise joint */
 function defaultOwner() { return UI.lens && members().some(m => m.id === UI.lens) ? UI.lens : 'joint'; }
-function lensed(txs) { return UI.lens ? txs.filter(t => personOf(t) === UI.lens) : txs; }
-function memberOptions(sel, inherit) {
-  return (inherit ? `<option value="">${esc(inherit)}</option>` : '') + members().map(m => `<option value="${m.id}" ${m.id === sel ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
+function lensed(txs) { const s = lensOwners(); return s ? txs.filter(t => s.has(personOf(t))) : txs; }
+function memberOptions(sel, inherit, peopleOnly = false) {   // owners include trusts and charities; who spent something is a person
+  return (inherit ? `<option value="">${esc(inherit)}</option>` : '') + (peopleOnly ? people() : members()).map(m => `<option value="${m.id}" ${m.id === sel ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
 }
 
 /* Filters on these pages (month, account, category, report period, tax year…) stay as you left them while you move
@@ -112,25 +138,30 @@ function buildShell() {
 /* The More sheet on iPhone: the pages that aren't in the tab bar, plus Money date */
 function morePagesSheet() {
   const { page } = route();
-  const desc = { checkin: 'What needs you today, this week or this month', cashflow: 'Bills, paychecks and the next 90 days', investments: 'Holdings, allocation and fees', property: 'Home, rental and other assets', reports: 'Cash flow, spending, income statement', planning: 'Retirement, goals, debt payoff', taxes: 'Schedule E and deductions for your CPA', review: 'Close out the month together', data: 'Sync, security, household, rules' };
+  const desc = { balance: 'Who owns what, and what’s out of your estate', checkin: 'What needs you today, this week or this month', cashflow: 'Bills, paychecks and the next 90 days', investments: 'Holdings, allocation and fees', property: 'Home, rental and other assets', reports: 'Cash flow, spending, income statement', planning: 'Retirement, goals, debt payoff', taxes: 'Schedule E and deductions for your CPA', review: 'Close out the month together', data: 'Sync, security, household, rules' };
   const links = shownPages().filter(([id]) => !TAB_PAGES.includes(id)).map(([id, label]) => `<a class="more-link ${id === page ? 'on' : ''}" href="#/${id}" data-close><strong>${label}</strong><span>${desc[id] || ''}</span></a>`).join('');
   openModal({ title: 'More', body: `<div class="more-list">${links}</div>
     <div class="more-row"><button class="btn money-date-btn" data-act="more-money-date">Money date</button>
-    <div class="seg mode" role="group" aria-label="Detail level"><button class="${UI.mode === 'simple' ? 'on' : ''}" data-mode="simple">Simple</button><button class="${UI.mode === 'detailed' ? 'on' : ''}" data-mode="detailed">Detailed</button></div></div>` });
+    ${MODE_PAGES.has(page) ? `<div class="seg mode" role="group" aria-label="Detail level"><button class="${UI.mode === 'simple' ? 'on' : ''}" data-mode="simple">Simple</button><button class="${UI.mode === 'detailed' ? 'on' : ''}" data-mode="detailed">Detailed</button></div>` : ''}</div>` });
   $('#modal')?.classList.add('sheet');
+}
+function lensOptions() {
+  const sel = lensActive() ? UI.lens : '';
+  return `<option value="">Everyone</option>${hasKids() ? `<option value="nokids" ${sel === 'nokids' ? 'selected' : ''}>Without the kids</option>` : ''}`
+    + people().map(m => `<option value="${m.id}" ${sel === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
 }
 function paintTopbar(page) {
   const tb = $('#topbar'); if (!tb) return;
-  const lensOn = LENS_PAGES.has(page) || page === 'overview';
+  const lensOn = LENS_PAGES.has(page), modeOn = MODE_PAGES.has(page);
   tb.innerHTML = `
     <button class="search-btn" data-act="palette" aria-label="Search or jump to (Command K)"><span>Search or jump to…</span><kbd>⌘K</kbd></button>
     <div class="tb-right">
-      ${members().length > 1 ? `<label class="lens ${UI.lens ? 'on' : ''} ${lensOn ? '' : 'dim'}" title="${lensOn ? 'Show spending for one person' : 'The household lens applies to Overview, Transactions and Reports'}">
-        <span class="sr">Household lens</span>
-        <select id="lens-select" aria-label="Whose spending">${`<option value="">Everyone</option>` + members().map(m => `<option value="${m.id}" ${UI.lens === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></label>` : ''}
-      <div class="seg mode" role="group" aria-label="Detail level">
+      ${people().length > 1 && lensOn ? `<label class="lens ${lensActive() ? 'on' : ''}" title="Whose money to show on this page">
+        <span class="sr">Whose money</span>
+        <select id="lens-select" aria-label="Whose money">${lensOptions()}</select></label>` : ''}
+      ${modeOn ? `<div class="seg mode" role="group" aria-label="Detail level">
         <button class="${UI.mode === 'simple' ? 'on' : ''}" data-mode="simple">Simple</button><button class="${UI.mode === 'detailed' ? 'on' : ''}" data-mode="detailed">Detailed</button>
-      </div>
+      </div>` : ''}
       ${talkOn() ? `<button class="btn small talk-btn ${TALK.open ? 'on' : ''}" data-talk-open="" title="Talk to Ọrọ̀: change transactions or accounts by saying it (T)">${MIC_ICON} Talk</button>` : ''}
       <button class="btn small money-date-btn" data-act="money-date" title="Walk through a month together, one screen at a time">Money date</button>
       <button class="icon-btn eye" data-act="privacy" aria-pressed="${state.settings.privacy ? 'true' : 'false'}" title="${state.settings.privacy ? 'Show amounts' : 'Hide amounts'} (⇧P)">${state.settings.privacy ? EYE_OFF : EYE}</button>
@@ -255,7 +286,13 @@ function colophon() { return `<footer class="colophon"><span class="wordmark">�
 function pageHead(title, sub, actions = '') {
   return `<header class="page-head"><div><h1>${esc(title).replace(/Ọrọ̀/g, '<span class="wordmark">Ọrọ̀</span>')}</h1>${sub ? `<p class="sub">${sub}</p>` : ''}</div><div class="actions">${actions}</div></header>`;
 }
-function lensNote() { return UI.lens ? `<p class="lens-note">Showing ${esc(memberName(UI.lens))}’s spending only. <button class="linklike" data-lens="">Show everyone</button></p>` : ''; }
+/* "Net worth", "Net worth · Without the kids", or "Amara’s accounts" when the menu shows one child or trust */
+function nwLabel() { return !lensActive() ? 'Net worth' : lensSingleOut() ? `${memberName(UI.lens)}’s accounts` : UI.lens === 'nokids' ? 'Net worth' : `Net worth · ${memberName(UI.lens)}`; }
+function outEstateLine(t) {
+  if (!t.outAccounts || lensSingleOut()) return '';
+  return `<p class="out-estate-line"><a href="#/balance?t=out">Out of estate</a> <span class="num">${money(t.outEstate, { cents: false })}</span> <span class="muted">not counted: children’s accounts, trusts and others</span></p>`;
+}
+function lensNote() { return lensActive() ? `<p class="lens-note">${UI.lens === 'nokids' ? 'Showing everyone except the children.' : `Showing ${esc(memberName(UI.lens))}’s money only.`} <button class="linklike" data-lens="">Show everyone</button></p>` : ''; }
 function monthNav(mk, param = 'm') {
   return `<div class="month-nav" role="group" aria-label="Month">
     <button class="icon-btn" data-month="${addMonths(mk, -1)}" data-param="${param}" aria-label="Previous month">‹</button>

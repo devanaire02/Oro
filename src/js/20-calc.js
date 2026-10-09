@@ -44,21 +44,39 @@ function accountAsOf(a) {
   if (a.ledger) { const last = txByAccount(a.id).reduce((m, t) => t.date > m ? t.date : m, ''); const ad = a.anchorDate || a.balanceDate || ''; return last > ad ? last : ad; }
   return a.balanceDate;
 }
-function totals() {
-  return memo('totals', () => {
-    const t = { assets: 0, liabilities: 0, cash: 0, invest: 0, illiquid: 0, debt: 0 };
+/* Net worth is your estate's: accounts owned by children, irrevocable trusts, charities or others are counted apart
+   (t.outEstate). With useLens, only the owners the whose-money menu shows; picking one child shows their own. */
+function nwIncludes(a, useLens) {
+  if (!useLens || !lensActive()) return acctInEstate(a);
+  if (!inLens(a.owner)) return false;
+  return lensSingleOut() || acctInEstate(a);
+}
+function totals(useLens = false) {
+  return memo('totals' + (useLens ? ':' + UI.lens : ''), () => {
+    const t = { assets: 0, liabilities: 0, cash: 0, invest: 0, illiquid: 0, debt: 0, outEstate: 0, outAccounts: 0 };
     for (const a of activeAccounts()) {
+      if (useLens && !inLens(a.owner)) continue;
       const v = accountValue(a), b = ACCOUNT_TYPES[a.type]?.bucket || 'illiquid';
+      if (!nwIncludes(a, useLens)) { t.outEstate += isLiability(a) ? -v : v; t.outAccounts++; continue; }
       t[b] += v;
       if (isLiability(a)) t.liabilities += v; else t.assets += v;
     }
     t.netWorth = round2(t.assets - t.liabilities);
     t.liquid = round2(t.cash + t.invest);
+    t.outEstate = round2(t.outEstate);
     return t;
   });
 }
-function netWorthSeries() { return Object.keys(state.snapshots).sort().map(mk => ({ x: mk, y: round2(sum(Object.values(state.snapshots[mk]))) })); }
-function snapshotNW(mk) { const s = state.snapshots[mk]; return s ? round2(sum(Object.values(s))) : null; }
+function nwSnapshotSum(s, useLens) {
+  let tot = 0;
+  for (const [id, v] of Object.entries(s)) {
+    const a = acctById(id);
+    if (a ? nwIncludes(a, useLens) : !(useLens && lensActive())) tot += v;   // an account since deleted counts in the household history
+  }
+  return round2(tot);
+}
+function netWorthSeries(useLens = false) { return Object.keys(state.snapshots).sort().map(mk => ({ x: mk, y: nwSnapshotSum(state.snapshots[mk], useLens) })); }
+function snapshotNW(mk, useLens = false) { const s = state.snapshots[mk]; return s ? nwSnapshotSum(s, useLens) : null; }
 
 /* ---------- rules ---------- */
 /* A rule matches on payee text and, optionally, the amount (exactly, between, more or less than), the direction
@@ -161,10 +179,10 @@ function rentalPnL(group, from, to) {
 }
 
 /* ---------- allocation ---------- */
-function allocation() {
+function allocation(accts) {
   const m = {};
   const add = (k, v) => { if (v) m[k] = (m[k] || 0) + v; };
-  for (const a of activeAccounts()) {
+  for (const a of accts || activeAccounts().filter(acctInEstate)) {
     if (isLiability(a)) continue;
     const hs = holdingsFor(a.id);
     if (hs.length) { hs.forEach(h => add(h.assetClass || 'Unclassified', holdingValue(h))); add('Cash', Number(a.cash) || 0); }
@@ -173,9 +191,9 @@ function allocation() {
   const total = sum(Object.values(m));
   return { total, rows: [...ASSET_CLASSES, 'Unclassified'].filter(k => m[k]).map(k => ({ cls: k, value: round2(m[k]), share: total ? m[k] / total : 0 })) };
 }
-function investableAllocation(includePrivate = true) {
+function investableAllocation(includePrivate = true, accts) {
   const m = {};
-  for (const a of activeAccounts()) {
+  for (const a of accts || activeAccounts().filter(acctInEstate)) {
     const b = ACCOUNT_TYPES[a.type]?.bucket;
     if (b !== 'invest' && !(includePrivate && a.type === 'private')) continue;
     const hs = holdingsFor(a.id);
@@ -205,13 +223,15 @@ function occurrences(r, from, to) {
   while (d && d <= to && guard++ < 1600) { out.push(d); d = nextOccurrence(d, r.freq); }
   return out;
 }
-function forecastAccounts() { return activeAccounts().filter(a => a.forecast ?? ACCOUNT_TYPES[a.type]?.forecast); }
-function forecast(days = 90) {
-  return memo('fc:' + days, () => {
+function forecastAccounts(useLens = false) { return (useLens ? lensAccounts() : activeAccounts()).filter(a => a.forecast ?? ACCOUNT_TYPES[a.type]?.forecast); }
+/* A bill or paycheck belongs to its account's owner; one with no account is household (joint) money */
+const recurringInLens = r => inLens(r.accountId ? acctById(r.accountId)?.owner || 'joint' : 'joint');
+function forecast(days = 90, useLens = false) {
+  return memo('fc:' + days + (useLens ? ':' + UI.lens : ''), () => {
     const start = today(), end = addDays(start, days);
-    const startBal = round2(sum(forecastAccounts().map(accountValue)));
+    const startBal = round2(sum(forecastAccounts(useLens).map(accountValue)));
     const events = [];
-    for (const r of state.recurring) for (const d of occurrences(r, addDays(start, 1), end)) events.push({ date: d, amount: Number(r.amount) || 0, name: r.name, id: r.id });
+    for (const r of state.recurring) if (!useLens || recurringInLens(r)) for (const d of occurrences(r, addDays(start, 1), end)) events.push({ date: d, amount: Number(r.amount) || 0, name: r.name, id: r.id });
     events.sort((a, b) => a.date.localeCompare(b.date));
     const series = []; let bal = startBal, i = 0, low = { y: startBal, x: start };
     for (let k = 0; k <= days; k++) {
@@ -223,9 +243,9 @@ function forecast(days = 90) {
     return { startBal, series, events, low, end: round2(bal) };
   });
 }
-function upcoming(days = 14) {
+function upcoming(days = 14, useLens = false) {
   const from = today(), to = addDays(from, days), out = [];
-  for (const r of state.recurring) for (const d of occurrences(r, from, to)) out.push({ date: d, name: r.name, amount: Number(r.amount) || 0, id: r.id });
+  for (const r of state.recurring) if (!useLens || recurringInLens(r)) for (const d of occurrences(r, from, to)) out.push({ date: d, name: r.name, amount: Number(r.amount) || 0, id: r.id });
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
 

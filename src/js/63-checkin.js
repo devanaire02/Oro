@@ -407,7 +407,7 @@ function ciCardHtml(item, q) {
       </div>
       ${alts.length && !choosing ? `<div class="ci-chips">${alts.map(id => `<button class="ci-chip" data-ci="cat" data-v="${id}">${esc(catName(id))}</button>`).join('')}</div>` : ''}
       <div class="ci-row">
-        ${members().length > 1 ? `<label class="ci-who"><span>For</span><select data-ci-person aria-label="Who it’s for">${memberOptions(t.person || '', `${owner} (account owner)`)}</select></label>` : ''}
+        ${members().length > 1 ? `<label class="ci-who"><span>For</span><select data-ci-person aria-label="Who it’s for">${memberOptions(t.person || '', `${owner} (account owner)`, true)}</select></label>` : ''}
         ${key ? `<label class="check small ci-always"><input type="checkbox" id="ci-always"> Always for “${esc(prettyPayee(key))}”</label>` : ''}
       </div>
       ${foot(t.flag ? '' : `<button class="btn ghost" data-ci="flag">${FLAG_ICON} Flag it</button>`)}

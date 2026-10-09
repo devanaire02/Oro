@@ -1177,3 +1177,34 @@ body.talk-open .main-wrap { margin-right: 390px; }
 .fees-panel .cur { color: var(--muted); margin-left: 3px; }
 .fees-panel .actions { margin-top: 10px; }
 @media (max-width: 640px) { .fees-panel .fee-er { width: 4.6em; } .fees-panel .ledger th, .fees-panel .ledger td { padding-left: 4px; padding-right: 4px; } }
+/* ---------- owners and the estate ---------- */
+.member-row { flex-wrap: wrap; }
+.member-row .member-role { flex: 0 1 190px; min-width: 0; }
+.out-estate-line { margin: 10px 0 0; font-size: 13.5px; }
+.out-estate-line a { color: inherit; }
+.acct-group.out-group table { opacity: .92; }
+.acct-table .out-row th, .acct-table .out-row td { font-size: 14px; padding-top: 10px; }
+/* ---------- Balance sheet ---------- */
+.bs-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 24px; margin: 4px 0 18px; }
+.bs-kpis dd { font: 600 26px var(--serif); margin: 2px 0 0; }
+.bs-kpis dt a { color: inherit; }
+.bs-wrap { background: var(--sheet); border: 1px solid var(--rule); border-radius: 10px; padding: 2px 14px 6px; box-shadow: var(--shadow); }
+.bs-table { min-width: 560px; }
+.bs-table thead th { white-space: nowrap; vertical-align: bottom; }
+.bs-table thead .person-dot { margin-right: 5px; }
+.bs-table .bs-role { display: block; font-weight: 400; }
+.bs-table tbody th { font-weight: 500; }
+.bs-table .bs-inst { display: block; font-weight: 400; }
+.bs-table .bs-sect th { font: 600 13px var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding-top: 18px; border-bottom: 1px solid var(--rule-strong); }
+.bs-table .bs-acct th { padding-left: 14px; }
+.bs-table .bs-sub th, .bs-table .bs-sub td { font-weight: 600; border-bottom: 1px solid var(--rule); }
+.bs-table .bs-sub:not(.flat) th, .bs-table .bs-sub:not(.flat) td { color: var(--ink); background: color-mix(in srgb, var(--pad) 60%, transparent); }
+.bs-table .bs-total th, .bs-table .bs-total td { font-weight: 700; border-top: 1px solid var(--rule-strong); }
+.bs-table .bs-nw th, .bs-table .bs-nw td { font: 700 16px var(--serif); border-top: 2px solid var(--ink); border-bottom: 3px double var(--ink); padding-top: 10px; padding-bottom: 10px; }
+.bs-table .bs-tot { font-weight: 600; }
+.bs-table tbody th, .bs-table thead th:first-child { position: sticky; left: 0; background: var(--sheet); z-index: 1; }
+.bs-note { margin-top: 10px; }
+@media (max-width: 640px) { .bs-wrap { padding: 0 6px 4px; } .bs-table { min-width: 0; } .bs-table tbody th, .bs-table thead th:first-child { min-width: 9.5em; box-shadow: 6px 0 8px -8px rgba(0,0,0,.25); } .bs-swipe { margin: 0 0 6px; } .bs-table th, .bs-table td { padding-left: 6px; padding-right: 6px; } .bs-kpis dd { font-size: 21px; } }
+@media print { .bs-table { min-width: 0; } .bs-table tbody th, .bs-table thead th:first-child { position: static; } }
+/* Three figures side by side don't fit a 320px phone: two to a row there */
+@media (max-width: 400px) { .kpis.three { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

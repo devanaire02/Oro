@@ -1,20 +1,21 @@
 /* ================= Investments ================= */
 VIEWS.investments = () => {
-  const accts = activeAccounts().filter(a => ACCOUNT_TYPES[a.type]?.bucket === 'invest' || a.type === 'private');
+  const accts = lensAccounts().filter(a => ACCOUNT_TYPES[a.type]?.bucket === 'invest' || a.type === 'private');
+  if (!accts.length && lensActive()) return pageHead('Investments') + lensNote() + emptyState(`No investment accounts for ${esc(lensLabel())}`, 'Choose Everyone in the menu at the top to see all of them.', '');
   if (!accts.length) return pageHead('Investments') + emptyState('No investment accounts yet', 'Add a brokerage, retirement, 529, cryptocurrency or private account, then import a positions file from your brokerage or enter holdings (or coins) by hand.', `<button class="btn primary" data-act="add-account" data-type="brokerage">Add an investment account</button><button class="btn" data-act="import">Import positions</button>`);
   const total = sum(accts.map(accountValue));
   const hs = state.holdings.filter(h => accts.some(a => a.id === h.accountId));
   const withCost = hs.filter(h => h.costBasis != null && h.costBasis !== '' && h.assetClass !== 'Cash');
   const cost = sum(withCost.map(h => +h.costBasis)), mval = sum(withCost.map(holdingValue));
-  const alloc = investableAllocation();
+  const alloc = investableAllocation(true, accts);
   const allocTotal = sum(Object.values(alloc));
   const classes = [...ASSET_CLASSES, 'Unclassified'].filter(c => alloc[c] || state.settings.targets[c]);
   const targetSum = sum(Object.values(state.settings.targets || {}));
-  const all = allocation();
+  const all = allocation(lensAccounts());
   const re = all.rows.find(r => r.cls === 'Real estate');
 
   return pageHead('Investments', `${accts.length} account${accts.length > 1 ? 's' : ''}, ${hs.length} holding${hs.length === 1 ? '' : 's'}`,
-    `${(() => { const many = accts.filter(a => holdingsFor(a.id).length); return many.length > 1 ? `<button class="btn ghost" data-act="holdings-all">${many.every(a => holdingsCollapsed()[a.id]) ? 'Expand all' : 'Collapse all'}</button>` : ''; })()}<button class="btn" data-act="import">Import positions</button><button class="btn primary" data-act="add-holding">Add holding</button>`) + `
+    `${(() => { const many = accts.filter(a => holdingsFor(a.id).length); return many.length > 1 ? `<button class="btn ghost" data-act="holdings-all">${many.every(a => holdingsCollapsed()[a.id]) ? 'Expand all' : 'Collapse all'}</button>` : ''; })()}<button class="btn" data-act="import">Import positions</button><button class="btn primary" data-act="add-holding">Add holding</button>`) + lensNote() + `
   <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Market value</th><th class="num hide-sm">Cost basis</th><th class="num">Unrealized gain</th><th class="num">Return on cost</th></tr></thead>
     <tbody><tr><th scope="row">All investments</th><td class="num">${money(total, { cents: false })}</td><td class="num hide-sm">${cost ? money(cost, { cents: false }) : '—'}</td><td class="num ${signClass(mval - cost)}">${cost ? money(mval - cost, { cents: false, sign: true }) : '—'}</td><td class="num ${signClass(mval - cost)}">${cost ? pct((mval - cost) / cost) : '—'}</td></tr></tbody></table>
     <p class="muted small">Gains count only holdings with a cost basis. Cash positions are left out.</p></section>
@@ -35,7 +36,7 @@ VIEWS.investments = () => {
     ${re ? `<p class="muted small">Counting your property too, real estate is ${pct(re.share, 0)} of everything you own.</p>` : ''}
   </section>
   ${(() => {
-    const fa = feeAnalysis();
+    const fa = feeAnalysis(accts);
     const months = Object.keys(state.snapshots).sort().slice(-24);
     const histAccts = accts.filter(a => months.some(m => state.snapshots[m][a.id]));
     return `<div class="cols">
@@ -53,7 +54,7 @@ VIEWS.investments = () => {
     const v = accountValue(a);
     const folded = list.length && holdingsCollapsed()[a.id];
     return `<section class="acct-group"><table class="ledger holdings-table ${folded ? 'collapsed' : ''}" data-sort-id="holdings" data-acct="${a.id}"><colgroup><col style="width:10%"><col style="width:24%"><col class="hide-sm" style="width:17%"><col class="hide-sm" style="width:9%"><col class="hide-sm" style="width:10%"><col style="width:11%"><col class="hide-sm" style="width:10%"><col style="width:9%"></colgroup>
-      <thead><tr><th scope="col" colspan="2">${list.length ? collapseBtn(a, folded) : ''}<button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button>${list.length ? ` <span class="coll-count muted small">${list.length} holding${list.length === 1 ? '' : 's'}</span>` : ''} <span class="muted small">${esc(ACCOUNT_TYPES[a.type].label)}${a.institution ? `, ${esc(a.institution)}` : ''}</span></th><th class="hide-sm">Class</th><th class="num hide-sm">${crypto ? 'Amount' : 'Shares'}</th><th class="num hide-sm">Price</th><th class="num">Value</th><th class="num hide-sm">Cost basis</th><th class="num">Gain</th></tr></thead>
+      <thead><tr><th scope="col" colspan="2">${list.length ? collapseBtn(a, folded) : ''}<button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button>${acctInEstate(a) ? '' : ' <span class="tag soft">out of estate</span>'}${list.length ? ` <span class="coll-count muted small">${list.length} holding${list.length === 1 ? '' : 's'}</span>` : ''} <span class="muted small">${esc(ACCOUNT_TYPES[a.type].label)}${a.institution ? `, ${esc(a.institution)}` : ''}</span></th><th class="hide-sm">Class</th><th class="num hide-sm">${crypto ? 'Amount' : 'Shares'}</th><th class="num hide-sm">Price</th><th class="num">Value</th><th class="num hide-sm">Cost basis</th><th class="num">Gain</th></tr></thead>
       <tbody>${list.length ? list.map(h => {
         const hv = holdingValue(h), g = h.costBasis != null && h.costBasis !== '' ? hv - h.costBasis : null;
         const old = h.private && daysBetween(h.priceDate || '2000-01-01', today()) > 90;
@@ -124,20 +125,21 @@ VIEWS.property = () => {
 
 /* ================= Cash flow ================= */
 VIEWS.cashflow = () => {
-  const fa = forecastAccounts();
+  const fa = forecastAccounts(true);
   const days = 90;
-  const f = forecast(days);
-  const rep = detectRepeating();
+  const f = forecast(days, true);
+  const recs = state.recurring.filter(recurringInLens);   // the whose-money menu: bills and income for those accounts (no account = household)
+  const rep = detectRepeating().filter(r => inLens(acctById(r.accountId)?.owner || 'joint'));
   const repNew = rep.filter(r => !r.tracked);
   const months = Array.from({ length: 12 }, (_, i) => addMonths(thisMonth(), i - 11));
-  const flows = months.map(m => flowSummary(txInMonth(m)));
+  const flows = months.map(m => flowSummary(lensed(txInMonth(m))));
   const low = state.settings.lowCash || 0;
   const lowIdx = f.series.findIndex(p => p.x === f.low.x);
   return pageHead('Cash flow', fa.length ? `${money(f.startBal, { cents: false })} on hand across ${fa.map(a => esc(a.name)).join(', ')}` : 'Mark checking or savings accounts to include in the forecast.',
-    `<button class="btn primary" data-act="add-recurring">Add a bill or paycheck</button>`) + `
+    `<button class="btn primary" data-act="add-recurring">Add a bill or paycheck</button>`) + lensNote() + `
   <section class="panel">
     <header class="panel-head"><h2>Next ${days} days</h2><span class="muted small">Lowest point ${money(f.low.y, { cents: false })} on ${dateLabel(f.low.x)}. ${money(f.end, { cents: false })} on ${dateLabel(addDays(today(), days))}.</span></header>
-    ${state.recurring.length ? chartHost({ h: 230, label: 'Projected cash balance', series: [{ points: f.series, color: 'var(--ink-accent)', area: true }], threshold: low || null, thresholdLabel: low ? `Cushion ${moneyCompact(low)}` : '', zero: true,
+    ${recs.length ? chartHost({ h: 230, label: 'Projected cash balance', series: [{ points: f.series, color: 'var(--ink-accent)', area: true }], threshold: low || null, thresholdLabel: low ? `Cushion ${moneyCompact(low)}` : '', zero: true,
       xFmt: x => dateLabel(x), markers: lowIdx > 0 ? [{ i: lowIdx, y: f.low.y, label: `Low ${moneyCompact(f.low.y)}`, below: true }] : [],
       tip: i => { const p = f.series[i]; const ev = f.events.filter(e => e.date === p.x); return `<strong>${dateLabel(p.x)}</strong><br>${money(p.y, { cents: false })}${ev.map(e => `<br><span class="muted">${esc(e.name)} ${money(e.amount, { cents: false, sign: true })}</span>`).join('')}`; } })
       : `<p class="muted">Add your paychecks, mortgage or rent, and other regular bills to project your cash balance day by day.</p>`}
@@ -147,10 +149,10 @@ VIEWS.cashflow = () => {
   ${billCalendar(route().params.cm || thisMonth())}
   <div class="cols">
     <section class="panel">
-      <header class="panel-head"><h2>Bills and income</h2><span class="muted small">${state.recurring.length} scheduled</span></header>
-      ${state.recurring.length ? `<table class="ledger compact" data-sort-id="bills"><thead><tr><th>Name</th><th class="hide-sm">How often</th><th>Next</th><th class="num">Amount</th></tr></thead><tbody>
-      ${[...state.recurring].sort((a, b) => occurrences(a, today(), '9999-12-31')[0]?.localeCompare(occurrences(b, today(), '9999-12-31')[0] || '') || 0).map(r => `<tr><th scope="row"><button class="linklike" data-edit-rec="${r.id}">${esc(r.name)}</button></th><td class="hide-sm muted">${FREQS[r.freq]}</td><td class="nowrap" data-v="${occurrences(r, today(), '9999-12-31')[0] || ''}">${dateLabel(occurrences(r, today(), '9999-12-31')[0])}</td><td class="num ${signClass(r.amount)}">${money(r.amount)}</td></tr>`).join('')}
-      </tbody><tfoot><tr><th scope="row" colspan="3">Net per month (approximate)</th><td class="num total">${money(sum(state.recurring.map(r => r.amount * ({ weekly: 52, biweekly: 26, semimonthly: 24, monthly: 12, quarterly: 4, semiannual: 2, annual: 1 }[r.freq] || 12) / 12)), { cents: false })}</td></tr></tfoot></table>`
+      <header class="panel-head"><h2>Bills and income</h2><span class="muted small">${recs.length} scheduled</span></header>
+      ${recs.length ? `<table class="ledger compact" data-sort-id="bills"><thead><tr><th>Name</th><th class="hide-sm">How often</th><th>Next</th><th class="num">Amount</th></tr></thead><tbody>
+      ${[...recs].sort((a, b) => occurrences(a, today(), '9999-12-31')[0]?.localeCompare(occurrences(b, today(), '9999-12-31')[0] || '') || 0).map(r => `<tr><th scope="row"><button class="linklike" data-edit-rec="${r.id}">${esc(r.name)}</button></th><td class="hide-sm muted">${FREQS[r.freq]}</td><td class="nowrap" data-v="${occurrences(r, today(), '9999-12-31')[0] || ''}">${dateLabel(occurrences(r, today(), '9999-12-31')[0])}</td><td class="num ${signClass(r.amount)}">${money(r.amount)}</td></tr>`).join('')}
+      </tbody><tfoot><tr><th scope="row" colspan="3">Net per month (approximate)</th><td class="num total">${money(sum(recs.map(r => r.amount * ({ weekly: 52, biweekly: 26, semimonthly: 24, monthly: 12, quarterly: 4, semiannual: 2, annual: 1 }[r.freq] || 12) / 12)), { cents: false })}</td></tr></tfoot></table>`
       : '<p class="muted">Nothing scheduled yet.</p>'}
     </section>
     <section class="panel">
@@ -174,7 +176,7 @@ VIEWS.cashflow = () => {
 function billCalendar(mk) {
   const first = fromISO(`${mk}-01`), startDow = first.getDay(), dim = +monthEnd(mk).slice(8);
   const ev = {};
-  for (const r of state.recurring) for (const d of occurrences(r, `${mk}-01`, monthEnd(mk))) (ev[d] = ev[d] || []).push(r);
+  for (const r of state.recurring) if (recurringInLens(r)) for (const d of occurrences(r, `${mk}-01`, monthEnd(mk))) (ev[d] = ev[d] || []).push(r);
   const totalOut = sum(Object.values(ev).flat().filter(r => r.amount < 0).map(r => r.amount)), totalIn = sum(Object.values(ev).flat().filter(r => r.amount > 0).map(r => r.amount));
   let cells = '';
   for (let i = 0; i < startDow; i++) cells += '<div class="cal-cell empty"></div>';
@@ -262,7 +264,7 @@ VIEWS.review = p => {
     </section>
   </div>
 
-  ${members().length > 1 ? (() => { const per = members().map(m => ({ m, f: flowSummary(txs.filter(t => personOf(t) === m.id)) })).filter(x => x.f.spending > 0); const tot = sum(per.map(x => x.f.spending)) || 1; return per.length ? `<section class="panel"><header class="panel-head"><h2>Who spent what</h2><a href="#/reports?r=people&p=custom&from=${mk}-01&to=${monthEnd(mk)}">Details</a></header>
+  ${people().length > 1 ? (() => { const per = people().map(m => ({ m, f: flowSummary(txs.filter(t => personOf(t) === m.id)) })).filter(x => x.f.spending > 0); const tot = sum(per.map(x => x.f.spending)) || 1; return per.length ? `<section class="panel"><header class="panel-head"><h2>Who spent what</h2><a href="#/reports?r=people&p=custom&from=${mk}-01&to=${monthEnd(mk)}">Details</a></header>
     <div class="stack tall">${per.map(x => `<span style="width:${x.f.spending / tot * 100}%;background:${memberColor(x.m.id)}"></span>`).join('')}</div>
     <p class="legend">${per.map(x => `<span><i style="background:${memberColor(x.m.id)}"></i>${esc(x.m.name)} ${money(x.f.spending, { cents: false })} (${pct(x.f.spending / tot, 0)})</span>`).join('')}</p></section>` : ''; })() : ''}
   ${state.goals.length ? `<section class="panel"><header class="panel-head"><h2>Goals</h2></header><div class="goal-strip">${state.goals.map(goalTile).join('')}</div></section>` : ''}

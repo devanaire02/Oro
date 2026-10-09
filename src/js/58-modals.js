@@ -70,7 +70,7 @@ function txnModal(id) {
       <label class="field wide"><span>Payee</span><input name="payee" value="${esc(v.payee)}" required autofocus></label>
       <label class="field"><span>Account</span><select name="accountId">${acctOptions(v.accountId)}</select></label>
       <div class="field" id="cat-field"></div>
-      ${multi ? `<label class="field"><span>Whose</span><select name="person">${memberOptions(v.person || '', `Account owner (${memberName(acctById(v.accountId)?.owner || 'joint')})`)}</select></label>` : ''}
+      ${multi ? `<label class="field"><span>Whose</span><select name="person">${memberOptions(v.person || '', `Account owner (${memberName(acctById(v.accountId)?.owner || 'joint')})`, true)}</select></label>` : ''}
       <label class="field ${multi ? '' : 'wide'}"><span>Tags</span><input name="tags" value="${esc((v.tags || []).join(', '))}" placeholder="e.g. vacation, tax" list="tag-list-m"><datalist id="tag-list-m">${allTags().map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>
       <label class="field wide"><span>Memo</span><input name="memo" value="${esc(v.memo || '')}" placeholder="${v.flag ? 'What to check, e.g. ask Julissa' : ''}"></label>
       <label class="check wide flag-check"><input type="checkbox" name="flag" id="tx-flag" ${v.flag ? 'checked' : ''}> ${FLAG_ICON} Flag it: not sure what this was for</label>
@@ -150,7 +150,7 @@ function txnModal(id) {
 function acctModal(id, presetType) {
   const a = id ? acctById(id) : null;
   if (a) UI.talkCtx = { kind: 'acct', id: a.id, at: Date.now() };
-  const v = a || { name: '', type: presetType || 'checking', institution: '', balance: '', balanceDate: today(), owner: UI.lens || 'joint' };
+  const v = a || { name: '', type: presetType || 'checking', institution: '', balance: '', balanceDate: today(), owner: defaultOwner() };
   const hasHoldings = a && holdingsFor(a.id).length;
   const loans = activeAccounts().filter(x => ['mortgage', 'loan', 'otherLiability'].includes(x.type));
   const rentalGroups = [...new Set(state.categories.filter(c => c.rental).map(c => c.group))];
@@ -391,13 +391,14 @@ function recModal(id, preset) {
       <label class="field"><span>How often</span><select name="freq">${Object.entries(FREQS).map(([k, l]) => `<option value="${k}" ${k === v.freq ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="field"><span>Next date</span><input type="date" name="nextDate" value="${v.nextDate}"></label>
       <label class="field"><span>Category</span><select name="categoryId">${catOptions(v.categoryId)}</select></label>
+      <label class="field"><span>Paid from or into</span><select name="accountId"><option value="">Household (no particular account)</option>${forecastAccounts().map(a => `<option value="${a.id}" ${a.id === v.accountId ? 'selected' : ''}>${esc(a.name)}${people().length > 1 ? ` (${esc(memberName(a.owner || 'joint'))})` : ''}</option>`).join('')}</select><small class="muted">Lets Cash flow show it when the menu at the top picks one person</small></label>
     </form>`,
     actions: `${r ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${r ? 'Save' : 'Add'}</button>`,
   });
   $('#save').onclick = () => {
     const d = formData($('#f')), amount = parseAmount(d.amount);
     if (!d.name.trim() || !isFinite(amount) || !d.nextDate) return toast('Fill in a name, amount and next date.');
-    const rec = { name: d.name.trim(), amount: round2(amount), freq: d.freq, nextDate: d.nextDate, categoryId: d.categoryId || null };
+    const rec = { name: d.name.trim(), amount: round2(amount), freq: d.freq, nextDate: d.nextDate, categoryId: d.categoryId || null, accountId: d.accountId || null };
     if (r) Object.assign(r, rec); else state.recurring.push({ id: uid(), ...rec });
     closeModal(); commit();
   };
@@ -511,7 +512,7 @@ function ruleModal(id, preset = {}) {
         ${from ? `<div class="rule-quick"><span class="muted small">This one was ${money(Math.abs(from.amount))} ${from.amount > 0 ? 'into' : 'from'} ${esc(fromAcct?.name || 'an account')}.</span> <button type="button" class="btn small ghost" id="rule-this-amt">Match this amount</button>${fromAcct ? `<button type="button" class="btn small ghost" id="rule-this-acct">Only this account</button>` : ''}</div>` : ''}
       </fieldset>
       <label class="field"><span>Set the category to</span><select name="categoryId">${catOptions(v.categoryId, false)}</select></label>
-      ${members().length > 1 ? `<label class="field"><span>And the person to</span><select name="person">${memberOptions(v.person || '', 'Leave as account owner')}</select></label>` : ''}
+      ${members().length > 1 ? `<label class="field"><span>And the person to</span><select name="person">${memberOptions(v.person || '', 'Leave as account owner', true)}</select></label>` : ''}
       <label class="field"><span>And rename the payee to</span><input name="rename" value="${esc(v.rename || '')}" placeholder="Optional"></label>
       <div class="wide rule-preview" id="rule-preview"></div>
     </form>`,
