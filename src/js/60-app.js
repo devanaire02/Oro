@@ -21,7 +21,8 @@ const ACTIONS = {
   'tx-clear': () => {   // everything: all months, no account/category/person/flag/tag filter, no search, everyone's spending
     UI.txFilters = undefined;
     if (UI.lens) { UI.lens = ''; try { sessionStorage.setItem('keel.lens', ''); } catch (e2) { /* ignore */ } }
-    go('#/transactions?m=all');
+    const sort = route().params.sort;   // the sort order isn't a filter, so it stays
+    go(`#/transactions?m=all${sort ? `&sort=${encodeURIComponent(sort)}` : ''}`);
   },
   'tx-select': () => { UI.txSelect = !UI.txSelect; if (!UI.txSelect) { $$('.tx-cb:checked').forEach(c => { c.checked = false; }); } render(); },
   'more-money-date': () => { closeModal(true); ACTIONS['money-date'](); },

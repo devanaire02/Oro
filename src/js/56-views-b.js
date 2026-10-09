@@ -22,12 +22,12 @@ VIEWS.investments = () => {
   <section class="panel">
     <header class="panel-head"><h2>Allocation</h2><span class="muted small">Targets ${targetSum ? `add to ${targetSum}%` : 'are optional'}</span></header>
     <div class="stack" role="img" aria-label="Investment allocation">${classes.filter(c => alloc[c]).map(c => `<span style="width:${(alloc[c] / allocTotal) * 100}%;background:${CLASS_COLORS[c]}" title="${esc(c)} ${pct(alloc[c] / allocTotal)}"></span>`).join('')}</div>
-    <table class="ledger compact alloc-table"><thead><tr><th>Asset class</th><th class="num hide-sm">Value</th><th class="num">Actual</th><th class="num">Target</th><th class="num">Drift</th><th class="num hide-sm">To rebalance</th></tr></thead><tbody>
+    <table class="ledger compact alloc-table" data-sort-id="alloc"><thead><tr><th>Asset class</th><th class="num hide-sm">Value</th><th class="num">Actual</th><th class="num">Target</th><th class="num">Drift</th><th class="num hide-sm">To rebalance</th></tr></thead><tbody>
     ${classes.map(c => {
       const v = alloc[c] || 0, share = allocTotal ? v / allocTotal : 0, tgt = state.settings.targets[c];
       const drift = tgt != null && tgt !== '' ? share - tgt / 100 : null;
       return `<tr><th scope="row"><span class="swatch" style="background:${CLASS_COLORS[c]}"></span>${esc(c)}</th><td class="num hide-sm">${money(v, { cents: false })}</td><td class="num">${pct(share)}</td>
-        <td class="num budget-cell"><input class="budget-input" id="tg-${slug(c)}" data-target="${esc(c)}" inputmode="decimal" value="${tgt ?? ''}" placeholder="—" aria-label="Target for ${esc(c)}"><span class="cur">%</span></td>
+        <td class="num budget-cell" data-v="${tgt ?? ''}"><input class="budget-input" id="tg-${slug(c)}" data-target="${esc(c)}" inputmode="decimal" value="${tgt ?? ''}" placeholder="—" aria-label="Target for ${esc(c)}"><span class="cur">%</span></td>
         <td class="num ${drift == null ? '' : Math.abs(drift) >= 0.05 ? 'neg' : 'muted'}">${drift == null ? '—' : (drift >= 0 ? '+' : '−') + Math.abs(drift * 100).toFixed(1) + ' pts'}</td>
         <td class="num hide-sm">${drift == null ? '' : money(-drift * allocTotal, { cents: false, sign: true })}</td></tr>`;
     }).join('')}</tbody></table>
@@ -41,7 +41,7 @@ VIEWS.investments = () => {
     <section class="panel">
       <header class="panel-head"><h2>What you pay in fund fees</h2><span class="muted small">${fa.coverage < 0.999 ? `Covers ${pct(fa.coverage, 0)} of holdings` : ''}</span></header>
       ${fa.value ? `<dl class="kpis three"><div><dt>Weighted expense ratio</dt><dd class="num">${fa.weighted.toFixed(2)}%</dd></div><div><dt>Per year</dt><dd class="num">${money(fa.fees, { cents: false })}</dd></div><div><dt>Over 20 years</dt><dd class="num">${money(fa.drag, { cents: false })}</dd><span class="muted small">Growth lost at 6% a year</span></div></dl>
-      <table class="ledger compact"><thead><tr><th>Fund</th><th class="num">Expense ratio</th><th class="num">Per year</th></tr></thead><tbody>${fa.top.slice(0, 5).map(x => `<tr><th scope="row"><button class="linklike" data-edit-holding="${x.h.id}">${esc(x.h.symbol)}</button> <span class="muted small">${esc(x.h.name || '')}</span></th><td class="num ${x.er >= 0.5 ? 'neg' : ''}">${x.er.toFixed(2)}%</td><td class="num">${money(x.fee, { cents: false })}</td></tr>`).join('')}</tbody></table>
+      <table class="ledger compact" data-sort-id="fees"><thead><tr><th>Fund</th><th class="num">Expense ratio</th><th class="num">Per year</th></tr></thead><tbody>${fa.top.slice(0, 5).map(x => `<tr><th scope="row"><button class="linklike" data-edit-holding="${x.h.id}">${esc(x.h.symbol)}</button> <span class="muted small">${esc(x.h.name || '')}</span></th><td class="num ${x.er >= 0.5 ? 'neg' : ''}">${x.er.toFixed(2)}%</td><td class="num">${money(x.fee, { cents: false })}</td></tr>`).join('')}</tbody></table>
       ${fa.unknown.length ? `<p class="muted small">No expense ratio on file for ${fa.unknown.slice(0, 4).map(h => esc(h.symbol)).join(', ')}${fa.unknown.length > 4 ? '…' : ''}. Add it in each holding.</p>` : ''}`
       : '<p class="muted">Add holdings to see the fees inside your funds.</p>'}
     </section>
@@ -56,7 +56,7 @@ VIEWS.investments = () => {
   ${accts.map(a => {
     const list = holdingsFor(a.id).sort((x, y) => holdingValue(y) - holdingValue(x));
     const v = accountValue(a);
-    return `<section class="acct-group"><table class="ledger holdings-table"><colgroup><col style="width:10%"><col style="width:24%"><col class="hide-sm" style="width:17%"><col class="hide-sm" style="width:9%"><col class="hide-sm" style="width:10%"><col style="width:11%"><col class="hide-sm" style="width:10%"><col style="width:9%"></colgroup>
+    return `<section class="acct-group"><table class="ledger holdings-table" data-sort-id="holdings"><colgroup><col style="width:10%"><col style="width:24%"><col class="hide-sm" style="width:17%"><col class="hide-sm" style="width:9%"><col class="hide-sm" style="width:10%"><col style="width:11%"><col class="hide-sm" style="width:10%"><col style="width:9%"></colgroup>
       <thead><tr><th scope="col" colspan="2"><button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button> <span class="muted small">${esc(ACCOUNT_TYPES[a.type].label)}${a.institution ? `, ${esc(a.institution)}` : ''}</span></th><th class="hide-sm">Class</th><th class="num hide-sm">Shares</th><th class="num hide-sm">Price</th><th class="num">Value</th><th class="num hide-sm">Cost basis</th><th class="num">Gain</th></tr></thead>
       <tbody>${list.length ? list.map(h => {
         const hv = holdingValue(h), g = h.costBasis != null && h.costBasis !== '' ? hv - h.costBasis : null;
@@ -152,15 +152,15 @@ VIEWS.cashflow = () => {
   <div class="cols">
     <section class="panel">
       <header class="panel-head"><h2>Bills and income</h2><span class="muted small">${state.recurring.length} scheduled</span></header>
-      ${state.recurring.length ? `<table class="ledger compact"><thead><tr><th>Name</th><th class="hide-sm">How often</th><th>Next</th><th class="num">Amount</th></tr></thead><tbody>
-      ${[...state.recurring].sort((a, b) => occurrences(a, today(), '9999-12-31')[0]?.localeCompare(occurrences(b, today(), '9999-12-31')[0] || '') || 0).map(r => `<tr><th scope="row"><button class="linklike" data-edit-rec="${r.id}">${esc(r.name)}</button></th><td class="hide-sm muted">${FREQS[r.freq]}</td><td class="nowrap">${dateLabel(occurrences(r, today(), '9999-12-31')[0])}</td><td class="num ${signClass(r.amount)}">${money(r.amount)}</td></tr>`).join('')}
+      ${state.recurring.length ? `<table class="ledger compact" data-sort-id="bills"><thead><tr><th>Name</th><th class="hide-sm">How often</th><th>Next</th><th class="num">Amount</th></tr></thead><tbody>
+      ${[...state.recurring].sort((a, b) => occurrences(a, today(), '9999-12-31')[0]?.localeCompare(occurrences(b, today(), '9999-12-31')[0] || '') || 0).map(r => `<tr><th scope="row"><button class="linklike" data-edit-rec="${r.id}">${esc(r.name)}</button></th><td class="hide-sm muted">${FREQS[r.freq]}</td><td class="nowrap" data-v="${occurrences(r, today(), '9999-12-31')[0] || ''}">${dateLabel(occurrences(r, today(), '9999-12-31')[0])}</td><td class="num ${signClass(r.amount)}">${money(r.amount)}</td></tr>`).join('')}
       </tbody><tfoot><tr><th scope="row" colspan="3">Net per month (approximate)</th><td class="num total">${money(sum(state.recurring.map(r => r.amount * ({ weekly: 52, biweekly: 26, semimonthly: 24, monthly: 12, quarterly: 4, semiannual: 2, annual: 1 }[r.freq] || 12) / 12)), { cents: false })}</td></tr></tfoot></table>`
       : '<p class="muted">Nothing scheduled yet.</p>'}
     </section>
     <section class="panel">
       <header class="panel-head"><h2>Repeating charges</h2><span class="muted small">${repNew.length ? `${money(sum(repNew.map(r => r.monthly)))} a month, ${money(sum(repNew.map(r => r.monthly)) * 12, { cents: false })} a year` : ''}</span></header>
-      ${repNew.length ? `<table class="ledger compact"><thead><tr><th>Payee</th><th class="hide-sm">Since</th><th class="num">Monthly</th><th></th></tr></thead><tbody>
-      ${repNew.map(r => `<tr><th scope="row">${esc(r.payee)}${r.isNew ? ' <span class="tag">New</span>' : ''}<div class="muted small">${esc(catName(r.categoryId))}, ${esc(acctById(r.accountId)?.name || '')}</div></th><td class="hide-sm muted nowrap">${dateLabel(r.firstSeen, true)}</td><td class="num">${money(r.monthly)}</td>
+      ${repNew.length ? `<table class="ledger compact" data-sort-id="repeating"><thead><tr><th>Payee</th><th class="hide-sm">Since</th><th class="num">Monthly</th><th></th></tr></thead><tbody>
+      ${repNew.map(r => `<tr><th scope="row">${esc(r.payee)}${r.isNew ? ' <span class="tag">New</span>' : ''}<div class="muted small">${esc(catName(r.categoryId))}, ${esc(acctById(r.accountId)?.name || '')}</div></th><td class="hide-sm muted nowrap" data-v="${r.firstSeen || ''}">${dateLabel(r.firstSeen, true)}</td><td class="num">${money(r.monthly)}</td>
         <td class="acts">${r.fromCash ? `<button class="btn small ghost" data-add-rep="${rep.indexOf(r)}">Add to forecast</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : ''}
       <p class="muted small">${rep.length ? `Ọrọ̀ found ${rep.length} charges that repeat at a steady amount${rep.length - repNew.length ? `; ${rep.length - repNew.length} are already scheduled and hidden here` : ''}. Card charges are covered by your card-payment estimate, so only bills paid straight from checking need adding.` : 'Ọrọ̀ looks for charges that repeat at a steady amount. Import a few months of history to see them.'}</p>

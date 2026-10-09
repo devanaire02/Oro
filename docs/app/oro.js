@@ -3170,6 +3170,7 @@ function render() {
     if (t.parentElement.classList.contains('scroll-table')) continue;
     const w = document.createElement('div'); w.className = 'scroll-table'; t.replaceWith(w); w.appendChild(t);
   }
+  decorateSortable($('#main'));   // headings you can click to sort (51-sort.js)
   if (UI.navCheckin !== (state.settings.checkin !== false)) buildShell();   // Check-in was turned on or off
   $$('.nav a').forEach(a => a.classList.toggle('active', a.dataset.page === page));
   $$('#tabbar [data-tab-page]').forEach(a => { const on = a.dataset.tabPage === page || (a.dataset.tabPage === 'more' && !TAB_PAGES.includes(page)); a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
@@ -3337,7 +3338,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '0da3594';
+const ORO_BUILD = '19ace2d';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -3413,6 +3414,152 @@ function staleTag(date, days = state.settings.staleDays || 35) {
 function tabs(param, current, list) {
   return `<nav class="tabs" role="tablist">${list.map(([id, label]) => `<button role="tab" aria-selected="${id === current}" class="${id === current ? 'on' : ''}" data-tab="${id}" data-param="${param}">${esc(label)}</button>`).join('')}</nav>`;
 }
+
+/* ---------- Sorting by column ----------
+   Click a column heading to sort: the first click sorts the natural way (names A–Z, amounts largest first), the second
+   reverses it, the third goes back to the page's own order. Sorting only changes the order shown, never the data, and the
+   choice stays while you move around the app (it resets on restart or lock, like filters).
+   A list table opts in with data-sort-id="…" (tables sharing an id, like one per account group, sort together); a heading
+   opts out with data-nosort, or picks its first direction with data-sort-first="asc|desc"; a cell carries data-v when its
+   text isn't its value (a date shown as "Oct 9", an amount typed in a box). Transactions sorts its whole list in the view
+   instead, since it shows 250 at a time. */
+UI.sorts = {};
+
+/* ---- Transactions: the whole filtered list, before it's cut to 250 ---- */
+const TX_SORT_KEYS = {
+  date: { label: 'Date', first: 'asc' },   // newest first is the page's own order, so the first click shows oldest first
+  payee: { label: 'Payee', first: 'asc' },
+  cat: { label: 'Category', first: 'asc' },
+  who: { label: 'Person', first: 'asc' },
+  acct: { label: 'Account', first: 'asc' },
+  amount: { label: 'Amount', first: 'asc' },   // biggest spending first
+};
+function txSortParse(s) {
+  const [key, dir] = String(s || '').split('.');
+  return TX_SORT_KEYS[key] && (dir === 'asc' || dir === 'desc') ? { key, dir } : null;
+}
+function txSortLabel(key, dir) {
+  if (key === 'date') return dir === 'asc' ? 'Oldest first' : 'Newest first';
+  if (key === 'amount') return dir === 'asc' ? 'Biggest spending first' : 'Biggest money in first';
+  return `${TX_SORT_KEYS[key].label} ${dir === 'asc' ? 'A–Z' : 'Z–A'}`;
+}
+function txSorted(list, sort) {
+  if (!sort) return list;
+  const text = {
+    payee: t => t.payee || '',
+    cat: t => (isSplit(t) ? 'Split' : catName(t.categoryId)) || '',
+    who: t => memberName(personOf(t)) || '',
+    acct: t => acctById(t.accountId)?.name || '',
+  }[sort.key];
+  const sign = sort.dir === 'asc' ? 1 : -1;
+  const idx = new Map(list.map((t, i) => [t, i]));
+  const cmp = sort.key === 'date' ? (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)
+    : sort.key === 'amount' ? (a, b) => a.amount - b.amount
+    : (a, b) => text(a).localeCompare(text(b), undefined, { numeric: true, sensitivity: 'base' });
+  // ties keep the page's own order (newest first)
+  return [...list].sort((a, b) => sign * cmp(a, b) || idx.get(a) - idx.get(b));
+}
+/* Next sort after clicking a heading: natural → reversed → the page's own order (newest first) */
+function txSortNext(cur, key) {
+  const first = TX_SORT_KEYS[key].first, rev = first === 'asc' ? 'desc' : 'asc';
+  if (key === 'date') return cur?.key === 'date' && cur.dir === 'asc' ? '' : 'date.asc';
+  if (!cur || cur.key !== key) return `${key}.${first}`;
+  return cur.dir === first ? `${key}.${rev}` : '';
+}
+function txSortHead(key, sort, cls = '') {
+  const eff = sort || { key: 'date', dir: 'desc' };
+  const on = eff.key === key;
+  return `<th class="${cls}" ${on ? `aria-sort="${eff.dir === 'asc' ? 'ascending' : 'descending'}"` : ''}><button type="button" class="th-sort" data-txsort="${key}" title="Sort by ${TX_SORT_KEYS[key].label.toLowerCase()}">${TX_SORT_KEYS[key].label}${on ? `<span class="sort-ind" aria-hidden="true">${eff.dir === 'asc' ? '↑' : '↓'}</span>` : ''}</button></th>`;
+}
+function txSortSelect(sort, multi) {
+  const cur = sort ? `${sort.key}.${sort.dir}` : '';
+  const opts = [['', 'Newest first'], ['date.asc', 'Oldest first'], ['amount.asc', txSortLabel('amount', 'asc')], ['amount.desc', txSortLabel('amount', 'desc')]];
+  for (const k of ['payee', 'cat', 'acct', ...(multi ? ['who'] : [])]) for (const d of ['asc', 'desc']) opts.push([`${k}.${d}`, txSortLabel(k, d)]);
+  return `<label class="field inline sort-field"><span>Sort</span><select data-filter="sort">${opts.map(([v, l]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
+}
+
+/* ---- Every other list table: sorted in place on the page ---- */
+function sortCellAt(row, col) {
+  let c = 0;
+  for (const cell of row.cells) { if (c === col) return cell; c += cell.colSpan || 1; if (c > col) return null; }
+  return null;
+}
+function sortValue(cell, numeric) {
+  if (!cell) return null;
+  if ('v' in cell.dataset) {
+    const raw = cell.dataset.v;
+    if (raw === '') return null;
+    return /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw.toLowerCase();
+  }
+  const line = (cell.innerText || cell.textContent || '').trim().split('\n')[0].trim();
+  if (!line || line === '—' || line === '–') return null;
+  if (!numeric) return line.toLowerCase();
+  const m = line.replace(/−/g, '-').replace(/\s/g, '').match(/^([+-]?)(\()?\$?([\d,]*\.?\d+)(%|[KkMm](?![a-z]))?/);
+  if (!m) return null;
+  let n = Number(m[3].replace(/,/g, ''));
+  if (/k/i.test(m[4] || '')) n *= 1e3; else if (/m/i.test(m[4] || '')) n *= 1e6;
+  return m[1] === '-' || m[2] ? -n : n;
+}
+function sortCompare(a, b) {   // blanks always last; numbers before words
+  if (a == null || b == null) return a == null && b == null ? 0 : a == null ? 1 : -1;
+  if (typeof a !== typeof b) return typeof a === 'number' ? -1 : 1;
+  return typeof a === 'number' ? a - b : a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+}
+function applySort(table) {
+  const s = UI.sorts[table.dataset.sortId], tbody = table.tBodies[0];
+  if (!tbody) return;
+  const rows = [...tbody.rows];
+  rows.forEach((r, i) => { if (r.dataset.ord == null) r.dataset.ord = i; });
+  const fixed = rows.filter(r => [...r.cells].some(c => (c.colSpan || 1) > 1));   // notes and empty-state rows stay at the end
+  const movable = rows.filter(r => !fixed.includes(r));
+  const th = s ? table.querySelector(`thead [data-sort-col="${s.col}"]`) : null;
+  const numeric = !!th?.closest('th')?.classList.contains('num');
+  const vals = new Map(movable.map(r => [r, s ? sortValue(sortCellAt(r, s.col), numeric) : null]));
+  movable.sort((a, b) => {
+    if (s) {
+      const va = vals.get(a), vb = vals.get(b);
+      const blank = va == null || vb == null;
+      const c = blank ? sortCompare(va, vb) : (s.dir === 'asc' ? 1 : -1) * sortCompare(va, vb);
+      if (c) return c;
+    }
+    return a.dataset.ord - b.dataset.ord;
+  });
+  for (const r of [...movable, ...fixed]) tbody.appendChild(r);
+  for (const b of table.querySelectorAll('thead .th-sort[data-sort-col]')) {
+    const on = s && +b.dataset.sortCol === s.col, cell = b.closest('th');
+    if (on) cell.setAttribute('aria-sort', s.dir === 'asc' ? 'ascending' : 'descending'); else cell.removeAttribute('aria-sort');
+    b.querySelector('.sort-ind').textContent = on ? (s.dir === 'asc' ? '↑' : '↓') : '';
+  }
+}
+function decorateSortable(root) {
+  for (const table of root.querySelectorAll('table[data-sort-id]')) {
+    const hr = table.tHead?.rows[table.tHead.rows.length - 1];
+    if (!hr) continue;
+    let col = 0;
+    for (const th of hr.cells) {
+      if (!th.hasAttribute('data-nosort') && th.textContent.trim() && !th.querySelector('button, a, input, select')) {
+        const label = th.textContent.trim();
+        th.innerHTML = `<button type="button" class="th-sort" data-sort-col="${col}" title="Sort by ${esc(label.toLowerCase())}">${th.innerHTML}<span class="sort-ind" aria-hidden="true"></span></button>`;
+      }
+      col += th.colSpan || 1;
+    }
+    applySort(table);
+  }
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.th-sort');
+  if (!b) return;
+  e.preventDefault();
+  if (b.dataset.txsort) return setParam('sort', txSortNext(txSortParse(route().params.sort), b.dataset.txsort));
+  const table = b.closest('table'), id = table?.dataset.sortId;
+  if (!id) return;
+  const col = +b.dataset.sortCol, th = b.closest('th'), cur = UI.sorts[id];
+  const first = th.dataset.sortFirst || (th.classList.contains('num') ? 'desc' : 'asc');
+  if (!cur || cur.col !== col) UI.sorts[id] = { col, dir: first };
+  else if (cur.dir === first) UI.sorts[id] = { col, dir: first === 'asc' ? 'desc' : 'asc' };
+  else delete UI.sorts[id];
+  for (const t of $$(`table[data-sort-id="${CSS.escape(id)}"]`)) applySort(t);
+});
 
 const VIEWS = {};
 
@@ -3644,6 +3791,8 @@ VIEWS.transactions = p => {
   if (S.min != null) list = list.filter(t => Math.abs(t.amount) >= S.min);
   if (S.max != null) list = list.filter(t => Math.abs(t.amount) <= S.max);
   if (S.text.length) list = list.filter(t => { const hay = (t.payee + ' ' + (t.memo || '') + ' ' + (t.rawPayee || '') + ' ' + catName(t.categoryId) + ' ' + (t.tags || []).join(' ') + ' ' + Math.abs(t.amount).toFixed(2)).toLowerCase(); return S.text.every(x => hay.includes(x)); });
+  const sort = txSortParse(p.sort);
+  list = txSorted(list, sort);
   const limit = +p.limit || 250;
   const shown = list.slice(0, limit);
   UI.txVisible = list.map(t => t.id);   // what "the Jewel Osco one" means to Talk while this list is on screen
@@ -3674,6 +3823,7 @@ VIEWS.transactions = p => {
     ${multi && !UI.lens ? `<label class="field inline more"><span>Person</span><select data-filter="who"><option value="">Everyone</option>${memberOptions(p.who)}</select></label>` : ''}
     <label class="field inline more"><span>Flag</span><select data-filter="flag"><option value="">Any</option><option value="1" ${p.flag ? 'selected' : ''}>Flagged only</option></select></label>
     ${tags.length ? `<label class="field inline more"><span>Tag</span><select data-filter="tag"><option value="">Any tag</option>${tags.map(t => `<option ${t === p.tag ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>` : ''}
+    ${txSortSelect(sort, multi)}
     <label class="field inline grow"><span>Search</span><input type="search" id="tx-search" data-filter="q" value="${esc(p.q || '')}" placeholder="Payee, memo, #tag, >100"></label>
     ${clearBtn('tx-clear-wide')}
     <div class="filters-sm"><button class="btn small ghost" data-act="tx-filters" aria-expanded="${fOpen ? 'true' : 'false'}">${fOpen ? 'Fewer filters' : 'More filters'}${nFilters ? ` · ${nFilters} on` : ''}</button>${clearBtn('')}${shown.length ? `<button class="btn small ghost" data-act="tx-select" aria-pressed="${UI.txSelect ? 'true' : 'false'}">${UI.txSelect ? 'Done selecting' : 'Select'}</button>` : ''}</div>
@@ -3688,7 +3838,7 @@ VIEWS.transactions = p => {
     <button class="btn small ghost danger-text" data-act="bulk-del">Delete</button>
   </div>
   ${shown.length ? `<div class="scroll-table"><table class="ledger tx-table ${UI.txSelect ? 'selecting' : ''}" id="tx-table">
-    <thead><tr><th class="cb"><input type="checkbox" id="tx-all" aria-label="Select all shown"></th><th>Date</th><th>Payee</th><th>Category</th>${multi ? '<th class="hide-sm detail-only">Person</th>' : ''}<th class="hide-sm">Account</th><th class="num">Amount</th></tr></thead>
+    <thead><tr><th class="cb"><input type="checkbox" id="tx-all" aria-label="Select all shown"></th>${txSortHead('date', sort)}${txSortHead('payee', sort)}${txSortHead('cat', sort)}${multi ? txSortHead('who', sort, 'hide-sm detail-only') : ''}${txSortHead('acct', sort, 'hide-sm')}${txSortHead('amount', sort, 'num')}</tr></thead>
     <tbody>${shown.map(t => {
       const who = personOf(t);
       return `<tr data-id="${t.id}" class="${isUncat(t) ? 'needs' : ''}">
@@ -3749,7 +3899,7 @@ VIEWS.budget = p => {
     const trend = Array.from({ length: 6 }, (_, i) => monthActuals(addMonths(mk, i - 5))[c.id] || 0);
     return `<tr>
       <th scope="row"><button class="linklike" data-edit-cat="${c.id}">${esc(c.name)}</button>${v.period === 'year' ? '<span class="tag soft">yearly</span>' : ''}${c.rollover ? `<span class="tag soft" title="Carried from earlier months: ${money(v.carry || 0)}">rolls over</span>` : ''}</th>
-      <td class="num budget-cell"><span class="cur">$</span><input class="budget-input" id="b-${c.id}" data-budget="${c.id}" inputmode="decimal" value="${c.budget ? round2(c.budget) : ''}" placeholder="0" aria-label="Budget for ${esc(c.name)}"></td>
+      <td class="num budget-cell" data-v="${c.budget ? round2(c.budget) : 0}"><span class="cur">$</span><input class="budget-input" id="b-${c.id}" data-budget="${c.id}" inputmode="decimal" value="${c.budget ? round2(c.budget) : ''}" placeholder="0" aria-label="Budget for ${esc(c.name)}"></td>
       <td class="num">${money(v.actual, { cents: false })}</td>
       <td class="num ${inc ? (v.actual > v.budget ? 'pos' : 'muted') : (avail < 0 ? 'neg' : '')}">${!v.budget && !c.rollover ? '<span class="muted">—</span>' : inc ? (v.budget - v.actual > 0 ? `${money(v.budget - v.actual, { cents: false })} to come` : money(v.actual - v.budget, { cents: false, sign: true })) : money(avail, { cents: false })}</td>
       <td class="meter-cell">${v.budget ? bar(v.actual, cap, { pace: inc ? null : pace }) : ''}</td>
@@ -3760,8 +3910,8 @@ VIEWS.budget = p => {
     const cs = groups[g], tt = groupTotal(cs.filter(c => c.kind === 'expense'));
     const isRental = cs.some(c => c.rental);
     const pnl = isRental ? rentalPnL(g, `${mk}-01`, monthEnd(mk)) : null;
-    return `<section class="budget-group"><table class="ledger budget-table">
-      <thead><tr><th scope="col">${esc(g)}</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">${cs[0].kind === 'income' && !isRental ? 'Difference' : 'Available'}</th><th class="meter-cell"></th><th class="spark-cell hide-sm">6 months</th></tr></thead>
+    return `<section class="budget-group"><table class="ledger budget-table" data-sort-id="budget">
+      <thead><tr><th scope="col">${esc(g)}</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">${cs[0].kind === 'income' && !isRental ? 'Difference' : 'Available'}</th><th class="meter-cell"></th><th class="spark-cell hide-sm" data-nosort>6 months</th></tr></thead>
       <tbody>${rowsFor(cs)}</tbody>
       ${isRental ? `<tfoot><tr><th scope="row">Cash flow after debt service</th><td></td><td class="num total ${signClass(pnl.cashFlow)}">${money(pnl.cashFlow, { cents: false })}</td><td colspan="3" class="muted small">NOI ${money(pnl.noi, { cents: false })} this month</td></tr></tfoot>`
       : cs[0].kind === 'expense' && cs.length > 1 ? `<tfoot><tr><th scope="row">Monthly total</th><td class="num total">${money(tt.b, { cents: false })}</td><td class="num total">${money(tt.a, { cents: false })}</td><td class="num total ${tt.b - tt.a < 0 ? 'neg' : ''}">${money(tt.b - tt.a, { cents: false })}</td><td></td><td class="hide-sm"></td></tr></tfoot>` : ''}
@@ -3785,15 +3935,15 @@ VIEWS.accounts = p => {
   <section class="alloc-bar-wrap detail-only">${(() => { const segs = [['Cash', t.cash, 'var(--c2)'], ['Investments', t.invest, 'var(--c1)'], ['Property and private', t.illiquid, 'var(--c4)']]; const tot = t.assets || 1; return `<div class="stack tall" role="img" aria-label="Assets by type">${segs.map(([l, v, c]) => v > 0 ? `<span style="width:${v / tot * 100}%;background:${c}" title="${l} ${pct(v / tot, 0)}"></span>` : '').join('')}</div><p class="legend">${segs.map(([l, v, c]) => `<span><i style="background:${c}"></i>${l} ${pct(v / tot, 0)}</span>`).join('')}<span><i style="background:var(--neg)"></i>Debt is ${pct(t.liabilities / tot, 0)} of assets</span></p>`; })()}</section>
   ${groups.map(g => {
     const subtotal = sum(g.accts.map(a => g.signed ? signedValue(a) : accountValue(a)));
-    return `<section class="acct-group"><table class="ledger acct-table">
+    return `<section class="acct-group"><table class="ledger acct-table" data-sort-id="accounts">
       <thead><tr><th scope="col">${esc(g.label)}</th><th class="hide-sm">${byOwner ? 'Type' : multi ? 'Owner' : 'Type'}</th><th>As of</th><th class="num">${g.debt ? 'Owed' : byOwner ? 'Net' : 'Value'}</th><th class="acts"></th></tr></thead>
       <tbody>${g.accts.map(a => {
         const hs = holdingsFor(a.id).length, v = byOwner ? signedValue(a) : accountValue(a);
         return `<tr>
           <th scope="row" class="acct-name"><button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button>${a.institution ? `<div class="muted small">${esc(a.institution)}${a.last4 ? ` ending ${esc(a.last4)}` : ''}</div>` : ''}</th>
           <td class="hide-sm muted">${byOwner || !multi ? `${esc(ACCOUNT_TYPES[a.type]?.label)}${a.rental ? ', rental' : ''}${hs ? `, ${hs} holding${hs > 1 ? 's' : ''}` : ''}` : `<span class="person-dot" style="background:${memberColor(a.owner || 'joint')}"></span>${esc(memberName(a.owner || 'joint'))}`}</td>
-          <td class="acct-asof">${staleTag(accountAsOf(a))}${a.reconciledThrough ? `<div class="muted small">Reconciled ${dateLabel(a.reconciledThrough)}</div>` : ''}</td>
-          <td class="num acct-val">${updating && !hs ? `<input class="bal-input" data-bal="${a.id}" inputmode="decimal" value="${round2(accountValue(a))}" aria-label="Balance for ${esc(a.name)}">` : `<span class="${byOwner ? signClass(v) : ''}">${money(v)}</span>`}</td>
+          <td class="acct-asof" data-v="${esc(accountAsOf(a) || '')}">${staleTag(accountAsOf(a))}${a.reconciledThrough ? `<div class="muted small">Reconciled ${dateLabel(a.reconciledThrough)}</div>` : ''}</td>
+          <td class="num acct-val" data-v="${round2(v)}">${updating && !hs ? `<input class="bal-input" data-bal="${a.id}" inputmode="decimal" value="${round2(accountValue(a))}" aria-label="Balance for ${esc(a.name)}">` : `<span class="${byOwner ? signClass(v) : ''}">${money(v)}</span>`}</td>
           <td class="acts"><button class="linklike small" data-history="${a.id}">History</button>${a.ledger ? ` <button class="linklike small" data-reconcile="${a.id}">Reconcile</button>` : ''}</td></tr>`;
       }).join('')}</tbody>
       <tfoot><tr><th scope="row">Total</th><td class="hide-sm"></td><td class="acct-pad"></td><td class="num total">${money(subtotal)}</td><td class="acct-pad"></td></tr></tfoot>
@@ -3832,12 +3982,12 @@ VIEWS.investments = () => {
   <section class="panel">
     <header class="panel-head"><h2>Allocation</h2><span class="muted small">Targets ${targetSum ? `add to ${targetSum}%` : 'are optional'}</span></header>
     <div class="stack" role="img" aria-label="Investment allocation">${classes.filter(c => alloc[c]).map(c => `<span style="width:${(alloc[c] / allocTotal) * 100}%;background:${CLASS_COLORS[c]}" title="${esc(c)} ${pct(alloc[c] / allocTotal)}"></span>`).join('')}</div>
-    <table class="ledger compact alloc-table"><thead><tr><th>Asset class</th><th class="num hide-sm">Value</th><th class="num">Actual</th><th class="num">Target</th><th class="num">Drift</th><th class="num hide-sm">To rebalance</th></tr></thead><tbody>
+    <table class="ledger compact alloc-table" data-sort-id="alloc"><thead><tr><th>Asset class</th><th class="num hide-sm">Value</th><th class="num">Actual</th><th class="num">Target</th><th class="num">Drift</th><th class="num hide-sm">To rebalance</th></tr></thead><tbody>
     ${classes.map(c => {
       const v = alloc[c] || 0, share = allocTotal ? v / allocTotal : 0, tgt = state.settings.targets[c];
       const drift = tgt != null && tgt !== '' ? share - tgt / 100 : null;
       return `<tr><th scope="row"><span class="swatch" style="background:${CLASS_COLORS[c]}"></span>${esc(c)}</th><td class="num hide-sm">${money(v, { cents: false })}</td><td class="num">${pct(share)}</td>
-        <td class="num budget-cell"><input class="budget-input" id="tg-${slug(c)}" data-target="${esc(c)}" inputmode="decimal" value="${tgt ?? ''}" placeholder="—" aria-label="Target for ${esc(c)}"><span class="cur">%</span></td>
+        <td class="num budget-cell" data-v="${tgt ?? ''}"><input class="budget-input" id="tg-${slug(c)}" data-target="${esc(c)}" inputmode="decimal" value="${tgt ?? ''}" placeholder="—" aria-label="Target for ${esc(c)}"><span class="cur">%</span></td>
         <td class="num ${drift == null ? '' : Math.abs(drift) >= 0.05 ? 'neg' : 'muted'}">${drift == null ? '—' : (drift >= 0 ? '+' : '−') + Math.abs(drift * 100).toFixed(1) + ' pts'}</td>
         <td class="num hide-sm">${drift == null ? '' : money(-drift * allocTotal, { cents: false, sign: true })}</td></tr>`;
     }).join('')}</tbody></table>
@@ -3851,7 +4001,7 @@ VIEWS.investments = () => {
     <section class="panel">
       <header class="panel-head"><h2>What you pay in fund fees</h2><span class="muted small">${fa.coverage < 0.999 ? `Covers ${pct(fa.coverage, 0)} of holdings` : ''}</span></header>
       ${fa.value ? `<dl class="kpis three"><div><dt>Weighted expense ratio</dt><dd class="num">${fa.weighted.toFixed(2)}%</dd></div><div><dt>Per year</dt><dd class="num">${money(fa.fees, { cents: false })}</dd></div><div><dt>Over 20 years</dt><dd class="num">${money(fa.drag, { cents: false })}</dd><span class="muted small">Growth lost at 6% a year</span></div></dl>
-      <table class="ledger compact"><thead><tr><th>Fund</th><th class="num">Expense ratio</th><th class="num">Per year</th></tr></thead><tbody>${fa.top.slice(0, 5).map(x => `<tr><th scope="row"><button class="linklike" data-edit-holding="${x.h.id}">${esc(x.h.symbol)}</button> <span class="muted small">${esc(x.h.name || '')}</span></th><td class="num ${x.er >= 0.5 ? 'neg' : ''}">${x.er.toFixed(2)}%</td><td class="num">${money(x.fee, { cents: false })}</td></tr>`).join('')}</tbody></table>
+      <table class="ledger compact" data-sort-id="fees"><thead><tr><th>Fund</th><th class="num">Expense ratio</th><th class="num">Per year</th></tr></thead><tbody>${fa.top.slice(0, 5).map(x => `<tr><th scope="row"><button class="linklike" data-edit-holding="${x.h.id}">${esc(x.h.symbol)}</button> <span class="muted small">${esc(x.h.name || '')}</span></th><td class="num ${x.er >= 0.5 ? 'neg' : ''}">${x.er.toFixed(2)}%</td><td class="num">${money(x.fee, { cents: false })}</td></tr>`).join('')}</tbody></table>
       ${fa.unknown.length ? `<p class="muted small">No expense ratio on file for ${fa.unknown.slice(0, 4).map(h => esc(h.symbol)).join(', ')}${fa.unknown.length > 4 ? '…' : ''}. Add it in each holding.</p>` : ''}`
       : '<p class="muted">Add holdings to see the fees inside your funds.</p>'}
     </section>
@@ -3866,7 +4016,7 @@ VIEWS.investments = () => {
   ${accts.map(a => {
     const list = holdingsFor(a.id).sort((x, y) => holdingValue(y) - holdingValue(x));
     const v = accountValue(a);
-    return `<section class="acct-group"><table class="ledger holdings-table"><colgroup><col style="width:10%"><col style="width:24%"><col class="hide-sm" style="width:17%"><col class="hide-sm" style="width:9%"><col class="hide-sm" style="width:10%"><col style="width:11%"><col class="hide-sm" style="width:10%"><col style="width:9%"></colgroup>
+    return `<section class="acct-group"><table class="ledger holdings-table" data-sort-id="holdings"><colgroup><col style="width:10%"><col style="width:24%"><col class="hide-sm" style="width:17%"><col class="hide-sm" style="width:9%"><col class="hide-sm" style="width:10%"><col style="width:11%"><col class="hide-sm" style="width:10%"><col style="width:9%"></colgroup>
       <thead><tr><th scope="col" colspan="2"><button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button> <span class="muted small">${esc(ACCOUNT_TYPES[a.type].label)}${a.institution ? `, ${esc(a.institution)}` : ''}</span></th><th class="hide-sm">Class</th><th class="num hide-sm">Shares</th><th class="num hide-sm">Price</th><th class="num">Value</th><th class="num hide-sm">Cost basis</th><th class="num">Gain</th></tr></thead>
       <tbody>${list.length ? list.map(h => {
         const hv = holdingValue(h), g = h.costBasis != null && h.costBasis !== '' ? hv - h.costBasis : null;
@@ -3962,15 +4112,15 @@ VIEWS.cashflow = () => {
   <div class="cols">
     <section class="panel">
       <header class="panel-head"><h2>Bills and income</h2><span class="muted small">${state.recurring.length} scheduled</span></header>
-      ${state.recurring.length ? `<table class="ledger compact"><thead><tr><th>Name</th><th class="hide-sm">How often</th><th>Next</th><th class="num">Amount</th></tr></thead><tbody>
-      ${[...state.recurring].sort((a, b) => occurrences(a, today(), '9999-12-31')[0]?.localeCompare(occurrences(b, today(), '9999-12-31')[0] || '') || 0).map(r => `<tr><th scope="row"><button class="linklike" data-edit-rec="${r.id}">${esc(r.name)}</button></th><td class="hide-sm muted">${FREQS[r.freq]}</td><td class="nowrap">${dateLabel(occurrences(r, today(), '9999-12-31')[0])}</td><td class="num ${signClass(r.amount)}">${money(r.amount)}</td></tr>`).join('')}
+      ${state.recurring.length ? `<table class="ledger compact" data-sort-id="bills"><thead><tr><th>Name</th><th class="hide-sm">How often</th><th>Next</th><th class="num">Amount</th></tr></thead><tbody>
+      ${[...state.recurring].sort((a, b) => occurrences(a, today(), '9999-12-31')[0]?.localeCompare(occurrences(b, today(), '9999-12-31')[0] || '') || 0).map(r => `<tr><th scope="row"><button class="linklike" data-edit-rec="${r.id}">${esc(r.name)}</button></th><td class="hide-sm muted">${FREQS[r.freq]}</td><td class="nowrap" data-v="${occurrences(r, today(), '9999-12-31')[0] || ''}">${dateLabel(occurrences(r, today(), '9999-12-31')[0])}</td><td class="num ${signClass(r.amount)}">${money(r.amount)}</td></tr>`).join('')}
       </tbody><tfoot><tr><th scope="row" colspan="3">Net per month (approximate)</th><td class="num total">${money(sum(state.recurring.map(r => r.amount * ({ weekly: 52, biweekly: 26, semimonthly: 24, monthly: 12, quarterly: 4, semiannual: 2, annual: 1 }[r.freq] || 12) / 12)), { cents: false })}</td></tr></tfoot></table>`
       : '<p class="muted">Nothing scheduled yet.</p>'}
     </section>
     <section class="panel">
       <header class="panel-head"><h2>Repeating charges</h2><span class="muted small">${repNew.length ? `${money(sum(repNew.map(r => r.monthly)))} a month, ${money(sum(repNew.map(r => r.monthly)) * 12, { cents: false })} a year` : ''}</span></header>
-      ${repNew.length ? `<table class="ledger compact"><thead><tr><th>Payee</th><th class="hide-sm">Since</th><th class="num">Monthly</th><th></th></tr></thead><tbody>
-      ${repNew.map(r => `<tr><th scope="row">${esc(r.payee)}${r.isNew ? ' <span class="tag">New</span>' : ''}<div class="muted small">${esc(catName(r.categoryId))}, ${esc(acctById(r.accountId)?.name || '')}</div></th><td class="hide-sm muted nowrap">${dateLabel(r.firstSeen, true)}</td><td class="num">${money(r.monthly)}</td>
+      ${repNew.length ? `<table class="ledger compact" data-sort-id="repeating"><thead><tr><th>Payee</th><th class="hide-sm">Since</th><th class="num">Monthly</th><th></th></tr></thead><tbody>
+      ${repNew.map(r => `<tr><th scope="row">${esc(r.payee)}${r.isNew ? ' <span class="tag">New</span>' : ''}<div class="muted small">${esc(catName(r.categoryId))}, ${esc(acctById(r.accountId)?.name || '')}</div></th><td class="hide-sm muted nowrap" data-v="${r.firstSeen || ''}">${dateLabel(r.firstSeen, true)}</td><td class="num">${money(r.monthly)}</td>
         <td class="acts">${r.fromCash ? `<button class="btn small ghost" data-add-rep="${rep.indexOf(r)}">Add to forecast</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : ''}
       <p class="muted small">${rep.length ? `Ọrọ̀ found ${rep.length} charges that repeat at a steady amount${rep.length - repNew.length ? `; ${rep.length - repNew.length} are already scheduled and hidden here` : ''}. Card charges are covered by your card-payment estimate, so only bills paid straight from checking need adding.` : 'Ọrọ̀ looks for charges that repeat at a steady amount. Import a few months of history to see them.'}</p>
@@ -4146,7 +4296,7 @@ VIEWS.reports = p => {
           tip: i => `<strong>${monthLabel(stackMonths[i])}</strong>${topGroups.map(g => { const v = sum(Object.entries(categoryActuals(lensed(txInMonth(stackMonths[i])))).filter(([id, v]) => v > 0 && (catById(id)?.group || 'Uncategorized') === g && (id === '_none' || catById(id)?.kind === 'expense')).map(([, v]) => v)); return v ? `<br>${esc(g)} ${money(v, { cents: false })}` : ''; }).join('')}` })}
         <p class="legend">${topGroups.map(g => `<span><i style="background:var(--c${(groupIdx[g] % 8) + 1})"></i>${esc(g)}</span>`).join('')}</p></section>
     </div>
-    <table class="ledger"><thead><tr><th>Category</th><th class="hide-sm">Group</th><th class="num">Total</th><th class="num hide-sm">Per month</th><th class="num">Share</th><th class="spark-cell hide-sm">12 months</th></tr></thead>
+    <table class="ledger" data-sort-id="rep-spending"><thead><tr><th>Category</th><th class="hide-sm">Group</th><th class="num">Total</th><th class="num hide-sm">Per month</th><th class="num">Share</th><th class="spark-cell hide-sm" data-nosort>12 months</th></tr></thead>
       <tbody>${rows.map(r => `<tr><th scope="row"><a href="#/transactions?m=all&cat=${r.id}">${esc(r.name)}</a></th><td class="hide-sm muted">${esc(r.group)}</td><td class="num">${money(r.value, { cents: false })}</td><td class="num hide-sm">${money(r.value / nM, { cents: false })}</td><td class="num">${pct(r.value / total, 1)}</td><td class="spark-cell hide-sm">${sparkline(trendMonths.map(m => categoryActuals(lensed(txInMonth(m)))[r.id] || 0), { w: 90, h: 22, color: `var(--c${(groupIdx[r.group] % 8) + 1})` })}</td></tr>`).join('')}</tbody>
       <tfoot><tr><th scope="row">Total</th><td class="hide-sm"></td><td class="num total">${money(total, { cents: false })}</td><td class="num hide-sm">${money(total / nM, { cents: false })}</td><td></td><td class="hide-sm"></td></tr></tfoot></table>`;
   }
@@ -4186,7 +4336,7 @@ VIEWS.reports = p => {
     <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Left over</th></tr></thead><tbody>
       <tr><th scope="row">${dateLabel(R.from, true)} to ${dateLabel(R.to, true)}</th><td class="num">${money(f1.income, { cents: false })}</td><td class="num">${money(f1.spending, { cents: false })}</td><td class="num">${money(f1.net, { cents: false })}</td></tr>
       <tr><th scope="row">Same period a year earlier</th><td class="num muted">${money(f0.income, { cents: false })}</td><td class="num muted">${money(f0.spending, { cents: false })}</td><td class="num muted">${money(f0.net, { cents: false })}</td></tr></tbody></table></section>
-    ${rows.length ? `<table class="ledger yoy"><thead><tr><th>Category</th><th class="num">A year earlier</th><th class="num">Now</th><th class="num">Change</th><th class="diverge-cell hide-sm"></th></tr></thead><tbody>
+    ${rows.length ? `<table class="ledger yoy" data-sort-id="rep-yoy"><thead><tr><th>Category</th><th class="num">A year earlier</th><th class="num">Now</th><th class="num">Change</th><th class="diverge-cell hide-sm"></th></tr></thead><tbody>
       ${rows.map(r => { const d = r.now - r.then, bad = r.c.kind === 'income' ? d < 0 : d > 0; return `<tr><th scope="row">${esc(r.c.name)} <span class="muted small">${esc(r.c.group)}</span></th><td class="num muted">${money(r.then, { cents: false })}</td><td class="num">${money(r.now, { cents: false })}</td><td class="num ${bad ? 'neg' : 'pos'}">${money(d, { cents: false, sign: true })}${r.then ? `<div class="small">${pct(d / r.then, 0)}</div>` : ''}</td><td class="diverge-cell hide-sm"><div class="diverge"><span class="${bad ? 'bad' : 'good'}" style="${d >= 0 ? 'left:50%' : `right:50%`};width:${Math.abs(d) / maxAbs * 50}%"></span></div></td></tr>`; }).join('')}
     </tbody></table>` : emptyState('No history to compare yet', 'Year-over-year needs transactions from the same period last year.')}`;
   }
@@ -4204,7 +4354,7 @@ VIEWS.reports = p => {
       ${chartHost({ type: 'stack', h: 240, labels: ms.map(m => MON[+m.slice(5) - 1]), series: members().map(m => ({ name: m.name, color: memberColor(m.id), values: ms.map(mm => flowSummary(txInMonth(mm).filter(t => personOf(t) === m.id)).spending) })),
         tip: i => `<strong>${monthLabel(ms[i])}</strong>${members().map(m => `<br>${esc(m.name)} ${money(flowSummary(txInMonth(ms[i]).filter(t => personOf(t) === m.id)).spending, { cents: false })}`).join('')}` })}
       <p class="legend">${members().map(m => `<span><i style="background:${memberColor(m.id)}"></i>${esc(m.name)}</span>`).join('')}</p></section>
-    <table class="ledger"><thead><tr><th>Category</th>${per.map(x => `<th class="num">${esc(x.m.name)}</th>`).join('')}<th class="num">Household</th></tr></thead><tbody>
+    <table class="ledger" data-sort-id="rep-person"><thead><tr><th>Category</th>${per.map(x => `<th class="num">${esc(x.m.name)}</th>`).join('')}<th class="num">Household</th></tr></thead><tbody>
       ${cats.map(c => `<tr><th scope="row">${esc(c.name)}</th>${per.map(x => `<td class="num">${x.acts[c.id] > 0 ? money(x.acts[c.id], { cents: false }) : '<span class="muted">—</span>'}</td>`).join('')}<td class="num">${money(sum(per.map(x => Math.max(0, x.acts[c.id] || 0))), { cents: false })}</td></tr>`).join('')}
     </tbody></table>
     <p class="muted small">A transaction belongs to its account’s owner unless you set a person on it. Set owners in each account and people in Settings.</p>`;
@@ -4220,7 +4370,7 @@ VIEWS.reports = p => {
     ${chartHost({ type: 'stack', h: 300, labels: ms.map(m => monthLabel(m, true)), series: [['cash', 'Cash', 'var(--c2)'], ['invest', 'Investments', 'var(--c1)'], ['illiquid', 'Property and private', 'var(--c4)'], ['debt', 'Debt', 'var(--neg)']].map(([b, name, color]) => ({ name, color, values: bucketVals(b) })), line: { values: nw, color: 'var(--ink)' },
       tip: i => `<strong>${monthLabel(ms[i])}</strong><br>Net worth ${money(nw[i], { cents: false })}` })}
     <p class="legend"><span><i style="background:var(--c2)"></i>Cash</span><span><i style="background:var(--c1)"></i>Investments</span><span><i style="background:var(--c4)"></i>Property and private</span><span><i style="background:var(--neg)"></i>Debt</span><span><i style="background:var(--ink);height:2px"></i>Net worth</span></p></section>
-  <table class="ledger"><thead><tr><th>Account</th><th class="num">${ago ? monthLabel(ago, true) : ''}</th><th class="num">Now</th><th class="num">Change</th><th class="spark-cell hide-sm">Trend</th></tr></thead><tbody>
+  <table class="ledger" data-sort-id="rep-nw"><thead><tr><th>Account</th><th class="num">${ago ? monthLabel(ago, true) : ''}</th><th class="num">Now</th><th class="num">Change</th><th class="spark-cell hide-sm" data-nosort>Trend</th></tr></thead><tbody>
     ${activeAccounts().map(a => { const then = ago ? state.snapshots[ago][a.id] : null, now = signedValue(a); return `<tr><th scope="row">${esc(a.name)}</th><td class="num muted">${then == null ? '—' : money(then, { cents: false })}</td><td class="num">${money(now, { cents: false })}</td><td class="num ${then == null ? '' : signClass(now - then)}">${then == null ? '' : money(now - then, { cents: false, sign: true })}</td><td class="spark-cell hide-sm">${sparkline(ms.slice(-13).map(m => state.snapshots[m][a.id] || 0), { w: 90, h: 22, color: isLiability(a) ? 'var(--neg)' : 'var(--ink-accent)' })}</td></tr>`; }).join('')}
   </tbody><tfoot><tr><th scope="row">Net worth</th><td class="num total">${ago ? money(snapshotNW(ago), { cents: false }) : ''}</td><td class="num total">${money(totals().netWorth, { cents: false })}</td><td class="num total ${ago ? signClass(totals().netWorth - snapshotNW(ago)) : ''}">${ago ? money(totals().netWorth - snapshotNW(ago), { cents: false, sign: true }) : ''}</td><td class="hide-sm"></td></tr></tfoot></table>`;
 };
@@ -4275,8 +4425,8 @@ VIEWS.planning = p => {
     <section class="panel"><header class="panel-head"><h2>Balance remaining</h2></header>
       ${chartHost({ h: 230, label: 'Debt balance over time', series: [{ points: pad(min.series), color: 'var(--muted-2)', dash: true, nodots: true }, { points: pad(plan.series), color: 'var(--ink-accent)', area: true, nodots: true }], xFmt: i => i % 12 === 0 ? `${new Date().getFullYear() + i / 12}` : `+${i}m`, tip: i => `<strong>${dateAt(i)}</strong><br>Your plan ${money(plan.series[i]?.y || 0, { cents: false })}<br><span class="muted">Minimums ${money(min.series[i]?.y || 0, { cents: false })}</span>` })}
       <p class="legend"><span><i style="background:var(--ink-accent)"></i>Your plan</span><span><i style="background:var(--muted-2)"></i>Minimums only</span></p></section>
-    <table class="ledger"><thead><tr><th>Debt</th><th class="num">Balance</th><th class="num">Rate</th><th class="num">Minimum</th><th class="num">Paid off</th></tr></thead><tbody>
-      ${plan.debts.sort((a, b) => (a.paidMonth || 999) - (b.paidMonth || 999)).map(d => `<tr><th scope="row"><button class="linklike" data-edit-acct="${d.id}">${esc(d.name)}</button></th><td class="num">${money(d.balance, { cents: false })}</td><td class="num">${d.rate ? d.rate + '%' : '<span class="muted">add rate</span>'}</td><td class="num">${money(d.min, { cents: false })}</td><td class="num">${d.paidMonth ? dateAt(d.paidMonth) : '—'}</td></tr>`).join('')}
+    <table class="ledger" data-sort-id="debts"><thead><tr><th>Debt</th><th class="num">Balance</th><th class="num">Rate</th><th class="num">Minimum</th><th class="num" data-sort-first="asc">Paid off</th></tr></thead><tbody>
+      ${plan.debts.sort((a, b) => (a.paidMonth || 999) - (b.paidMonth || 999)).map(d => `<tr><th scope="row"><button class="linklike" data-edit-acct="${d.id}">${esc(d.name)}</button></th><td class="num">${money(d.balance, { cents: false })}</td><td class="num" data-v="${d.rate || ''}">${d.rate ? d.rate + '%' : '<span class="muted">add rate</span>'}</td><td class="num">${money(d.min, { cents: false })}</td><td class="num" data-v="${d.paidMonth || ''}">${d.paidMonth ? dateAt(d.paidMonth) : '—'}</td></tr>`).join('')}
     </tbody></table><p class="muted small">Rates and minimum payments come from each account. Missing minimums assume 2% of the balance.</p>`;
   }
   // retirement
@@ -4439,7 +4589,7 @@ VIEWS.data = () => {
   <section class="panel">
     <header class="panel-head"><h2>Categorization rules</h2><span class="muted small">${state.rules.length} rule${state.rules.length === 1 ? '' : 's'}</span></header>
     <p class="muted">When a payee contains the text, and the amount, money in or out, and account match if you set them, it gets that category (and optionally a person), on import and when you auto-categorize. When more than one rule fits, the more specific one wins. Your rules always win. After them Ọrọ̀ uses how you categorized the same merchant before, a built-in list of about 2,000 merchants, the merchant code some banks include, the bank’s own category, and finally words in the name like GRILL, PHARMACY or DENTAL. All of it runs on your device.</p>
-    ${state.rules.length ? `<div class="scroll-table short"><table class="ledger compact"><thead><tr><th>Payee contains</th><th>Category</th><th class="hide-sm">Person</th><th class="hide-sm">Rename to</th><th></th></tr></thead><tbody>
+    ${state.rules.length ? `<div class="scroll-table short"><table class="ledger compact" data-sort-id="rules"><thead><tr><th>Payee contains</th><th>Category</th><th class="hide-sm">Person</th><th class="hide-sm">Rename to</th><th></th></tr></thead><tbody>
     ${state.rules.map(r => `<tr><td>${r.text ? `<code>${esc(r.text)}</code>` : '<span class="muted">Any payee</span>'}${ruleHasConds(r) ? `<div class="muted small">${esc(ruleCondText(r))}</div>` : ''}</td><td>${esc(catName(r.categoryId))}</td><td class="hide-sm muted">${r.person ? esc(memberName(r.person)) : ''}</td><td class="hide-sm muted">${esc(r.rename || '')}</td><td class="acts"><button class="linklike small" data-edit-rule="${r.id}">Edit</button></td></tr>`).join('')}
     </tbody></table></div>` : ''}
     <div class="actions"><button class="btn" data-act="add-rule">Add a rule</button><button class="btn ghost" data-act="run-rules">Auto-categorize uncategorized</button></div>
@@ -5305,7 +5455,7 @@ function armAutoLock() {
 ['mousemove', 'keydown', 'mousedown', 'touchstart', 'wheel'].forEach(ev => document.addEventListener(ev, debounce(armAutoLock, 1000), { passive: true }));
 function lockNow() {
   if (!Store.key || $('.lock-screen')) return;
-  UI.sticky = {};   // filters start fresh after a lock
+  UI.sticky = {}; UI.sorts = {};   // filters and column sorts start fresh after a lock
   ciReset();        // and so does a check-in
   closeTalk(); Object.assign(TALK, { draft: null, heard: '', last: null }); UI.talkCtx = null;
   if ($('#present')) { $('#present').remove(); document.body.classList.remove('presenting'); }
@@ -5348,7 +5498,8 @@ const ACTIONS = {
   'tx-clear': () => {   // everything: all months, no account/category/person/flag/tag filter, no search, everyone's spending
     UI.txFilters = undefined;
     if (UI.lens) { UI.lens = ''; try { sessionStorage.setItem('keel.lens', ''); } catch (e2) { /* ignore */ } }
-    go('#/transactions?m=all');
+    const sort = route().params.sort;   // the sort order isn't a filter, so it stays
+    go(`#/transactions?m=all${sort ? `&sort=${encodeURIComponent(sort)}` : ''}`);
   },
   'tx-select': () => { UI.txSelect = !UI.txSelect; if (!UI.txSelect) { $$('.tx-cb:checked').forEach(c => { c.checked = false; }); } render(); },
   'more-money-date': () => { closeModal(true); ACTIONS['money-date'](); },

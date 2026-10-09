@@ -334,9 +334,9 @@ body.simple .detail-only { display: none !important; }
 .sched .subtotal th, .sched .subtotal td { font-weight: 600; }
 .sched .net th, .sched .net td { font-weight: 700; }
 .tax-side { display: flex; flex-direction: column; gap: 12px; }
-.member-list { display: grid; gap: 8px; margin-bottom: 12px; max-width: 420px; }
+.member-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-bottom: 12px; max-width: 420px; }
 .member-row { display: flex; gap: 10px; align-items: center; }
-.member-row input { flex: 1; }
+.member-row input { flex: 1; min-width: 0; }   /* shrinks on a small iPhone instead of widening the page */
 .shortcuts { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px 22px; margin: 0; }
 .shortcuts div { display: flex; gap: 10px; align-items: baseline; }
 .shortcuts dt { min-width: 92px; } .shortcuts dd { margin: 0; color: var(--muted); }
@@ -463,6 +463,14 @@ tr.needs .cat-select { border-color: var(--warn); color: var(--warn); }
 .att-chip .icon-btn { width: 24px; height: 24px; font-size: 16px; }
 .filters { display: flex; gap: 12px 18px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
 .tx-clear { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+/* Column headings you can click to sort (51-sort.js) */
+.th-sort { appearance: none; -webkit-appearance: none; background: none; border: 0; padding: 2px 0; margin: 0; font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit; text-align: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; border-radius: 4px; }
+.th-sort:hover { color: var(--ink); }
+.th-sort:focus-visible { outline: 2px solid var(--ink-accent); outline-offset: 2px; }
+th[aria-sort] .th-sort { color: var(--ink); }
+.sort-ind { font-size: .95em; line-height: 1; color: var(--ink-accent); }
+.sort-ind:empty { display: none; }
+.filters .sort-field { display: none; }   /* the Sort menu is for when the column headings are hidden */
 .tx-clear .clear-ico { opacity: .75; }
 .bulk { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border-radius: 8px; background: var(--sheet); border: 1px solid var(--ink-accent); margin-bottom: 12px; position: sticky; top: 64px; z-index: 5; box-shadow: var(--shadow); }
 .bulk select, .bulk input { padding: 4px 8px; font-size: 13px; }
@@ -1136,3 +1144,6 @@ body.talk-open .main-wrap { margin-right: 390px; }
   a { color: inherit; }
   body.privacy .num { filter: none; }
 }
+/* No column headings in the transactions list on the iPhone or a narrow page area (Talk open): sort from the menu instead */
+@media (max-width: 640px) { .filters .sort-field { display: flex; } }
+@container main (max-width: 700px) { .filters .sort-field { display: flex; } }

@@ -166,7 +166,7 @@ function armAutoLock() {
 ['mousemove', 'keydown', 'mousedown', 'touchstart', 'wheel'].forEach(ev => document.addEventListener(ev, debounce(armAutoLock, 1000), { passive: true }));
 function lockNow() {
   if (!Store.key || $('.lock-screen')) return;
-  UI.sticky = {};   // filters start fresh after a lock
+  UI.sticky = {}; UI.sorts = {};   // filters and column sorts start fresh after a lock
   ciReset();        // and so does a check-in
   closeTalk(); Object.assign(TALK, { draft: null, heard: '', last: null }); UI.talkCtx = null;
   if ($('#present')) { $('#present').remove(); document.body.classList.remove('presenting'); }

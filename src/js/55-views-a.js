@@ -228,6 +228,8 @@ VIEWS.transactions = p => {
   if (S.min != null) list = list.filter(t => Math.abs(t.amount) >= S.min);
   if (S.max != null) list = list.filter(t => Math.abs(t.amount) <= S.max);
   if (S.text.length) list = list.filter(t => { const hay = (t.payee + ' ' + (t.memo || '') + ' ' + (t.rawPayee || '') + ' ' + catName(t.categoryId) + ' ' + (t.tags || []).join(' ') + ' ' + Math.abs(t.amount).toFixed(2)).toLowerCase(); return S.text.every(x => hay.includes(x)); });
+  const sort = txSortParse(p.sort);
+  list = txSorted(list, sort);
   const limit = +p.limit || 250;
   const shown = list.slice(0, limit);
   UI.txVisible = list.map(t => t.id);   // what "the Jewel Osco one" means to Talk while this list is on screen
@@ -258,6 +260,7 @@ VIEWS.transactions = p => {
     ${multi && !UI.lens ? `<label class="field inline more"><span>Person</span><select data-filter="who"><option value="">Everyone</option>${memberOptions(p.who)}</select></label>` : ''}
     <label class="field inline more"><span>Flag</span><select data-filter="flag"><option value="">Any</option><option value="1" ${p.flag ? 'selected' : ''}>Flagged only</option></select></label>
     ${tags.length ? `<label class="field inline more"><span>Tag</span><select data-filter="tag"><option value="">Any tag</option>${tags.map(t => `<option ${t === p.tag ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>` : ''}
+    ${txSortSelect(sort, multi)}
     <label class="field inline grow"><span>Search</span><input type="search" id="tx-search" data-filter="q" value="${esc(p.q || '')}" placeholder="Payee, memo, #tag, >100"></label>
     ${clearBtn('tx-clear-wide')}
     <div class="filters-sm"><button class="btn small ghost" data-act="tx-filters" aria-expanded="${fOpen ? 'true' : 'false'}">${fOpen ? 'Fewer filters' : 'More filters'}${nFilters ? ` · ${nFilters} on` : ''}</button>${clearBtn('')}${shown.length ? `<button class="btn small ghost" data-act="tx-select" aria-pressed="${UI.txSelect ? 'true' : 'false'}">${UI.txSelect ? 'Done selecting' : 'Select'}</button>` : ''}</div>
@@ -272,7 +275,7 @@ VIEWS.transactions = p => {
     <button class="btn small ghost danger-text" data-act="bulk-del">Delete</button>
   </div>
   ${shown.length ? `<div class="scroll-table"><table class="ledger tx-table ${UI.txSelect ? 'selecting' : ''}" id="tx-table">
-    <thead><tr><th class="cb"><input type="checkbox" id="tx-all" aria-label="Select all shown"></th><th>Date</th><th>Payee</th><th>Category</th>${multi ? '<th class="hide-sm detail-only">Person</th>' : ''}<th class="hide-sm">Account</th><th class="num">Amount</th></tr></thead>
+    <thead><tr><th class="cb"><input type="checkbox" id="tx-all" aria-label="Select all shown"></th>${txSortHead('date', sort)}${txSortHead('payee', sort)}${txSortHead('cat', sort)}${multi ? txSortHead('who', sort, 'hide-sm detail-only') : ''}${txSortHead('acct', sort, 'hide-sm')}${txSortHead('amount', sort, 'num')}</tr></thead>
     <tbody>${shown.map(t => {
       const who = personOf(t);
       return `<tr data-id="${t.id}" class="${isUncat(t) ? 'needs' : ''}">
@@ -333,7 +336,7 @@ VIEWS.budget = p => {
     const trend = Array.from({ length: 6 }, (_, i) => monthActuals(addMonths(mk, i - 5))[c.id] || 0);
     return `<tr>
       <th scope="row"><button class="linklike" data-edit-cat="${c.id}">${esc(c.name)}</button>${v.period === 'year' ? '<span class="tag soft">yearly</span>' : ''}${c.rollover ? `<span class="tag soft" title="Carried from earlier months: ${money(v.carry || 0)}">rolls over</span>` : ''}</th>
-      <td class="num budget-cell"><span class="cur">$</span><input class="budget-input" id="b-${c.id}" data-budget="${c.id}" inputmode="decimal" value="${c.budget ? round2(c.budget) : ''}" placeholder="0" aria-label="Budget for ${esc(c.name)}"></td>
+      <td class="num budget-cell" data-v="${c.budget ? round2(c.budget) : 0}"><span class="cur">$</span><input class="budget-input" id="b-${c.id}" data-budget="${c.id}" inputmode="decimal" value="${c.budget ? round2(c.budget) : ''}" placeholder="0" aria-label="Budget for ${esc(c.name)}"></td>
       <td class="num">${money(v.actual, { cents: false })}</td>
       <td class="num ${inc ? (v.actual > v.budget ? 'pos' : 'muted') : (avail < 0 ? 'neg' : '')}">${!v.budget && !c.rollover ? '<span class="muted">—</span>' : inc ? (v.budget - v.actual > 0 ? `${money(v.budget - v.actual, { cents: false })} to come` : money(v.actual - v.budget, { cents: false, sign: true })) : money(avail, { cents: false })}</td>
       <td class="meter-cell">${v.budget ? bar(v.actual, cap, { pace: inc ? null : pace }) : ''}</td>
@@ -344,8 +347,8 @@ VIEWS.budget = p => {
     const cs = groups[g], tt = groupTotal(cs.filter(c => c.kind === 'expense'));
     const isRental = cs.some(c => c.rental);
     const pnl = isRental ? rentalPnL(g, `${mk}-01`, monthEnd(mk)) : null;
-    return `<section class="budget-group"><table class="ledger budget-table">
-      <thead><tr><th scope="col">${esc(g)}</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">${cs[0].kind === 'income' && !isRental ? 'Difference' : 'Available'}</th><th class="meter-cell"></th><th class="spark-cell hide-sm">6 months</th></tr></thead>
+    return `<section class="budget-group"><table class="ledger budget-table" data-sort-id="budget">
+      <thead><tr><th scope="col">${esc(g)}</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">${cs[0].kind === 'income' && !isRental ? 'Difference' : 'Available'}</th><th class="meter-cell"></th><th class="spark-cell hide-sm" data-nosort>6 months</th></tr></thead>
       <tbody>${rowsFor(cs)}</tbody>
       ${isRental ? `<tfoot><tr><th scope="row">Cash flow after debt service</th><td></td><td class="num total ${signClass(pnl.cashFlow)}">${money(pnl.cashFlow, { cents: false })}</td><td colspan="3" class="muted small">NOI ${money(pnl.noi, { cents: false })} this month</td></tr></tfoot>`
       : cs[0].kind === 'expense' && cs.length > 1 ? `<tfoot><tr><th scope="row">Monthly total</th><td class="num total">${money(tt.b, { cents: false })}</td><td class="num total">${money(tt.a, { cents: false })}</td><td class="num total ${tt.b - tt.a < 0 ? 'neg' : ''}">${money(tt.b - tt.a, { cents: false })}</td><td></td><td class="hide-sm"></td></tr></tfoot>` : ''}
@@ -369,15 +372,15 @@ VIEWS.accounts = p => {
   <section class="alloc-bar-wrap detail-only">${(() => { const segs = [['Cash', t.cash, 'var(--c2)'], ['Investments', t.invest, 'var(--c1)'], ['Property and private', t.illiquid, 'var(--c4)']]; const tot = t.assets || 1; return `<div class="stack tall" role="img" aria-label="Assets by type">${segs.map(([l, v, c]) => v > 0 ? `<span style="width:${v / tot * 100}%;background:${c}" title="${l} ${pct(v / tot, 0)}"></span>` : '').join('')}</div><p class="legend">${segs.map(([l, v, c]) => `<span><i style="background:${c}"></i>${l} ${pct(v / tot, 0)}</span>`).join('')}<span><i style="background:var(--neg)"></i>Debt is ${pct(t.liabilities / tot, 0)} of assets</span></p>`; })()}</section>
   ${groups.map(g => {
     const subtotal = sum(g.accts.map(a => g.signed ? signedValue(a) : accountValue(a)));
-    return `<section class="acct-group"><table class="ledger acct-table">
+    return `<section class="acct-group"><table class="ledger acct-table" data-sort-id="accounts">
       <thead><tr><th scope="col">${esc(g.label)}</th><th class="hide-sm">${byOwner ? 'Type' : multi ? 'Owner' : 'Type'}</th><th>As of</th><th class="num">${g.debt ? 'Owed' : byOwner ? 'Net' : 'Value'}</th><th class="acts"></th></tr></thead>
       <tbody>${g.accts.map(a => {
         const hs = holdingsFor(a.id).length, v = byOwner ? signedValue(a) : accountValue(a);
         return `<tr>
           <th scope="row" class="acct-name"><button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button>${a.institution ? `<div class="muted small">${esc(a.institution)}${a.last4 ? ` ending ${esc(a.last4)}` : ''}</div>` : ''}</th>
           <td class="hide-sm muted">${byOwner || !multi ? `${esc(ACCOUNT_TYPES[a.type]?.label)}${a.rental ? ', rental' : ''}${hs ? `, ${hs} holding${hs > 1 ? 's' : ''}` : ''}` : `<span class="person-dot" style="background:${memberColor(a.owner || 'joint')}"></span>${esc(memberName(a.owner || 'joint'))}`}</td>
-          <td class="acct-asof">${staleTag(accountAsOf(a))}${a.reconciledThrough ? `<div class="muted small">Reconciled ${dateLabel(a.reconciledThrough)}</div>` : ''}</td>
-          <td class="num acct-val">${updating && !hs ? `<input class="bal-input" data-bal="${a.id}" inputmode="decimal" value="${round2(accountValue(a))}" aria-label="Balance for ${esc(a.name)}">` : `<span class="${byOwner ? signClass(v) : ''}">${money(v)}</span>`}</td>
+          <td class="acct-asof" data-v="${esc(accountAsOf(a) || '')}">${staleTag(accountAsOf(a))}${a.reconciledThrough ? `<div class="muted small">Reconciled ${dateLabel(a.reconciledThrough)}</div>` : ''}</td>
+          <td class="num acct-val" data-v="${round2(v)}">${updating && !hs ? `<input class="bal-input" data-bal="${a.id}" inputmode="decimal" value="${round2(accountValue(a))}" aria-label="Balance for ${esc(a.name)}">` : `<span class="${byOwner ? signClass(v) : ''}">${money(v)}</span>`}</td>
           <td class="acts"><button class="linklike small" data-history="${a.id}">History</button>${a.ledger ? ` <button class="linklike small" data-reconcile="${a.id}">Reconcile</button>` : ''}</td></tr>`;
       }).join('')}</tbody>
       <tfoot><tr><th scope="row">Total</th><td class="hide-sm"></td><td class="acct-pad"></td><td class="num total">${money(subtotal)}</td><td class="acct-pad"></td></tr></tfoot>

@@ -76,6 +76,7 @@ function render() {
     if (t.parentElement.classList.contains('scroll-table')) continue;
     const w = document.createElement('div'); w.className = 'scroll-table'; t.replaceWith(w); w.appendChild(t);
   }
+  decorateSortable($('#main'));   // headings you can click to sort (51-sort.js)
   if (UI.navCheckin !== (state.settings.checkin !== false)) buildShell();   // Check-in was turned on or off
   $$('.nav a').forEach(a => a.classList.toggle('active', a.dataset.page === page));
   $$('#tabbar [data-tab-page]').forEach(a => { const on = a.dataset.tabPage === page || (a.dataset.tabPage === 'more' && !TAB_PAGES.includes(page)); a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
