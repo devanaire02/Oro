@@ -30,7 +30,7 @@ const ACTIONS = {
     let n = 0;
     const hist = categoryHistory();
     for (const t of state.transactions) if (!t.categoryId && !(t.splits && t.splits.length)) {
-      const r = matchRule(t.rawPayee || t.payee);
+      const r = matchRule(t.rawPayee || t.payee, t);
       if (r) { t.categoryId = r.categoryId; if (r.rename) t.payee = r.rename; if (r.person) t.person = r.person; n++; }
       else { const a = autoCategory(t.rawPayee || t.payee, t.amount, { mcc: t.mcc }, hist); if (a) { t.categoryId = a.id; n++; } }
     }

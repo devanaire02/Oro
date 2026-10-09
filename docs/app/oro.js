@@ -744,7 +744,7 @@ function buildSampleState() {
 
   s.transactions = tx.sort((a, b) => b.date.localeCompare(a.date));
   state = s; invalidate(); // rules need the live state
-  for (const t of s.transactions) { if (!t.fresh) { const rr = matchRule(t.payee); t.categoryId = rr ? rr.categoryId : null; } else { t.categoryId = null; delete t.fresh; } t.rawPayee = t.payee; t.payee = prettyPayee(t.payee); }
+  for (const t of s.transactions) { if (!t.fresh) { const rr = matchRule(t.payee, t); t.categoryId = rr ? rr.categoryId : null; } else { t.categoryId = null; delete t.fresh; } t.rawPayee = t.payee; t.payee = prettyPayee(t.payee); }
   // splits, tags and per-person overrides
   for (const t of s.transactions) {
     if (/COSTCO/.test(t.rawPayee)) { const g = round2(t.amount * 0.75); t.splits = [{ categoryId: cid('Food', 'Groceries'), amount: g, memo: 'Food' }, { categoryId: cid('Lifestyle', 'Shopping'), amount: round2(t.amount - g), memo: 'Household' }]; t.categoryId = '__split'; }
@@ -883,12 +883,41 @@ function netWorthSeries() { return Object.keys(state.snapshots).sort().map(mk =>
 function snapshotNW(mk) { const s = state.snapshots[mk]; return s ? round2(sum(Object.values(s))) : null; }
 
 /* ---------- rules ---------- */
-function ruleMatches(r, payee) {
-  const t = String(r.text || '').toUpperCase().trim();
+/* A rule matches on payee text and, optionally, the amount (exactly, between, more or less than), the direction
+   (money in or out) and the account. Conditions it doesn't set don't matter. */
+const ruleHasConds = r => !!(r.dir || r.acct || r.amt?.op);
+const ruleWeight = r => (r.amt?.op ? 2 : 0) + (r.dir ? 1 : 0) + (r.acct ? 1 : 0);
+function ruleMatches(r, payee, t) {
+  const text = String(r.text || '').toUpperCase().trim(), conds = ruleHasConds(r);
+  if (!text && !conds) return false;
+  if (text && !(normPayee(payee).includes(normPayee(text) || text) || String(payee || '').toUpperCase().includes(text))) return false;
+  if (!conds) return true;
   if (!t) return false;
-  return normPayee(payee).includes(normPayee(t) || t) || String(payee || '').toUpperCase().includes(t);
+  const amt = Number(t.amount) || 0, v = Math.abs(amt);
+  if (r.dir === 'in' && !(amt > 0)) return false;
+  if (r.dir === 'out' && !(amt < 0)) return false;
+  if (r.acct && t.accountId !== r.acct) return false;
+  if (r.amt?.op) {
+    const a = Number(r.amt.a) || 0, b = Number(r.amt.b) || 0;
+    if (r.amt.op === 'eq' && Math.abs(v - a) > 0.005) return false;
+    if (r.amt.op === 'between' && (v < Math.min(a, b) - 0.005 || v > Math.max(a, b) + 0.005)) return false;
+    if (r.amt.op === 'gt' && !(v > a + 0.005)) return false;
+    if (r.amt.op === 'lt' && !(v < a - 0.005)) return false;
+  }
+  return true;
 }
-function matchRule(payee) { return state.rules.find(r => ruleMatches(r, payee)) || null; }
+/* The most specific matching rule wins (amount beats direction or account beats text only); ties go to the one listed first. */
+function matchRule(payee, t) {
+  let best = null;
+  for (const r of state.rules) if (ruleMatches(r, payee, t) && (!best || ruleWeight(r) > ruleWeight(best))) best = r;
+  return best;
+}
+/* "exactly $500.00 · money in · Chase checking" */
+function ruleCondText(r) {
+  const m = n => money(Number(n) || 0);
+  const a = r.amt?.op === 'eq' ? `exactly ${m(r.amt.a)}` : r.amt?.op === 'between' ? `${m(Math.min(r.amt.a, r.amt.b))} to ${m(Math.max(r.amt.a, r.amt.b))}` : r.amt?.op === 'gt' ? `more than ${m(r.amt.a)}` : r.amt?.op === 'lt' ? `less than ${m(r.amt.a)}` : '';
+  return [a, r.dir === 'in' ? 'money in' : r.dir === 'out' ? 'money out' : '', r.acct ? (acctById(r.acct)?.name || 'an account that was removed') : ''].filter(Boolean).join(' · ');
+}
 
 /* ---------- flows ---------- */
 function txInMonth(mk) { return memo('m:' + mk, () => state.transactions.filter(t => t.date.startsWith(mk))); }
@@ -2453,7 +2482,7 @@ function buildTxRows(list) {
     let status = 'new';
     if (ids.has(importId)) status = 'dup';
     else if (existing.some(e => Math.abs(e.amount - t.amount) < 0.005 && Math.abs(daysBetween(e.date, t.date)) <= 3 && (normPayee(e.rawPayee || e.payee).split(' ')[0] === normPayee(t.payee).split(' ')[0] || !e.importId))) status = 'maybe';
-    const rule = matchRule(t.payee);
+    const rule = matchRule(t.payee, { amount: t.amount, accountId: acctId });
     const named = findCategoryByName(t.bankCategory);
     const auto = rule || named ? null : autoCategory(t.payee, t.amount, { mcc: t.mcc, bankCategory: t.bankCategory }, hist);
     let categoryId = rule ? rule.categoryId : named ? named.id : (auto ? auto.id : null);
@@ -3237,7 +3266,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '02ef76f';
+const ORO_BUILD = '7c16bd9';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -4331,9 +4360,9 @@ VIEWS.data = () => {
 
   <section class="panel">
     <header class="panel-head"><h2>Categorization rules</h2><span class="muted small">${state.rules.length} rule${state.rules.length === 1 ? '' : 's'}</span></header>
-    <p class="muted">When a payee contains the text, it gets that category (and optionally a person), on import and when you auto-categorize. Your rules always win. After them Ọrọ̀ uses how you categorized the same merchant before, a built-in list of about 2,000 merchants, the merchant code some banks include, the bank’s own category, and finally words in the name like GRILL, PHARMACY or DENTAL. All of it runs on your device.</p>
+    <p class="muted">When a payee contains the text, and the amount, money in or out, and account match if you set them, it gets that category (and optionally a person), on import and when you auto-categorize. When more than one rule fits, the more specific one wins. Your rules always win. After them Ọrọ̀ uses how you categorized the same merchant before, a built-in list of about 2,000 merchants, the merchant code some banks include, the bank’s own category, and finally words in the name like GRILL, PHARMACY or DENTAL. All of it runs on your device.</p>
     ${state.rules.length ? `<div class="scroll-table short"><table class="ledger compact"><thead><tr><th>Payee contains</th><th>Category</th><th class="hide-sm">Person</th><th class="hide-sm">Rename to</th><th></th></tr></thead><tbody>
-    ${state.rules.map(r => `<tr><td><code>${esc(r.text)}</code></td><td>${esc(catName(r.categoryId))}</td><td class="hide-sm muted">${r.person ? esc(memberName(r.person)) : ''}</td><td class="hide-sm muted">${esc(r.rename || '')}</td><td class="acts"><button class="linklike small" data-edit-rule="${r.id}">Edit</button></td></tr>`).join('')}
+    ${state.rules.map(r => `<tr><td>${r.text ? `<code>${esc(r.text)}</code>` : '<span class="muted">Any payee</span>'}${ruleHasConds(r) ? `<div class="muted small">${esc(ruleCondText(r))}</div>` : ''}</td><td>${esc(catName(r.categoryId))}</td><td class="hide-sm muted">${r.person ? esc(memberName(r.person)) : ''}</td><td class="hide-sm muted">${esc(r.rename || '')}</td><td class="acts"><button class="linklike small" data-edit-rule="${r.id}">Edit</button></td></tr>`).join('')}
     </tbody></table></div>` : ''}
     <div class="actions"><button class="btn" data-act="add-rule">Add a rule</button><button class="btn ghost" data-act="run-rules">Auto-categorize uncategorized</button></div>
   </section>
@@ -4524,20 +4553,22 @@ function ruleKeyFor(payee, selfId) {
 function offerRule(t, catId) {
   if (!catId || catId === '__split') return;
   const src = t.rawPayee || t.payee;
-  const existing = matchRule(src);
+  const existing = matchRule(src, t);
   if (existing && existing.categoryId === catId) return;
   const key = existing ? existing.text : ruleKeyFor(src, t.id); if (!key) return;
   const others = state.transactions.filter(x => x.id !== t.id && isUncat(x) && !isSplit(x) && ruleMatches({ text: key }, x.rawPayee || x.payee)).length;
   toast(`Always file “${key}” under ${catName(catId)}?${others ? ` ${others} more uncategorized look${others === 1 ? 's' : ''} like it.` : ''}`, {
-    label: existing ? 'Update the rule…' : 'Make a rule…',
-    fn: () => ruleModal(existing?.id || null, { text: key, categoryId: catId }),
+    label: existing ? 'Change the rule…' : 'Make a rule…',
+    // a new rule alongside the one that matched: with a condition (like this amount) it takes priority for those, and the
+    // existing rule keeps the rest; saved with no condition and the same text, it just updates the existing rule
+    fn: () => ruleModal(null, { text: key, categoryId: catId, from: { amount: t.amount, accountId: t.accountId }, over: existing?.id }),
   });
 }
 /* Which transactions a rule's text would catch, for the live preview in the rule dialog. */
-function rulePreview(text, categoryId) {
-  const r = { text: String(text || '').trim().toUpperCase() };
-  if (!r.text) return null;
-  const hits = state.transactions.filter(t => !isSplit(t) && ruleMatches(r, t.rawPayee || t.payee));
+function rulePreview(rule, categoryId) {
+  const r = { ...rule, text: String(rule.text || '').trim().toUpperCase() };
+  if (!r.text && !r.amt?.op) return null;
+  const hits = state.transactions.filter(t => !isSplit(t) && ruleMatches(r, t.rawPayee || t.payee, t));
   const unc = hits.filter(t => !t.categoryId), other = hits.filter(t => t.categoryId && t.categoryId !== categoryId), same = hits.filter(t => categoryId && t.categoryId === categoryId);
   const examples = [...new Set(hits.map(t => prettyPayee(t.rawPayee || t.payee)))].slice(0, 6);
   const otherCats = Object.entries(groupBy(other, t => t.categoryId)).map(([c, l]) => `${catName(c)} ${l.length}`).join(', ');
@@ -4951,10 +4982,22 @@ function catModal(id) {
 function ruleModal(id, preset = {}) {
   const r = id ? state.rules.find(x => x.id === id) : null;
   const v = { ...(r || { text: '', categoryId: '', rename: '' }), ...preset };
+  const from = preset.from, fromAcct = from && acctById(from.accountId), over = preset.over ? state.rules.find(x => x.id === preset.over) : null;
+  const op = v.amt?.op || '';
   openModal({
     title: r ? 'Edit rule' : 'Add a rule',
     body: `<form id="f" class="form-grid">
-      <label class="field wide"><span>When the payee contains</span><input name="text" value="${esc(v.text)}" placeholder="e.g. WHOLE FOODS" required autofocus></label>
+      <label class="field wide"><span>When the payee contains</span><input name="text" value="${esc(v.text)}" placeholder="e.g. WHOLE FOODS" autofocus></label>
+      ${over ? `<p class="small rule-over wide">You already have a rule: <code>${esc(over.text || 'any payee')}</code>${ruleHasConds(over) ? ` (${esc(ruleCondText(over))})` : ''} → ${esc(catName(over.categoryId))}. Set a condition here, like this amount, and this rule wins for those while the existing one keeps the rest. With no condition, saving changes the existing rule. <button type="button" class="linklike" id="rule-edit-over">Open that rule instead</button></p>` : ''}
+      <fieldset class="wide rule-conds"><legend>And only when <span class="muted small">(optional)</span></legend>
+        <div class="form-grid">
+          <label class="field"><span>The amount is</span><select name="rule-amt-op" data-key="amtOp" id="rule-amt-op">${[['', 'Any amount'], ['eq', 'Exactly'], ['between', 'Between'], ['gt', 'More than'], ['lt', 'Less than']].map(([k, l]) => `<option value="${k}" ${k === op ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <div class="field rule-amts" id="rule-amts" ${op ? '' : 'hidden'}><span>Amount</span><div class="rule-amt-row"><input name="rule-amt-a" data-key="amtA" inputmode="decimal" value="${v.amt?.a ?? ''}" placeholder="500.00"><span id="rule-and" ${op === 'between' ? '' : 'hidden'}>and</span><input name="rule-amt-b" data-key="amtB" id="rule-amt-b" inputmode="decimal" value="${v.amt?.b ?? ''}" placeholder="600.00" ${op === 'between' ? '' : 'hidden'}></div></div>
+          <label class="field"><span>Money is</span><select name="rule-dir" data-key="dir"><option value="">In or out</option><option value="in" ${v.dir === 'in' ? 'selected' : ''}>Coming in</option><option value="out" ${v.dir === 'out' ? 'selected' : ''}>Going out</option></select></label>
+          <label class="field"><span>In the account</span><select name="rule-acct" data-key="acct">${acctOptions(v.acct || '', null, 'Any account')}</select></label>
+        </div>
+        ${from ? `<div class="rule-quick"><span class="muted small">This one was ${money(Math.abs(from.amount))} ${from.amount > 0 ? 'into' : 'from'} ${esc(fromAcct?.name || 'an account')}.</span> <button type="button" class="btn small ghost" id="rule-this-amt">Match this amount</button>${fromAcct ? `<button type="button" class="btn small ghost" id="rule-this-acct">Only this account</button>` : ''}</div>` : ''}
+      </fieldset>
       <label class="field"><span>Set the category to</span><select name="categoryId">${catOptions(v.categoryId, false)}</select></label>
       ${members().length > 1 ? `<label class="field"><span>And the person to</span><select name="person">${memberOptions(v.person || '', 'Leave as account owner')}</select></label>` : ''}
       <label class="field"><span>And rename the payee to</span><input name="rename" value="${esc(v.rename || '')}" placeholder="Optional"></label>
@@ -4963,17 +5006,30 @@ function ruleModal(id, preset = {}) {
     actions: `${r ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${r ? 'Save' : 'Add rule'}</button>`,
   });
   let applyUnc = true, applyOther = false;
+  const ruleFrom = d => {
+    const a = parseAmount(d.amtA || ''), b = parseAmount(d.amtB || '');
+    const amt = d.amtOp && isFinite(a) && (d.amtOp !== 'between' || isFinite(b)) ? { op: d.amtOp, a: round2(Math.abs(a)), ...(d.amtOp === 'between' ? { b: round2(Math.abs(b)) } : {}) } : undefined;
+    return { text: d.text.trim().toUpperCase(), amt, dir: d.dir || undefined, acct: d.acct || undefined };
+  };
   const paint = () => {
-    const d = formData($('#f')), p = rulePreview(d.text, d.categoryId), box = $('#rule-preview');
+    const d = formData($('#f')), p = rulePreview(ruleFrom(d), d.categoryId), box = $('#rule-preview');
     if (!box) return;
-    if (!p) { box.innerHTML = '<p class="muted small">Type part of the payee, like COSTCO or SHELL OIL. Shorter text catches more.</p>'; return; }
+    if (!p) { box.innerHTML = '<p class="muted small">Type part of the payee, like COSTCO or SHELL OIL (shorter text catches more), or set an amount.</p>'; return; }
     if (!p.hits.length) { box.innerHTML = '<p class="muted small">Nothing you have matches this yet. It will apply to future imports.</p>'; return; }
     box.innerHTML = `<p><strong>Matches ${p.hits.length.toLocaleString()} transaction${p.hits.length === 1 ? '' : 's'}</strong>${p.unc.length ? ` · ${p.unc.length} uncategorized` : ''}${p.other.length ? ` · ${p.other.length} in other categories` : ''}${p.same.length ? ` · ${p.same.length} already in ${esc(catName(d.categoryId))}` : ''}</p>
       <p class="muted small">For example: ${p.examples.map(esc).join(' · ')}${p.hits.length > p.examples.length ? ' …' : ''}</p>
       ${p.unc.length ? `<label class="check"><input type="checkbox" id="rule-apply-unc" ${applyUnc ? 'checked' : ''}> Categorize the ${p.unc.length} uncategorized now</label>` : ''}
       ${p.other.length ? `<label class="check"><input type="checkbox" id="rule-apply-other" ${applyOther ? 'checked' : ''}> Also move the ${p.other.length} filed elsewhere (${esc(p.otherCats)})</label>` : ''}`;
   };
-  $('#f').addEventListener('input', e => { if (e.target.name === 'text') paint(); });
+  const showAmts = () => { const o = $('#rule-amt-op').value; $('#rule-amts').hidden = !o; $('#rule-amt-b').hidden = $('#rule-and').hidden = o !== 'between'; };
+  $('#rule-amt-op').addEventListener('change', showAmts);
+  if ($('#rule-this-amt')) $('#rule-this-amt').onclick = () => {
+    $('#rule-amt-op').value = 'eq'; $('#f [name=rule-amt-a]').value = round2(Math.abs(from.amount)).toFixed(2);
+    $('#f [name=rule-dir]').value = from.amount > 0 ? 'in' : 'out'; showAmts(); paint();
+  };
+  if ($('#rule-edit-over')) $('#rule-edit-over').onclick = () => ruleModal(over.id);
+  if ($('#rule-this-acct')) $('#rule-this-acct').onclick = () => { $('#f [name=rule-acct]').value = from.accountId; paint(); };
+  $('#f').addEventListener('input', e => { if (['text', 'rule-amt-a', 'rule-amt-b'].includes(e.target.name)) paint(); });
   $('#f').addEventListener('change', e => {
     if (e.target.id === 'rule-apply-unc') applyUnc = e.target.checked;
     else if (e.target.id === 'rule-apply-other') applyOther = e.target.checked;
@@ -4981,16 +5037,22 @@ function ruleModal(id, preset = {}) {
   });
   paint();
   $('#save').onclick = () => {
-    const d = formData($('#f'));
-    if (!d.text.trim()) return toast('Type the text to match.');
+    const d = formData($('#f')), cond = ruleFrom(d);
+    if (d.amtOp && !cond.amt) return toast('Type the amount to match.');
+    if (!cond.text && !cond.amt) return toast('Type text to match in the payee, or set an amount.');
     if (!d.categoryId) return toast('Choose a category.');
-    const rec = { text: d.text.trim().toUpperCase(), categoryId: d.categoryId, rename: d.rename.trim(), person: d.person || undefined };
-    const p = rulePreview(rec.text, rec.categoryId);
-    if (r) Object.assign(r, rec); else state.rules.unshift({ id: uid(), ...rec });
+    const rec = { ...cond, categoryId: d.categoryId, rename: d.rename.trim(), person: d.person || undefined };
+    const p = rulePreview(rec, rec.categoryId);
+    // a new rule with no condition and the same text as an existing one updates that one instead of shadowing it
+    const twin = !r && !ruleHasConds(rec) ? state.rules.find(x => x.text === rec.text && !ruleHasConds(x)) : null;
+    const target = r || twin;
+    if (target) { for (const k of ['amt', 'dir', 'acct', 'person']) delete target[k]; Object.assign(target, rec); } else state.rules.unshift({ id: uid(), ...rec });
+    const saved = target || state.rules[0];
+    for (const k of Object.keys(saved)) if (saved[k] === undefined) delete saved[k];
     const targets = p ? [...(applyUnc ? p.unc : []), ...(applyOther ? p.other : [])] : [];
     for (const t of targets) { t.categoryId = rec.categoryId; if (rec.rename) t.payee = rec.rename; if (rec.person) t.person = rec.person; }
     closeModal(); commit();
-    toast(`Rule ${r ? 'updated' : 'saved'}.${targets.length ? ` ${targets.length} transaction${targets.length === 1 ? '' : 's'} categorized as ${catName(rec.categoryId)}.` : ''}`, { label: 'Undo', fn: undo });
+    toast(`Rule ${target ? 'updated' : 'saved'}.${targets.length ? ` ${targets.length} transaction${targets.length === 1 ? '' : 's'} categorized as ${catName(rec.categoryId)}.` : ''}`, { label: 'Undo', fn: undo });
   };
   if (r) $('#del').onclick = () => { state.rules = state.rules.filter(x => x.id !== r.id); closeModal(); commit(); };
 }
@@ -5213,7 +5275,7 @@ const ACTIONS = {
     let n = 0;
     const hist = categoryHistory();
     for (const t of state.transactions) if (!t.categoryId && !(t.splits && t.splits.length)) {
-      const r = matchRule(t.rawPayee || t.payee);
+      const r = matchRule(t.rawPayee || t.payee, t);
       if (r) { t.categoryId = r.categoryId; if (r.rename) t.payee = r.rename; if (r.person) t.person = r.person; n++; }
       else { const a = autoCategory(t.rawPayee || t.payee, t.amount, { mcc: t.mcc }, hist); if (a) { t.categoryId = a.id; n++; } }
     }

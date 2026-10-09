@@ -145,7 +145,7 @@ function buildSampleState() {
 
   s.transactions = tx.sort((a, b) => b.date.localeCompare(a.date));
   state = s; invalidate(); // rules need the live state
-  for (const t of s.transactions) { if (!t.fresh) { const rr = matchRule(t.payee); t.categoryId = rr ? rr.categoryId : null; } else { t.categoryId = null; delete t.fresh; } t.rawPayee = t.payee; t.payee = prettyPayee(t.payee); }
+  for (const t of s.transactions) { if (!t.fresh) { const rr = matchRule(t.payee, t); t.categoryId = rr ? rr.categoryId : null; } else { t.categoryId = null; delete t.fresh; } t.rawPayee = t.payee; t.payee = prettyPayee(t.payee); }
   // splits, tags and per-person overrides
   for (const t of s.transactions) {
     if (/COSTCO/.test(t.rawPayee)) { const g = round2(t.amount * 0.75); t.splits = [{ categoryId: cid('Food', 'Groceries'), amount: g, memo: 'Food' }, { categoryId: cid('Lifestyle', 'Shopping'), amount: round2(t.amount - g), memo: 'Household' }]; t.categoryId = '__split'; }

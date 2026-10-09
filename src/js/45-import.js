@@ -164,7 +164,7 @@ function buildTxRows(list) {
     let status = 'new';
     if (ids.has(importId)) status = 'dup';
     else if (existing.some(e => Math.abs(e.amount - t.amount) < 0.005 && Math.abs(daysBetween(e.date, t.date)) <= 3 && (normPayee(e.rawPayee || e.payee).split(' ')[0] === normPayee(t.payee).split(' ')[0] || !e.importId))) status = 'maybe';
-    const rule = matchRule(t.payee);
+    const rule = matchRule(t.payee, { amount: t.amount, accountId: acctId });
     const named = findCategoryByName(t.bankCategory);
     const auto = rule || named ? null : autoCategory(t.payee, t.amount, { mcc: t.mcc, bankCategory: t.bankCategory }, hist);
     let categoryId = rule ? rule.categoryId : named ? named.id : (auto ? auto.id : null);

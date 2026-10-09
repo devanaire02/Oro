@@ -61,12 +61,41 @@ function netWorthSeries() { return Object.keys(state.snapshots).sort().map(mk =>
 function snapshotNW(mk) { const s = state.snapshots[mk]; return s ? round2(sum(Object.values(s))) : null; }
 
 /* ---------- rules ---------- */
-function ruleMatches(r, payee) {
-  const t = String(r.text || '').toUpperCase().trim();
+/* A rule matches on payee text and, optionally, the amount (exactly, between, more or less than), the direction
+   (money in or out) and the account. Conditions it doesn't set don't matter. */
+const ruleHasConds = r => !!(r.dir || r.acct || r.amt?.op);
+const ruleWeight = r => (r.amt?.op ? 2 : 0) + (r.dir ? 1 : 0) + (r.acct ? 1 : 0);
+function ruleMatches(r, payee, t) {
+  const text = String(r.text || '').toUpperCase().trim(), conds = ruleHasConds(r);
+  if (!text && !conds) return false;
+  if (text && !(normPayee(payee).includes(normPayee(text) || text) || String(payee || '').toUpperCase().includes(text))) return false;
+  if (!conds) return true;
   if (!t) return false;
-  return normPayee(payee).includes(normPayee(t) || t) || String(payee || '').toUpperCase().includes(t);
+  const amt = Number(t.amount) || 0, v = Math.abs(amt);
+  if (r.dir === 'in' && !(amt > 0)) return false;
+  if (r.dir === 'out' && !(amt < 0)) return false;
+  if (r.acct && t.accountId !== r.acct) return false;
+  if (r.amt?.op) {
+    const a = Number(r.amt.a) || 0, b = Number(r.amt.b) || 0;
+    if (r.amt.op === 'eq' && Math.abs(v - a) > 0.005) return false;
+    if (r.amt.op === 'between' && (v < Math.min(a, b) - 0.005 || v > Math.max(a, b) + 0.005)) return false;
+    if (r.amt.op === 'gt' && !(v > a + 0.005)) return false;
+    if (r.amt.op === 'lt' && !(v < a - 0.005)) return false;
+  }
+  return true;
 }
-function matchRule(payee) { return state.rules.find(r => ruleMatches(r, payee)) || null; }
+/* The most specific matching rule wins (amount beats direction or account beats text only); ties go to the one listed first. */
+function matchRule(payee, t) {
+  let best = null;
+  for (const r of state.rules) if (ruleMatches(r, payee, t) && (!best || ruleWeight(r) > ruleWeight(best))) best = r;
+  return best;
+}
+/* "exactly $500.00 · money in · Chase checking" */
+function ruleCondText(r) {
+  const m = n => money(Number(n) || 0);
+  const a = r.amt?.op === 'eq' ? `exactly ${m(r.amt.a)}` : r.amt?.op === 'between' ? `${m(Math.min(r.amt.a, r.amt.b))} to ${m(Math.max(r.amt.a, r.amt.b))}` : r.amt?.op === 'gt' ? `more than ${m(r.amt.a)}` : r.amt?.op === 'lt' ? `less than ${m(r.amt.a)}` : '';
+  return [a, r.dir === 'in' ? 'money in' : r.dir === 'out' ? 'money out' : '', r.acct ? (acctById(r.acct)?.name || 'an account that was removed') : ''].filter(Boolean).join(' · ');
+}
 
 /* ---------- flows ---------- */
 function txInMonth(mk) { return memo('m:' + mk, () => state.transactions.filter(t => t.date.startsWith(mk))); }

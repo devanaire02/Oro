@@ -30,20 +30,22 @@ function ruleKeyFor(payee, selfId) {
 function offerRule(t, catId) {
   if (!catId || catId === '__split') return;
   const src = t.rawPayee || t.payee;
-  const existing = matchRule(src);
+  const existing = matchRule(src, t);
   if (existing && existing.categoryId === catId) return;
   const key = existing ? existing.text : ruleKeyFor(src, t.id); if (!key) return;
   const others = state.transactions.filter(x => x.id !== t.id && isUncat(x) && !isSplit(x) && ruleMatches({ text: key }, x.rawPayee || x.payee)).length;
   toast(`Always file “${key}” under ${catName(catId)}?${others ? ` ${others} more uncategorized look${others === 1 ? 's' : ''} like it.` : ''}`, {
-    label: existing ? 'Update the rule…' : 'Make a rule…',
-    fn: () => ruleModal(existing?.id || null, { text: key, categoryId: catId }),
+    label: existing ? 'Change the rule…' : 'Make a rule…',
+    // a new rule alongside the one that matched: with a condition (like this amount) it takes priority for those, and the
+    // existing rule keeps the rest; saved with no condition and the same text, it just updates the existing rule
+    fn: () => ruleModal(null, { text: key, categoryId: catId, from: { amount: t.amount, accountId: t.accountId }, over: existing?.id }),
   });
 }
 /* Which transactions a rule's text would catch, for the live preview in the rule dialog. */
-function rulePreview(text, categoryId) {
-  const r = { text: String(text || '').trim().toUpperCase() };
-  if (!r.text) return null;
-  const hits = state.transactions.filter(t => !isSplit(t) && ruleMatches(r, t.rawPayee || t.payee));
+function rulePreview(rule, categoryId) {
+  const r = { ...rule, text: String(rule.text || '').trim().toUpperCase() };
+  if (!r.text && !r.amt?.op) return null;
+  const hits = state.transactions.filter(t => !isSplit(t) && ruleMatches(r, t.rawPayee || t.payee, t));
   const unc = hits.filter(t => !t.categoryId), other = hits.filter(t => t.categoryId && t.categoryId !== categoryId), same = hits.filter(t => categoryId && t.categoryId === categoryId);
   const examples = [...new Set(hits.map(t => prettyPayee(t.rawPayee || t.payee)))].slice(0, 6);
   const otherCats = Object.entries(groupBy(other, t => t.categoryId)).map(([c, l]) => `${catName(c)} ${l.length}`).join(', ');
@@ -457,10 +459,22 @@ function catModal(id) {
 function ruleModal(id, preset = {}) {
   const r = id ? state.rules.find(x => x.id === id) : null;
   const v = { ...(r || { text: '', categoryId: '', rename: '' }), ...preset };
+  const from = preset.from, fromAcct = from && acctById(from.accountId), over = preset.over ? state.rules.find(x => x.id === preset.over) : null;
+  const op = v.amt?.op || '';
   openModal({
     title: r ? 'Edit rule' : 'Add a rule',
     body: `<form id="f" class="form-grid">
-      <label class="field wide"><span>When the payee contains</span><input name="text" value="${esc(v.text)}" placeholder="e.g. WHOLE FOODS" required autofocus></label>
+      <label class="field wide"><span>When the payee contains</span><input name="text" value="${esc(v.text)}" placeholder="e.g. WHOLE FOODS" autofocus></label>
+      ${over ? `<p class="small rule-over wide">You already have a rule: <code>${esc(over.text || 'any payee')}</code>${ruleHasConds(over) ? ` (${esc(ruleCondText(over))})` : ''} → ${esc(catName(over.categoryId))}. Set a condition here, like this amount, and this rule wins for those while the existing one keeps the rest. With no condition, saving changes the existing rule. <button type="button" class="linklike" id="rule-edit-over">Open that rule instead</button></p>` : ''}
+      <fieldset class="wide rule-conds"><legend>And only when <span class="muted small">(optional)</span></legend>
+        <div class="form-grid">
+          <label class="field"><span>The amount is</span><select name="rule-amt-op" data-key="amtOp" id="rule-amt-op">${[['', 'Any amount'], ['eq', 'Exactly'], ['between', 'Between'], ['gt', 'More than'], ['lt', 'Less than']].map(([k, l]) => `<option value="${k}" ${k === op ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <div class="field rule-amts" id="rule-amts" ${op ? '' : 'hidden'}><span>Amount</span><div class="rule-amt-row"><input name="rule-amt-a" data-key="amtA" inputmode="decimal" value="${v.amt?.a ?? ''}" placeholder="500.00"><span id="rule-and" ${op === 'between' ? '' : 'hidden'}>and</span><input name="rule-amt-b" data-key="amtB" id="rule-amt-b" inputmode="decimal" value="${v.amt?.b ?? ''}" placeholder="600.00" ${op === 'between' ? '' : 'hidden'}></div></div>
+          <label class="field"><span>Money is</span><select name="rule-dir" data-key="dir"><option value="">In or out</option><option value="in" ${v.dir === 'in' ? 'selected' : ''}>Coming in</option><option value="out" ${v.dir === 'out' ? 'selected' : ''}>Going out</option></select></label>
+          <label class="field"><span>In the account</span><select name="rule-acct" data-key="acct">${acctOptions(v.acct || '', null, 'Any account')}</select></label>
+        </div>
+        ${from ? `<div class="rule-quick"><span class="muted small">This one was ${money(Math.abs(from.amount))} ${from.amount > 0 ? 'into' : 'from'} ${esc(fromAcct?.name || 'an account')}.</span> <button type="button" class="btn small ghost" id="rule-this-amt">Match this amount</button>${fromAcct ? `<button type="button" class="btn small ghost" id="rule-this-acct">Only this account</button>` : ''}</div>` : ''}
+      </fieldset>
       <label class="field"><span>Set the category to</span><select name="categoryId">${catOptions(v.categoryId, false)}</select></label>
       ${members().length > 1 ? `<label class="field"><span>And the person to</span><select name="person">${memberOptions(v.person || '', 'Leave as account owner')}</select></label>` : ''}
       <label class="field"><span>And rename the payee to</span><input name="rename" value="${esc(v.rename || '')}" placeholder="Optional"></label>
@@ -469,17 +483,30 @@ function ruleModal(id, preset = {}) {
     actions: `${r ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${r ? 'Save' : 'Add rule'}</button>`,
   });
   let applyUnc = true, applyOther = false;
+  const ruleFrom = d => {
+    const a = parseAmount(d.amtA || ''), b = parseAmount(d.amtB || '');
+    const amt = d.amtOp && isFinite(a) && (d.amtOp !== 'between' || isFinite(b)) ? { op: d.amtOp, a: round2(Math.abs(a)), ...(d.amtOp === 'between' ? { b: round2(Math.abs(b)) } : {}) } : undefined;
+    return { text: d.text.trim().toUpperCase(), amt, dir: d.dir || undefined, acct: d.acct || undefined };
+  };
   const paint = () => {
-    const d = formData($('#f')), p = rulePreview(d.text, d.categoryId), box = $('#rule-preview');
+    const d = formData($('#f')), p = rulePreview(ruleFrom(d), d.categoryId), box = $('#rule-preview');
     if (!box) return;
-    if (!p) { box.innerHTML = '<p class="muted small">Type part of the payee, like COSTCO or SHELL OIL. Shorter text catches more.</p>'; return; }
+    if (!p) { box.innerHTML = '<p class="muted small">Type part of the payee, like COSTCO or SHELL OIL (shorter text catches more), or set an amount.</p>'; return; }
     if (!p.hits.length) { box.innerHTML = '<p class="muted small">Nothing you have matches this yet. It will apply to future imports.</p>'; return; }
     box.innerHTML = `<p><strong>Matches ${p.hits.length.toLocaleString()} transaction${p.hits.length === 1 ? '' : 's'}</strong>${p.unc.length ? ` · ${p.unc.length} uncategorized` : ''}${p.other.length ? ` · ${p.other.length} in other categories` : ''}${p.same.length ? ` · ${p.same.length} already in ${esc(catName(d.categoryId))}` : ''}</p>
       <p class="muted small">For example: ${p.examples.map(esc).join(' · ')}${p.hits.length > p.examples.length ? ' …' : ''}</p>
       ${p.unc.length ? `<label class="check"><input type="checkbox" id="rule-apply-unc" ${applyUnc ? 'checked' : ''}> Categorize the ${p.unc.length} uncategorized now</label>` : ''}
       ${p.other.length ? `<label class="check"><input type="checkbox" id="rule-apply-other" ${applyOther ? 'checked' : ''}> Also move the ${p.other.length} filed elsewhere (${esc(p.otherCats)})</label>` : ''}`;
   };
-  $('#f').addEventListener('input', e => { if (e.target.name === 'text') paint(); });
+  const showAmts = () => { const o = $('#rule-amt-op').value; $('#rule-amts').hidden = !o; $('#rule-amt-b').hidden = $('#rule-and').hidden = o !== 'between'; };
+  $('#rule-amt-op').addEventListener('change', showAmts);
+  if ($('#rule-this-amt')) $('#rule-this-amt').onclick = () => {
+    $('#rule-amt-op').value = 'eq'; $('#f [name=rule-amt-a]').value = round2(Math.abs(from.amount)).toFixed(2);
+    $('#f [name=rule-dir]').value = from.amount > 0 ? 'in' : 'out'; showAmts(); paint();
+  };
+  if ($('#rule-edit-over')) $('#rule-edit-over').onclick = () => ruleModal(over.id);
+  if ($('#rule-this-acct')) $('#rule-this-acct').onclick = () => { $('#f [name=rule-acct]').value = from.accountId; paint(); };
+  $('#f').addEventListener('input', e => { if (['text', 'rule-amt-a', 'rule-amt-b'].includes(e.target.name)) paint(); });
   $('#f').addEventListener('change', e => {
     if (e.target.id === 'rule-apply-unc') applyUnc = e.target.checked;
     else if (e.target.id === 'rule-apply-other') applyOther = e.target.checked;
@@ -487,16 +514,22 @@ function ruleModal(id, preset = {}) {
   });
   paint();
   $('#save').onclick = () => {
-    const d = formData($('#f'));
-    if (!d.text.trim()) return toast('Type the text to match.');
+    const d = formData($('#f')), cond = ruleFrom(d);
+    if (d.amtOp && !cond.amt) return toast('Type the amount to match.');
+    if (!cond.text && !cond.amt) return toast('Type text to match in the payee, or set an amount.');
     if (!d.categoryId) return toast('Choose a category.');
-    const rec = { text: d.text.trim().toUpperCase(), categoryId: d.categoryId, rename: d.rename.trim(), person: d.person || undefined };
-    const p = rulePreview(rec.text, rec.categoryId);
-    if (r) Object.assign(r, rec); else state.rules.unshift({ id: uid(), ...rec });
+    const rec = { ...cond, categoryId: d.categoryId, rename: d.rename.trim(), person: d.person || undefined };
+    const p = rulePreview(rec, rec.categoryId);
+    // a new rule with no condition and the same text as an existing one updates that one instead of shadowing it
+    const twin = !r && !ruleHasConds(rec) ? state.rules.find(x => x.text === rec.text && !ruleHasConds(x)) : null;
+    const target = r || twin;
+    if (target) { for (const k of ['amt', 'dir', 'acct', 'person']) delete target[k]; Object.assign(target, rec); } else state.rules.unshift({ id: uid(), ...rec });
+    const saved = target || state.rules[0];
+    for (const k of Object.keys(saved)) if (saved[k] === undefined) delete saved[k];
     const targets = p ? [...(applyUnc ? p.unc : []), ...(applyOther ? p.other : [])] : [];
     for (const t of targets) { t.categoryId = rec.categoryId; if (rec.rename) t.payee = rec.rename; if (rec.person) t.person = rec.person; }
     closeModal(); commit();
-    toast(`Rule ${r ? 'updated' : 'saved'}.${targets.length ? ` ${targets.length} transaction${targets.length === 1 ? '' : 's'} categorized as ${catName(rec.categoryId)}.` : ''}`, { label: 'Undo', fn: undo });
+    toast(`Rule ${target ? 'updated' : 'saved'}.${targets.length ? ` ${targets.length} transaction${targets.length === 1 ? '' : 's'} categorized as ${catName(rec.categoryId)}.` : ''}`, { label: 'Undo', fn: undo });
   };
   if (r) $('#del').onclick = () => { state.rules = state.rules.filter(x => x.id !== r.id); closeModal(); commit(); };
 }
