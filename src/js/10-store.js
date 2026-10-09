@@ -191,8 +191,10 @@ const Store = {
 const hasFolder = () => !!(Store.dir && Store.perm === 'granted');
 
 async function serialize() {
-  const plain = { keel: 2, /* format id, kept for compatibility */ encrypted: false, savedAt: new Date().toISOString(), state };
-  if (Store.key) return Vault.seal(plain, Store.key, Store.salt);
+  const savedAt = new Date().toISOString(), saveNo = state.meta.saveNo || undefined;
+  const plain = { keel: 2, /* format id, kept for compatibility */ encrypted: false, savedAt, saveNo, state };
+  // Encrypted files also carry the save number and time on the outside (nothing financial), so a stale copy is easy to spot
+  if (Store.key) return Object.assign(await Vault.seal(plain, Store.key, Store.salt), { savedAt, saveNo });
   return plain;
 }
 function unwrap(payload) {

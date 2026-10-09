@@ -218,7 +218,9 @@ function syncPickFile() {
 async function syncOpenText(text, fileName = '') {
   let parsed;
   try { parsed = JSON.parse(text); } catch (e) { return toast('That isn’t an Ọrọ̀ data file. Choose Ọrọ̀ › data › oro.json.'); }
-  if (parsed.oroChanges) return toast('That’s a change file. Choose Ọrọ̀ › data › oro.json instead.');
+  if (parsed.oroChanges || /^oro-changes-/i.test(fileName)) return toast('That’s a change file. Choose Ọrọ̀ › data › oro.json instead.');
+  // Daily backups are named by date, so they look newest; they hold the first save of that day, not the latest
+  if (/^(oro|keel)-\d{4}-\d{2}-\d{2}\.json$/i.test(fileName) && !await confirmBox('That’s a daily backup', `<strong>${esc(fileName)}</strong> is a backup: a copy of your Mac’s data from the first save that day, so later changes aren’t in it. For your Mac’s latest, choose <strong>Ọrọ̀ › data › oro.json</strong>.`, 'Open the backup anyway')) return;
   let next;
   try { next = await readDataFile(text, () => promptPass('Unlock your Mac’s data', 'Enter the passphrase you use for Ọrọ̀ on your Mac.')); }
   catch (e) { if (e.message !== 'cancelled') toast(e.message.includes('holds no') ? 'That file doesn’t hold Ọrọ̀ data. Choose Ọrọ̀ › data › oro.json.' : e.message); return; }
@@ -246,7 +248,9 @@ async function syncOpenText(text, fileName = '') {
   SYNC.cacheKey = null; SYNC.prepared = null;
   await syncSave();
   closeModal(true); render();
-  let msg = `Opened your Mac’s ${saveLabel(nNo, nAt)}.`;
+  const same = !!prev?.macSaved && (nNo && prev.macSaveNo ? nNo === prev.macSaveNo : nAt === prev.macSaved);
+  let msg = same ? `This is the same copy this ${dev} already had, your Mac’s ${saveLabel(nNo, nAt)}. If your Mac has saved since, iCloud Drive hasn’t brought the new one here yet: open the Files app, go to Ọrọ̀ › data, let oro.json finish downloading, then try again.`
+    : `Opened your Mac’s ${saveLabel(nNo, nAt)}.`;
   const lm = next.meta?.lastMerge;
   if (lm && (!prev?.macSaved || lm.at > prev.macSaved)) msg += ` It includes ${changesWord(lm.applied)} from your ${lm.device || dev}, added on your Mac ${whenLabel(lm.at)}${lm.conflicts ? `; your Mac kept its own version of ${lm.conflicts === 1 ? 'one item' : lm.conflicts + ' items'}${lm.kept?.length ? ` (${lm.kept.slice(0, 2).join(', ')}${lm.kept.length > 2 ? '…' : ''})` : ''}` : ''}.`;
   const left = syncPending().length;
