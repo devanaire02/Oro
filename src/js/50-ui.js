@@ -89,6 +89,7 @@ function render() {
   }
   paintStatus();
   if (page === 'data') { paintBackups(); voiceMenuSoon(); }
+  paintTalk();
 }
 
 /* Pages in the menu: Check-in only while it's turned on */
@@ -127,11 +128,12 @@ function paintTopbar(page) {
       <div class="seg mode" role="group" aria-label="Detail level">
         <button class="${UI.mode === 'simple' ? 'on' : ''}" data-mode="simple">Simple</button><button class="${UI.mode === 'detailed' ? 'on' : ''}" data-mode="detailed">Detailed</button>
       </div>
+      ${talkOn() ? `<button class="btn small talk-btn ${TALK.open ? 'on' : ''}" data-talk-open="" title="Talk to Ọrọ̀: change transactions or accounts by saying it (T)">${MIC_ICON} Talk</button>` : ''}
       <button class="btn small money-date-btn" data-act="money-date" title="Walk through a month together, one screen at a time">Money date</button>
       <button class="icon-btn eye" data-act="privacy" aria-pressed="${state.settings.privacy ? 'true' : 'false'}" title="${state.settings.privacy ? 'Show amounts' : 'Hide amounts'} (⇧P)">${state.settings.privacy ? EYE_OFF : EYE}</button>
     </div>`;
   const st = $('#side-tools');
-  if (st) st.innerHTML = `<button class="icon-btn" data-act="palette" aria-label="Search">${SEARCH_ICON}</button><button class="icon-btn eye" data-act="privacy" aria-pressed="${state.settings.privacy ? 'true' : 'false'}" aria-label="${state.settings.privacy ? 'Show amounts' : 'Hide amounts'}">${state.settings.privacy ? EYE_OFF : EYE}</button>`;
+  if (st) st.innerHTML = `${talkOn() ? `<button class="icon-btn talk-icon ${TALK.open ? 'on' : ''}" data-talk-open="" aria-label="Talk">${MIC_ICON}</button>` : ''}<button class="icon-btn" data-act="palette" aria-label="Search">${SEARCH_ICON}</button><button class="icon-btn eye" data-act="privacy" aria-pressed="${state.settings.privacy ? 'true' : 'false'}" aria-label="${state.settings.privacy ? 'Show amounts' : 'Hide amounts'}">${state.settings.privacy ? EYE_OFF : EYE}</button>`;
 }
 const FLAG_ICON = '<svg class="flag-ico" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 14.5V2.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/><path d="M4.7 2.6h8.1l-1.9 3.1 1.9 3.1H4.7z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';

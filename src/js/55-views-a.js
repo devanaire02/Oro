@@ -230,6 +230,7 @@ VIEWS.transactions = p => {
   if (S.text.length) list = list.filter(t => { const hay = (t.payee + ' ' + (t.memo || '') + ' ' + (t.rawPayee || '') + ' ' + catName(t.categoryId) + ' ' + (t.tags || []).join(' ') + ' ' + Math.abs(t.amount).toFixed(2)).toLowerCase(); return S.text.every(x => hay.includes(x)); });
   const limit = +p.limit || 250;
   const shown = list.slice(0, limit);
+  UI.txVisible = list.map(t => t.id);   // what "the Jewel Osco one" means to Talk while this list is on screen
   const months = [...new Set(state.transactions.map(t => monthKey(t.date)))].sort().reverse();
   if (!months.includes(thisMonth())) months.unshift(thisMonth());
   // Totals leave out transfers (credit card payments, moves between your own accounts), like Overview and Cash flow do

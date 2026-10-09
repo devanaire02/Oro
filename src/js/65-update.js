@@ -12,9 +12,9 @@ function updFindAccounts(seg) {
   const low = seg.toLowerCase(), toks = ciTokens(seg), type = tellFindType(low), who = ciFindPerson(seg);
   const l4 = (seg.match(/\b(\d{4})\b/g) || []);
   return activeAccounts().map(a => {
-    const name = ciTokens(a.name);
-    const hit = name.filter(n => toks.some(w => tokSame(w, n))).length;
-    let s = name.length ? 2 * hit / name.length : 0;
+    const name = ciTokens(a.name), weight = n => UPD_GENERIC.has(n) ? 0.5 : 1;
+    const hit = sum(name.filter(n => toks.some(w => tokSame(w, n))).map(weight)), total = sum(name.map(weight));
+    let s = total ? 2 * hit / total : 0;
     if (a.institution && ciTokens(a.institution).length && ciTokens(a.institution).every(n => toks.some(w => tokSame(w, n)))) s += 0.5;
     if (type) s += type === a.type ? 0.7 : -0.3;
     if (a.last4 && l4.includes(a.last4)) s += 2;
@@ -22,12 +22,23 @@ function updFindAccounts(seg) {
     return { a, s };
   }).filter(x => x.s >= 0.9).sort((x, y) => y.s - x.s);
 }
+const UPD_GENERIC = new Set(['card', 'account', 'credit', 'the', 'my', 'our', 'bank']);
+/* "the car", "the house": with no name to go on, the type picks the account when there's one of it (or offers the few there are) */
+function updByType(seg) {
+  const type = tellFindType(seg.toLowerCase()); if (!type) return [];
+  const same = activeAccounts().filter(a => a.type === type);
+  return same.length && same.length <= 4 ? same.map(a => ({ a, s: same.length === 1 ? 1.6 : 1.5 })) : [];
+}
 /* What one stretch of words wants changed (without the account) */
 function updFields(seg) {
   const raw = seg, s = seg.toLowerCase().replace(/[’‘]/g, "'"), out = {};
   if (/^(archive|close)\b|\b(archive|close (out )?(the|my|our)|closed (the|my|our|it|that)|no longer have|don'?t have (it|that) anymore)\b/.test(s)) out.archived = true;
-  const rn = raw.match(/\b(?:rename|call)\b.*?\bto\b\s+["“]?(.+?)["”]?\s*$/i) || raw.match(/\b(?:call it|name it|should be called)\s+["“]?(.+?)["”]?\s*$/i);
-  if (rn) { out.name = rn[1].replace(/[.!?]+$/, '').trim(); return out; }
+  const rn = raw.match(/\b(?:rename|call)\b.*?\bto\b\s+(.+?)\s*$/i) || raw.match(/\b(?:call it|name it|should be called)\s+(.+?)\s*$/i);
+  if (rn) { out.name = rn[1].replace(/[.!?]+$/, '').replace(/^["“”'‘’]+|["“”'‘’]+$/g, '').trim(); return out; }
+  const its = s.match(/^(?:it'?s|its|this is|this one is)\s+(?:for\s+)?([a-z]+)(?:'s)?(?:\s+(?:account|card|now))?[.!]?$/);
+  if (its) { const p = ciFindPerson(its[1]); if (p) { out.owner = p.id; return out; } }
+  const mk = s.match(/^make (?:the |my |our )?.+?\s+([a-z]+)'s$/);
+  if (mk) { const p = ciFindPerson(mk[1]); if (p) { out.owner = p.id; return out; } }
   if (/\b(owner|owned by|belongs to|is (now )?(\w+)'s|make (it|\w+(\s\w+)?) (joint|shared)|(joint|shared) (account|now))\b/.test(s)) {
     const tail = s.match(/\b(?:to|by|is now|is|belongs to)\s+([a-z' ]+)$/);
     const p = (tail && ciFindPerson(tail[1])) || (/\b(joint|shared)\b/.test(s) && members().some(m => m.id === 'joint') ? { id: 'joint' } : null) || ciFindPerson(s.replace(/^.*\b(owner|owned by|belongs to)\b/, ''));
@@ -44,7 +55,7 @@ function updFields(seg) {
   else if (/\b(as a|is a|is now a|it'?s a) rental\b|\bnow rented\b/.test(s)) out.rental = true;
   rest = rest.replace(/\b(401 ?k|403 ?b|457 ?b?|529)\b/g, ' ');
   if (!out.archived && !('owner' in out)) {
-    const kw = rest.match(/\b(?:worth|valued at|value(?:\s+is|\s+of)?|balance(?:\s+is|\s+of)?|is now|is at|is|at|to|owe[sd]?|owing|has|now)\s*(?:about\s+|around\s+|roughly\s+)?(\$?\s*[\d,]+(?:\.\d+)?\s*(?:k|thousand|million|m)?)\b/);
+    const kw = rest.match(/\b(?:worth|valued at|value(?:\s+is|\s+of)?|balance(?:\s+is|\s+of)?|is now|is at|it'?s|its|is|at|to|owe[sd]?|owing|has|now)\s*(?:about\s+|around\s+|roughly\s+)?(\$?\s*[\d,]+(?:\.\d+)?\s*(?:k|thousand|million|m)?)\b/);
     const n = kw ? ciNumber(kw[1]) : null;
     if (n != null) out.balance = Math.abs(n);
     else if (/\b(is|to|at)\s+(zero|nothing)\b|\bpaid off\b/.test(rest)) out.balance = 0;
@@ -52,20 +63,43 @@ function updFields(seg) {
   return out;
 }
 /* A whole sentence: { changes: [...], pending: [{ seg, fields, options }] } or null when it isn't an update */
-function updParse(text, { force = false } = {}) {
+function updParse(text, { force = false, ctxAcct = null } = {}) {
   const raw = String(text || '').replace(/[’‘]/g, "'").trim();
   const verb = UPD_VERB.test(raw.toLowerCase());
-  const segs = raw.replace(UPD_STRIP, ' ').split(/\s*(?:;|\band also\b|\band then\b|\band\b|,(?!\d{3}\b))\s*/i).map(x => x.trim()).filter(Boolean);
+  const body = raw.replace(UPD_STRIP, ' ');
+  let segs;
+  if (/^\s*(rename|call)\b/i.test(body)) {
+    // "rename Sam's card to Food and Gas card" keeps its "and"; "… to Family SUV and the checking to Bills" is two renames
+    segs = []; let rest = body;
+    for (let guard = 0; rest && guard < 6; guard++) {
+      const m = rest.match(/^(.*?\bto\s+.+?)\s+and\s+(?:rename\s+)?((?:the |my |our )?[^,]+?\s+to\s+.+)$/i);
+      if (m && updFindAccounts(m[2].split(/\s+to\s+/i)[0]).some(x => x.s >= 1.2)) { segs.push(m[1]); rest = 'rename ' + m[2]; } else { segs.push(rest); rest = ''; }
+    }
+  } else segs = body.split(/\s*(?:;|\band also\b|\band then\b|\band\b|,(?!\d{3}\b))\s*/i).map(x => x.trim()).filter(Boolean);
   const changes = [], pending = [];
   let lastAcct = null;
   for (const seg of segs) {
     const fields = updFields(seg);
     if (!Object.keys(fields).length) continue;
-    const found = updFindAccounts(seg.replace(/\b(?:rename|call)\b.*?\bto\b.*$/i, m => m.replace(/\bto\b.*$/i, '')));
+    const who = seg.replace(/\b(?:rename|call)\b.*?\bto\b.*$/i, m => m.replace(/\bto\b.*$/i, ''));
+    // "it's for Sam", "the balance is 12,400": about the account that's open, whatever other names it mentions
+    if (ctxAcct && /^\s*(it'?s?|its|this( one| account| card)?|the (balance|rate|value|payment|owner|name)|balance|rate)\b/i.test(seg)) { lastAcct = ctxAcct; changes.push(...updChanges(ctxAcct, fields)); continue; }
+    let found = updFindAccounts(who);
+    if (!found.length) found = updByType(who);
+    if (/\b(paid (it )?off|pay(ed)? (it )?off|paid in full)\b/i.test(seg)) {   // paying something off is about what's owed, never the thing itself
+      found = found.filter(x => isLiability(x.a));
+      if (!found.length) {
+        const words = ciTokens(who).map(w => ({ car: 'auto', truck: 'auto', vehicle: 'auto', house: 'mortgage', home: 'mortgage' })[w] || w);
+        const debts = activeAccounts().filter(a => isLiability(a) && a.type !== 'credit');
+        const hit = debts.filter(a => ciTokens(a.name).some(n => words.some(w => tokSame(w, n))));
+        found = (hit.length ? hit : debts).slice(0, 4).map(a => ({ a, s: hit.length === 1 ? 1.6 : 1.5 }));
+      }
+    }
     const strong = found[0] && (found[0].s >= 1.5 || verb || force);
     if (found.length && strong && (found.length === 1 || found[0].s - found[1].s >= 0.5)) { lastAcct = found[0].a; changes.push(...updChanges(found[0].a, fields)); }
-    else if (found.length && strong) pending.push({ seg, fields, options: found.slice(0, 4).map(x => x.a.id) });
-    else if (!found.length && lastAcct && (verb || force) && Object.keys(fields).some(k => k !== 'balance')) changes.push(...updChanges(lastAcct, fields));   // "…and its rate is 6.1"
+    else if (found.length && (strong || (found[0].s >= 1.0 && tellFindType(who.toLowerCase())))) pending.push({ seg, fields, options: found.slice(0, 4).map(x => x.a.id) });
+    else if (!found.length && lastAcct && ((verb || force) && Object.keys(fields).some(k => k !== 'balance') || /^(its?\b|it'?s\b|the (balance|rate|value|payment)\b|balance\b|rate\b|value\b)/i.test(seg))) changes.push(...updChanges(lastAcct, fields));   // "…and its rate is 6.1", "…and the balance is 9,000"
+    else if (!found.length && ctxAcct) { lastAcct = ctxAcct; changes.push(...updChanges(ctxAcct, fields)); }   // the account that's open: "the balance is 12,400"
   }
   return changes.length || pending.length ? { changes, pending } : null;
 }
@@ -73,6 +107,7 @@ function updChanges(a, f) {
   const out = [];
   for (const [k, v] of Object.entries(f)) {
     if (k === 'rental' && a.type !== 'realestate') continue;
+    if (k === 'last4' && a.last4 === v) { if (Object.keys(f).length === 1) out.push({ accountId: a.id, field: k, from: v, to: v, same: true }); continue; }
     if ((k === 'rate' || k === 'minPayment') && !tellDebtType(a.type)) continue;
     const field = k === 'balance' && a.type === 'realestate' ? 'value' : k;
     const from = k === 'balance' ? accountValue(a) : a[k];
@@ -124,16 +159,24 @@ function updAnswer(raw) {
     if (/^(skip|none|neither|never ?mind)$/.test(s)) { d.pending.shift(); return d.changes.length || d.pending.length ? updPrompt() : (CI.draft = null, 'OK, nothing was changed.'); }
     CI.heard = `I didn’t catch which one. ${updPrompt()}`; return CI.heard;
   }
-  if (/^(yes|yep|yeah|save( it)?|do it|go ahead|correct|that'?s right|update( it)?|confirm|ok(ay)?)\b/.test(s)) return updApply();
+  if (/^(yes|yep|yeah|sure|save( it)?|do it|go ahead|correct|that'?s right|update( it)?|confirm|ok(ay)?|sounds good)\b/.test(s)) return updApply();
   if (/^(no|nope|cancel|never ?mind|stop|don'?t)\b/.test(s) && !/\d/.test(s)) { CI.draft = null; CI.heard = 'OK, nothing was changed.'; return CI.heard; }
   const more = updParse(raw, { force: true });   // "and the Roth is 85k", or a correction for the same account
+  const lastAcct = d.changes.length ? acctById(d.changes[d.changes.length - 1].accountId) : null;
+  if (!more && lastAcct && !/^(no|nope|actually|make it|i mean|sorry)\b/.test(s)) {
+    const f = updFields(raw.replace(/^\s*(and|also|plus)\s+/i, ''));
+    if (Object.keys(f).length && !(Object.keys(f).length === 1 && 'balance' in f && !/\b(balance|worth|value|owe)/.test(s))) {
+      for (const c of updChanges(lastAcct, f)) { d.changes = d.changes.filter(x => !(x.accountId === c.accountId && x.field === c.field)); d.changes.push(c); }
+      return updPrompt();
+    }
+  }
   if (more) {
     for (const c of more.changes) { d.changes = d.changes.filter(x => !(x.accountId === c.accountId && x.field === c.field)); d.changes.push(c); }
     d.pending.push(...more.pending);
     return updPrompt();
   }
-  if (d.changes.length === 1) {   // "no, 12,500": a new amount for the one change
-    const n = ciNumber(s); const c = d.changes[0];
+  if (d.changes.length === 1 && /^(?:(?:no|nope|actually|make it|i mean|sorry)[, ]+)*\$?\s*[\d,]+(?:\.\d+)?\s*(?:k|thousand|percent|%)?$/.test(s)) {   // "no, 12,500": a new amount for the one change
+    const n = ciNumber(s.replace(/percent|%/g, '')); const c = d.changes[0];
     if (n != null && ['balance', 'value', 'minPayment', 'rate'].includes(c.field)) { c.to = Math.abs(n); return updPrompt(); }
   }
   CI.heard = `I didn’t catch that. ${updPrompt()}`; return CI.heard;

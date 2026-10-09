@@ -192,7 +192,7 @@ function tellAnswer(raw) {
   if (/^(cancel|never ?mind|stop|forget it|don'?t add it|scratch that)$/.test(s)) { CI.draft = null; CI.heard = 'OK, nothing was added.'; return CI.heard; }
   if (d.step === 'after') return tellAfterAnswer(s);
   const f = d.f, k = d.ask;
-  if (!k && /^(yes|yep|add it|add|save( it)?|looks good|that'?s (it|right|good)|correct|do it|go ahead|done)\b/.test(s)) return tellCommit();
+  if (!k && /^(yes|yep|yeah|sure|ok(ay)?|add it|add|save( it)?|looks good|sounds good|that'?s (it|right|good)|correct|do it|go ahead|done)\b/.test(s)) return tellCommit();
   let took = false;
   if (['type', 'name', 'value', 'institution', 'owner', 'balance', 'owed'].includes(k)) {
     const more = tellParse(raw);

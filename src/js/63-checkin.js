@@ -12,7 +12,7 @@ function ciReset() {
 const checkinOn = () => state.settings.checkin !== false;
 
 /* ---------- reading aloud (this device only) ---------- */
-const VOICE_DEFAULTS = { on: false, amounts: true, rate: 1, voice: '', box: true };
+const VOICE_DEFAULTS = { on: false, amounts: true, rate: 1, voice: '', box: true, talk: true };
 let VOICE_MEM = null;   // if browser storage is blocked, preferences last for this session
 function voicePrefs() {
   if (VOICE_MEM) return { ...VOICE_MEM };
@@ -453,10 +453,11 @@ function checkinSettings() {
   const p = voicePrefs(), dev = isCompanion() ? deviceLabel() : 'Mac', on = checkinOn();
   const rates = [[0.85, 'Slower'], [1, 'Normal'], [1.15, 'Faster'], [1.3, 'Fastest']];
   return `<section class="panel" id="checkin-settings">
-    <header class="panel-head"><h2>Check-in</h2><span class="muted small">Runs on this ${dev}. Nothing is sent anywhere.</span></header>
+    <header class="panel-head"><h2>Check-in and Talk</h2><span class="muted small">Runs on this ${dev}. Nothing is sent anywhere.</span></header>
     <p class="muted">Goes through what needs you today, this week or this month, one item at a time: transactions to sort, flagged ones, bills that haven’t shown up, accounts to import and balances to update.</p>
     <div class="form-grid">
       <label class="check"><input type="checkbox" data-setting-bool="checkin" ${on ? 'checked' : ''}> Show Check-in</label>
+      <label class="check"><input type="checkbox" data-voice="talk" ${p.talk !== false ? 'checked' : ''}> Talk button on every page of this ${dev}</label>
       ${on ? `<label class="check"><input type="checkbox" data-voice="box" ${p.box ? 'checked' : ''}> Answer box on this ${dev}: type, or ${isTouch() ? 'tap the keyboard’s microphone' : 'use dictation'} and talk</label>
       ${canSpeak() ? `<label class="check"><input type="checkbox" data-voice="on" ${p.on ? 'checked' : ''}> Read items aloud on this ${dev}</label>
       ${p.on ? `<label class="check"><input type="checkbox" data-voice="amounts" ${p.amounts ? 'checked' : ''}> Say amounts out loud${state.settings.privacy ? ' <span class="muted small">(off while amounts are hidden)</span>' : ''}</label>
@@ -482,7 +483,7 @@ VIEWS.checkin = p => {
   const lead = !CI.handled.length
     ? `<section class="ci-lead"><p class="ci-sentence">${esc(ciSummary(q.left, q.win))}</p><div class="actions">${talk}${sure.length >= 2 ? `<button class="btn" data-ci="file-sure">File the ${sure.length} sure ones</button>` : ''}</div></section>`
     : `<div class="ci-progress"><div class="ci-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${q.total}" aria-valuenow="${Math.min(q.pos - 1, q.total)}" aria-label="Progress"><i style="width:${Math.round(100 * (q.pos - 1) / Math.max(1, q.total))}%"></i></div>${talk}</div>`;
-  const last = CI.last ? `<p class="ci-last">${esc(CI.last.text)}${CI.last.undo ? ' <button class="linklike" data-ci="undo">Undo</button>' : ''}</p>` : '';
+  const last = CI.last ? `<p class="ci-last">${esc(CI.last.text)}${canUndoLast(CI.last) ? ' <button class="linklike" data-ci="undo">Undo</button>' : ''}</p>` : '';
   // the answer box sits above the card, so with the phone's keyboard up the card is still in view
   const say = prefs.box ? `<form class="ci-say" data-ci-say autocomplete="off"><input id="ci-say" type="text" enterkeyhint="go" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="${isTouch() ? 'Tap here, then the keyboard’s mic' : q.cur || CI.draft ? 'Type an answer' : 'Say “add a savings account at Chase…”'}" aria-label="Answer"${CI.intro && !isTouch() ? ' autofocus' : ''}><button class="btn" type="submit">Go</button></form>` : '';
   const hint = (say ? `<p class="ci-hint muted small">${CI.draft?.step === 'update' ? 'Say “yes” to save, “cancel” to stop, or add another change: “and the Roth is 85k”.' : CI.draft ? 'Answer the question, or change anything: “call it Chase Sapphire”, “the balance is 13,000”, “it’s Julissa’s”. Say “cancel” to stop.'
@@ -615,7 +616,14 @@ function ciRun(a, item) {
 }
 function ciCurrent() { return ciQueue().cur; }
 /* Undo the last change made here, and show that card again */
+/* An Undo line only undoes its own change: it's offered while nothing else has been changed since (anywhere in the app) */
+function canUndoLast(last) {
+  if (!last?.undo) return false;
+  if (!last.after) last.after = History.current;   // first drawn right after the change was saved
+  return History.current === last.after;
+}
 function ciUndo() {
+  if (!canUndoLast(CI.last)) { CI.last = CI.last ? { ...CI.last, undo: false } : null; return 'Other changes were made since, so that can’t be undone from here.'; }
   const n = CI.last?.n ?? 1, popped = n ? CI.handled.splice(-n, n) : [];
   if (CI.draft?.step === 'after') CI.draft = null;
   undo();
@@ -626,6 +634,7 @@ function ciUndo() {
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-ci]'); if (!el) return;
   e.preventDefault();
+  if (el.closest('#talk')) return talkClick(el.dataset.ci, el.dataset.v);
   const act = el.dataset.ci, v = el.dataset.v;
   if (act === 'turn-on') { state.settings.checkin = true; commit(); return; }
   if (act === 'test-voice') voiceMenuSoon();
@@ -662,6 +671,7 @@ document.addEventListener('change', e => {
     if (k === 'voice') { if (!el.value) return; setVoicePref('voiceName', englishVoices().find(v => v.voiceURI === el.value)?.name || ''); }   // the default-only placeholder never clears a choice
     setVoicePref(k, el.type === 'checkbox' ? el.checked : k === 'rate' ? Number(el.value) : el.value);
     if (k === 'on' && !el.checked) { CI.talking = false; ciHush(); }
+    if (k === 'talk' && !el.checked) closeTalk();
     return render();
   }
   if (el.matches('[data-ci-cat]') && el.value) { const item = ciCurrent(); if (item) { CI.heard = ''; ciRun({ act: 'cat', categoryId: el.value }, item); } return; }
@@ -804,9 +814,10 @@ function ciNumber(s) {
 }
 /* "half groceries, half household", "groceries and household", "$50 groceries, the rest household" */
 function ciFindSplit(text, t) {
-  if (!/\b(half|split|rest|and|remainder)\b|,/.test(text)) return null;
+  if (!/\b(half|split|rest|and|remainder)\b|,/.test(text) && (String(text).match(/\d[\d,.]*/g) || []).length < 2) return null;
   if (ciMatchCategory(text, t).score >= 3) return null;   // a category whose name has "and" in it
-  const segs = text.split(/\s*(?:,|\band\b|\bhalf\b|\bsplit\b|\bbetween\b|\bthe rest\b|\brest\b|\bremainder\b|\bwith\b)\s*/).map(x => x.trim()).filter(Boolean);
+  const segs = text.split(/\s*(?:,|\band\b|\bhalf\b|\bsplit\b|\bbetween\b|\bthe rest\b|\brest\b|\bremainder\b|\bwith\b)\s*/).map(x => x.trim()).filter(Boolean)
+    .flatMap(x => (x.match(/\d[\d,.]*/g) || []).length > 1 ? x.split(/\s+(?=\$?\d)/) : [x]);
   const parts = [];
   for (const seg of segs) {
     const m = ciMatchCategory(seg.replace(/-?\$?\s*\d[\d,]*(\.\d+)?/g, ' '), t);

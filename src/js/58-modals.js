@@ -55,6 +55,7 @@ function rulePreview(rule, categoryId) {
 /* ---------- transaction (with splits, tags, person, receipts) ---------- */
 function txnModal(id) {
   const t = id ? state.transactions.find(x => x.id === id) : null;
+  if (t) UI.talkCtx = { kind: 'txn', id: t.id, at: Date.now() };   // "this one" for Talk
   const cashAcct = activeAccounts().find(a => a.type === 'checking') || activeAccounts()[0];
   const v = t || { date: today(), payee: '', amount: '', accountId: cashAcct?.id, categoryId: '', memo: '' };
   if (!activeAccounts().length) { toast('Add an account first.'); return acctModal(); }
@@ -79,7 +80,7 @@ function txnModal(id) {
       ${t?.rawPayee && t.rawPayee !== t.payee ? `<p class="muted small wide">Bank description: ${esc(t.rawPayee)}</p>` : ''}
       ${t?.reconciled ? '<p class="muted small wide">✓ Reconciled with a statement</p>' : ''}
     </form>`,
-    actions: `${t ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${t ? 'Save' : 'Add transaction'}</button>`,
+    actions: `${t ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}${t && talkOn() ? `<button class="btn ghost" data-talk-open="txn:${t.id}" title="Say what to change about this transaction">${MIC_ICON} Talk</button>` : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${t ? 'Save' : 'Add transaction'}</button>`,
   });
   const total = () => parseAmount($('#tx-amount').value);
   if (v.flag) $('#f').addEventListener('change', e => { if (e.target.id === 'tx-cat' && e.target.value && $('#tx-flag').checked) { $('#tx-flag').checked = false; toast('Unticked the flag, since you picked a category. Tick it again to keep it flagged.'); } });
@@ -148,6 +149,7 @@ function txnModal(id) {
 /* ---------- account ---------- */
 function acctModal(id, presetType) {
   const a = id ? acctById(id) : null;
+  if (a) UI.talkCtx = { kind: 'acct', id: a.id, at: Date.now() };
   const v = a || { name: '', type: presetType || 'checking', institution: '', balance: '', balanceDate: today(), owner: UI.lens || 'joint' };
   const hasHoldings = a && holdingsFor(a.id).length;
   const loans = activeAccounts().filter(x => ['mortgage', 'loan', 'otherLiability'].includes(x.type));
@@ -190,7 +192,7 @@ function acctModal(id, presetType) {
       </div>
       <label class="field wide"><span>Notes</span><input name="notes" value="${esc(v.notes || '')}"></label>
     </form>`,
-    actions: `${a ? `<button class="btn ghost danger-text left" id="del">Delete</button><button class="btn ghost" id="arch">${a.archived ? 'Restore' : 'Archive'}</button>` : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${a ? 'Save' : 'Add account'}</button>`,
+    actions: `${a ? `<button class="btn ghost danger-text left" id="del">Delete</button><button class="btn ghost" id="arch">${a.archived ? 'Restore' : 'Archive'}</button>` : ''}${a && talkOn() ? `<button class="btn ghost" data-talk-open="acct:${a.id}" title="Say what to change about this account">${MIC_ICON} Talk</button>` : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${a ? 'Save' : 'Add account'}</button>`,
   });
   const f = $('#f');
   $('#acct-type').onchange = e => {
