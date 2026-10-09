@@ -24,21 +24,61 @@ function setVoicePref(k, v) {
 }
 const canSpeak = () => typeof window !== 'undefined' && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance === 'function';
 const speakOn = () => canSpeak() && voicePrefs().on;
-function englishVoices() {
+/* The iPhone hands web pages its voice list only some of the time (often not right after the app opens or a page
+   changes), so the list is remembered once seen: the menu keeps every voice and your choice, and speaking finds the
+   real voice again by its id whenever the phone offers it. Novelty voices (Bells, Bubbles, Zarvox…) are left out. */
+const NOVELTY_VOICES = /^(Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Good News|Jester|Organ|Pipe Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Deranged|Hysterical)\b/;
+let LIVE_VOICES = [];
+function liveVoices() {
   if (!canSpeak()) return [];
-  try { return speechSynthesis.getVoices().filter(v => /^en([-_]|$)/i.test(v.lang)); } catch (e) { return []; }
+  let vs = [];
+  try { vs = speechSynthesis.getVoices().filter(v => /^en([-_]|$)/i.test(v.lang) && !NOVELTY_VOICES.test(v.name)); } catch (e) { /* none yet */ }
+  if (vs.length) {
+    LIVE_VOICES = vs;
+    try { localStorage.setItem('oro.voices', JSON.stringify(vs.map(v => ({ name: v.name, lang: v.lang, voiceURI: v.voiceURI, default: !!v.default })))); } catch (e) { /* storage blocked */ }
+  }
+  return LIVE_VOICES;
 }
-function pickVoice(p = voicePrefs()) {
-  const vs = englishVoices(), us = vs.filter(v => /^en[-_]US$/i.test(v.lang));
-  return vs.find(v => v.voiceURI === p.voice) || us.find(v => /premium|enhanced/i.test(v.name)) || us.find(v => /^(Samantha|Ava|Allison|Nicky|Evan|Zoe)\b/.test(v.name))
+function englishVoices() {
+  const live = liveVoices();
+  if (live.length) return live;
+  try { return JSON.parse(localStorage.getItem('oro.voices') || '[]'); } catch (e) { return []; }
+}
+const sameVoice = (v, p) => !!v && !!p.voice && (v.voiceURI === p.voice || (!!p.voiceName && v.name === p.voiceName));
+function pickVoice(p = voicePrefs(), vs = englishVoices()) {
+  const us = vs.filter(v => /^en[-_]US$/i.test(v.lang));
+  return vs.find(v => sameVoice(v, p)) || us.find(v => /premium|enhanced/i.test(v.name)) || us.find(v => /^(Samantha|Ava|Allison|Nicky|Evan|Zoe)\b/.test(v.name))
     || us.find(v => v.default) || us[0] || vs.find(v => v.default) || vs[0] || null;
+}
+const isRealVoice = v => !!v && (typeof SpeechSynthesisVoice === 'undefined' || v instanceof SpeechSynthesisVoice);
+function voiceLabel(v) {
+  const region = String(v.lang || '').split(/[-_]/)[1];
+  let place = region || '';
+  try { if (region) place = ({ US: 'US', GB: 'UK' })[region.toUpperCase()] || new Intl.DisplayNames(['en'], { type: 'region' }).of(region.toUpperCase()); } catch (e) { /* keep the code */ }
+  return `${v.name}${place ? ` (${place})` : ''}`;
+}
+function voiceOptions(p, dev) {
+  const vs = englishVoices().slice().sort((a, b) => (/^en[-_]US$/i.test(b.lang) - /^en[-_]US$/i.test(a.lang)) || voiceLabel(a).localeCompare(voiceLabel(b)));
+  const cur = pickVoice(p, vs);
+  const saved = p.voice && !vs.some(v => sameVoice(v, p)) ? `<option value="${esc(p.voice)}" selected>${esc(p.voiceName || 'Your chosen voice')}</option>` : '';
+  if (!vs.length) return saved || `<option value="">This ${dev}’s default voice</option>`;
+  return saved + vs.map(v => `<option value="${esc(v.voiceURI)}" ${!saved && cur && v.voiceURI === cur.voiceURI ? 'selected' : ''}>${esc(voiceLabel(v))}</option>`).join('');
+}
+/* Fill in the voice menu when the phone gets round to listing its voices, without redrawing the page (an open menu stays open) */
+function refreshVoiceMenu() {
+  const sel = document.querySelector('select[data-voice="voice"]');
+  if (!sel || document.activeElement === sel) return;
+  const html = voiceOptions(voicePrefs(), isCompanion() ? deviceLabel() : 'Mac');
+  if (sel.innerHTML !== html) sel.innerHTML = html;
 }
 function ciSpeak(text) {
   if (!canSpeak() || !text) return;
   try {
     speechSynthesis.cancel();
-    const p = voicePrefs(), u = new SpeechSynthesisUtterance(text), v = pickVoice(p);
-    if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'en-US';
+    const p = voicePrefs(), u = new SpeechSynthesisUtterance(text), live = liveVoices(), chosen = englishVoices().find(v => sameVoice(v, p));
+    const v = pickVoice(p, live);
+    if (isRealVoice(v) && (!chosen || sameVoice(v, p))) { u.voice = v; u.lang = v.lang; }
+    else u.lang = chosen?.lang || 'en-US';   // the phone isn't listing voices right now: ask for the language and let it choose
     u.rate = clamp(Number(p.rate) || 1, 0.6, 1.6);
     speechSynthesis.speak(u);
   } catch (e) { /* no voice available */ }
@@ -394,7 +434,6 @@ const SPEAKER_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidde
 /* ---------- Settings › Check-in ---------- */
 function checkinSettings() {
   const p = voicePrefs(), dev = isCompanion() ? deviceLabel() : 'Mac', on = checkinOn();
-  const voices = englishVoices(), cur = pickVoice(p);
   const rates = [[0.85, 'Slower'], [1, 'Normal'], [1.15, 'Faster'], [1.3, 'Fastest']];
   return `<section class="panel" id="checkin-settings">
     <header class="panel-head"><h2>Check-in</h2><span class="muted small">Runs on this ${dev}. Nothing is sent anywhere.</span></header>
@@ -404,7 +443,7 @@ function checkinSettings() {
       ${on ? `<label class="check"><input type="checkbox" data-voice="box" ${p.box ? 'checked' : ''}> Answer box on this ${dev}: type, or ${isTouch() ? 'tap the keyboard’s microphone' : 'use dictation'} and talk</label>
       ${canSpeak() ? `<label class="check"><input type="checkbox" data-voice="on" ${p.on ? 'checked' : ''}> Read items aloud on this ${dev}</label>
       ${p.on ? `<label class="check"><input type="checkbox" data-voice="amounts" ${p.amounts ? 'checked' : ''}> Say amounts out loud${state.settings.privacy ? ' <span class="muted small">(off while amounts are hidden)</span>' : ''}</label>
-      <label class="field"><span>Voice</span><select data-voice="voice">${voices.length ? voices.map(v => `<option value="${esc(v.voiceURI)}" ${cur && v.voiceURI === cur.voiceURI ? 'selected' : ''}>${esc(v.name)} (${esc(v.lang)})</option>`).join('') : `<option value="">This ${dev}’s default voice</option>`}</select></label>
+      <label class="field"><span>Voice</span><select data-voice="voice">${voiceOptions(p, dev)}</select></label>
       <label class="field"><span>Speed</span><select data-voice="rate">${rates.map(([v, l]) => `<option value="${v}" ${Math.abs((Number(p.rate) || 1) - v) < 0.01 ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <div class="actions"><button class="btn" data-ci="test-voice">${SPEAKER_ICON} Hear a sample</button></div>` : ''}` : `<p class="muted small">This browser can’t read aloud.</p>`}` : ''}
     </div>
@@ -556,6 +595,7 @@ document.addEventListener('click', e => {
   e.preventDefault();
   const act = el.dataset.ci, v = el.dataset.v;
   if (act === 'turn-on') { state.settings.checkin = true; commit(); return; }
+  if (act === 'test-voice') voiceMenuSoon();
   if (act === 'test-voice') return ciSpeak(`${greeting()} This is how check-in sounds on this ${isCompanion() ? deviceLabel() : 'Mac'}.${voicePrefs().amounts ? ' Jewel-Osco, $84.12, on Tuesday.' : ' Jewel-Osco, on Tuesday.'} I think it’s Groceries.`);
   if (act === 'w') { if (v !== CI.w) { CI.w = v; CI.handled = []; CI.back = null; CI.last = null; CI.heard = ''; CI.choose = null; } return ciAfter(''); }
   if (act === 'talk') {
@@ -583,6 +623,7 @@ document.addEventListener('change', e => {
   const el = e.target;
   if (el.matches('[data-voice]')) {
     const k = el.dataset.voice;
+    if (k === 'voice') { if (!el.value) return; setVoicePref('voiceName', englishVoices().find(v => v.voiceURI === el.value)?.name || ''); }   // the default-only placeholder never clears a choice
     setVoicePref(k, el.type === 'checkbox' ? el.checked : k === 'rate' ? Number(el.value) : el.value);
     if (k === 'on' && !el.checked) { CI.talking = false; ciHush(); }
     return render();
@@ -616,7 +657,13 @@ document.addEventListener('submit', e => {
   }
 });
 window.addEventListener('hashchange', () => { if (!/^#\/?checkin/.test(location.hash) && CI.talking) { CI.talking = false; ciHush(); } });
-if (canSpeak()) { try { speechSynthesis.addEventListener('voiceschanged', () => { if (route().page === 'data') render(); }); } catch (e) { /* older browsers */ } }
+if (canSpeak()) {
+  const onVoices = () => { liveVoices(); refreshVoiceMenu(); };
+  try { speechSynthesis.addEventListener('voiceschanged', onVoices); } catch (e) { try { speechSynthesis.onvoiceschanged = onVoices; } catch (e2) { /* older browsers */ } }
+  liveVoices();   // ask early: some phones only start loading voices once asked
+}
+/* The iPhone doesn't always announce its voices, so Settings looks again shortly after it's drawn and after a sample plays */
+function voiceMenuSoon() { if (canSpeak()) [300, 1200, 3000].forEach(ms => setTimeout(() => { liveVoices(); refreshVoiceMenu(); }, ms)); }
 
 /* ---------- understanding a typed or dictated answer (on the device, from a small set of phrases) ---------- */
 const CI_SAY = {

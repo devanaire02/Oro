@@ -88,7 +88,7 @@ function render() {
     if (el && el.focus && !(isTouch() && el.tagName === 'SELECT')) { el.focus(); if (el.setSelectionRange && /text|search/.test(el.type)) { const n = el.value.length; el.setSelectionRange(n, n); } }
   }
   paintStatus();
-  if (page === 'data') paintBackups();
+  if (page === 'data') { paintBackups(); voiceMenuSoon(); }
 }
 
 /* Pages in the menu: Check-in only while it's turned on */
