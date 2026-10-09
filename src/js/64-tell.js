@@ -12,7 +12,7 @@ const TELL_TYPES = [
   ['savings', /\b(savings|money market|high[- ]yield|cd|certificate of deposit)\b/],
   ['checking', /\bchecking\b/],
   ['credit', /\b(credit cards?|card|amex|american express|visa|mastercard|sapphire)\b/],
-  ['crypto', /\b(crypto|bitcoin|ethereum|coinbase)\b/],
+  ['crypto', /\b(crypto(currency|currencies)?|bitcoin|ethereum|coinbase|kraken|gemini|crypto\.com|cold wallet|hardware wallet|ledger wallet|trezor)\b/],
   ['private', /\b(private (investment|equity)|pre[- ]?ipo|angel investment|secondary)\b/],
   ['brokerage', /\b(brokerage|investment account|taxable account|individual account|trading account|stock account)\b/],
   ['realestate', /\b(property|house|home|condo|townhouse|town home|rental|duplex|two[- ]flat|three[- ]flat|real estate|land|cabin|vacation home)\b/],
@@ -22,7 +22,7 @@ const TELL_TYPES = [
 const TELL_TYPE_WORDS = { checking: 'checking', savings: 'savings', credit: 'credit card', brokerage: 'brokerage', retirement: 'retirement', education: '529 or custodial', hsa: 'HSA', crypto: 'crypto', private: 'private investment', realestate: 'property', vehicle: 'vehicle', mortgage: 'mortgage', loan: 'loan', otherAsset: 'other asset', otherLiability: 'other debt' };
 const TELL_INSTITUTIONS = ['Charles Schwab', 'Schwab', 'Chase', 'JPMorgan', 'Fidelity', 'Vanguard', 'Bank of America', 'Wells Fargo', 'Citibank', 'Citi', 'Capital One', 'American Express', 'Amex', 'Discover', 'BMO', 'PNC', 'US Bank', 'U.S. Bank',
   'Ally', 'Marcus', 'Goldman Sachs', 'Robinhood', 'E*Trade', 'E-Trade', 'Etrade', 'Merrill Lynch', 'Merrill', 'Morgan Stanley', 'Coinbase', 'SoFi', 'Wealthfront', 'Betterment', 'TD Bank', 'Huntington', 'Fifth Third', 'Citizens',
-  'Navy Federal', 'USAA', 'Apple', 'Synchrony', 'Barclays', 'Northern Trust', 'Wintrust', 'Alliant', 'Associated Bank', 'Mr. Cooper', 'Mr Cooper', 'Rocket Mortgage', 'Guaranteed Rate', 'Truist', 'Regions', 'KeyBank', 'Santander',
+  'Navy Federal', 'USAA', 'Kraken', 'Gemini', 'River', 'Strike', 'Cash App', 'Crypto.com', 'Binance.US', 'Ledger', 'Trezor', 'Apple', 'Synchrony', 'Barclays', 'Northern Trust', 'Wintrust', 'Alliant', 'Associated Bank', 'Mr. Cooper', 'Mr Cooper', 'Rocket Mortgage', 'Guaranteed Rate', 'Truist', 'Regions', 'KeyBank', 'Santander',
   'HSBC', 'Interactive Brokers', 'T. Rowe Price', 'T Rowe Price', 'Empower', 'John Hancock', 'Voya', 'TIAA', 'Nelnet', 'Navient', 'Mohela', 'Toyota Financial', 'Honda Financial', 'Ford Credit', 'Tesla', 'PayPal', 'Venmo'];
 const TELL_CANON = { 'Schwab': 'Charles Schwab', 'Citibank': 'Citi', 'Amex': 'American Express', 'U.S. Bank': 'US Bank', 'E-Trade': 'E*Trade', 'Etrade': 'E*Trade', 'Merrill': 'Merrill Lynch', 'Mr Cooper': 'Mr. Cooper', 'T Rowe Price': 'T. Rowe Price' };
 const tellLedgerType = t => !!ACCOUNT_TYPES[t]?.ledger;
@@ -114,7 +114,7 @@ function tellQuestions(d) {
   if (!f.name && !f.institution && !skip('institution')) q.push('institution');
   if (members().length > 1 && !f.owner) q.push('owner');
   if (f.balance == null) q.push(tellDebtType(f.type) && f.type !== 'credit' ? 'owed' : 'balance');
-  if ((tellLedgerType(f.type) || tellInvestType(f.type)) && !f.last4 && !skip('last4')) q.push('last4');
+  if ((tellLedgerType(f.type) || (tellInvestType(f.type) && f.type !== 'crypto')) && !f.last4 && !skip('last4')) q.push('last4');   // wallets don't have account numbers
   if (['mortgage', 'loan'].includes(f.type)) {
     if (f.rate == null && !skip('rate')) q.push('rate');
     if (f.payment == null && !skip('payment')) q.push('payment');
@@ -292,6 +292,7 @@ function tellAfterText(d) {
   const a = acctById(d.added); if (!a) return '';
   if (d.mort || LOAN_TYPES.has(a.type)) return `Want Ọrọ̀ to follow the ${d.mort ? 'mortgage ' : ''}payments from your bank imports, so the balance comes down on its own?`;
   if (a.type === 'realestate') return 'That’s it. Update the value now and then from Accounts › Update balances.';
+  if (a.type === 'crypto') return `Add the coins ${a.name} holds (like 0.5 bitcoin) so its value follows their prices, or keep the balance updated by hand?`;
   if (tellInvestType(a.type)) return `${a.name} has no holdings yet. Import a positions file from the brokerage, or keep the balance updated by hand?`;
   if (a.ledger) return `${a.name} has no transactions yet. Import a file now, or keep the balance updated by hand?`;
   return 'That’s it.';
@@ -299,6 +300,7 @@ function tellAfterText(d) {
 function tellAfterAnswer(s) {
   const d = CI.draft, a = acctById(d.added);
   if (!a) { CI.draft = null; return ''; }
+  if (a.type === 'crypto' && /\b(coins?|add (them|it|coins)|bitcoin|ethereum|yes|sure)\b/.test(s)) return tellAfter('coins');
   if (/\b(import|upload|file)\b/.test(s)) return tellAfter('import');
   if (/\b(by hand|manual|manually|myself|i'?ll update|hand)\b/.test(s)) return tellAfter('hand');
   if (/\b(follow|track|yes|sure|set (it )?up)\b/.test(s) && (d.mort || LOAN_TYPES.has(a.type))) return tellAfter('track');
@@ -312,6 +314,7 @@ function tellAfter(what) {
   CI.draft = null;
   if (!a) return '';
   if (what === 'import') { startImport(); return ''; }
+  if (what === 'coins') { holdingModal(null, a.id); return ''; }
   if (what === 'hand') {
     if (a.ledger) { a.ledger = false; delete a.anchorBalance; delete a.anchorDate; commit({ silent: true }); }
     CI.last = { text: `OK. Ọrọ̀ will ask for ${a.name}’s balance when it’s more than ${state.settings.staleDays || 35} days old.`, undo: false };
@@ -332,6 +335,7 @@ function tellCardHtml() {
     const loan = d.mort || LOAN_TYPES.has(a.type), acts = [];
     if (loan) acts.push('<button class="btn primary" data-ci="tell-track">Follow the payments</button>');
     else if (a.ledger) acts.push('<button class="btn primary" data-ci="tell-import">Import a file</button>', '<button class="btn" data-ci="tell-hand">Keep the balance by hand</button>');
+    else if (a.type === 'crypto') acts.push('<button class="btn primary" data-ci="tell-coins">Add coins</button>', '<button class="btn" data-ci="tell-hand">Balance by hand is fine</button>');
     else if (tellInvestType(a.type)) acts.push('<button class="btn primary" data-ci="tell-import">Import positions</button>', '<button class="btn" data-ci="tell-hand">Balance by hand is fine</button>');
     acts.push('<button class="btn" data-ci="tell-edit">Edit details</button>', '<button class="btn ghost" data-ci="tell-another">Add another</button>');
     return `<section class="panel ci-card tell-card"><div class="ci-top"><span class="ci-kicker">Added</span></div>
@@ -369,6 +373,7 @@ function tellClick(act, v) {
   if (act === 'tell-pick') { if (v) return updPick(v); const d = CI.draft; d?.pending.shift(); if (d && !d.changes.length && !d.pending.length) { CI.draft = null; return 'OK, nothing was changed.'; } return updPrompt(); }
   if (act === 'tell-save') return updApply();
   if (act === 'tell-import') return tellAfter('import');
+  if (act === 'tell-coins') return tellAfter('coins');
   if (act === 'tell-hand') return tellAfter('hand');
   if (act === 'tell-track') return tellAfter('track');
   if (act === 'tell-edit') return tellAfter('edit');

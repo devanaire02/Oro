@@ -59,6 +59,8 @@ function talkExamples(ctx) {
   else if (ctx.page === 'transactions' || ctx.page === 'checkin' || ctx.page === 'budget') ex.push('the Jewel Osco one on Tuesday is groceries', 'the $84.12 charge should be household, and make a rule', 'make a rule: Starbucks, Dunkin and Peet’s are coffee', 'flag the Best Buy charge');
   if (ctx.a) ex.push('the balance is 12,400', `rename it to ${ctx.a.name.split(' ')[0]} …`, 'it ends in 1234');
   if (!ctx.t && !ctx.sel.length && ['accounts', 'overview', 'property', 'investments', 'planning'].includes(ctx.page)) ex.push('Chase ending 1234 is 12,400', 'the home is worth 675k', 'rename the Amex to Blue Cash', 'the mortgage rate is 6.125 percent');
+  const coin = cryptoHeld()[0];
+  if (coin && coin.price >= 1 && !ctx.t && !ctx.sel.length && ['accounts', 'overview', 'investments', 'checkin'].includes(ctx.page)) ex.unshift(`${coin.name.toLowerCase()} is ${Math.round(coin.price * 1.02).toLocaleString('en-US')}`);
   ex.push('add a savings account at Ally with 40,000');
   return [...new Set(ex)].slice(0, 6);
 }
@@ -108,6 +110,7 @@ function talkUnderstand(text, { split = true } = {}) {
     if (parts.length > 1 && parts.some(p => TX_INTENT.test(p.toLowerCase()) && txParse(p, ctx))) { TALK.queue = parts.slice(1); return talkUnderstand(parts[0], { split: false }); }
   }
   // "it's for Sam", "the balance is 12,400" with an account open (or "this card" with a transaction open) are about that account
+  if (!TX_INTENT.test(low)) { const cp = coinParse(text); if (cp) return updStart(cp); }   // "bitcoin is 62,000"
   const ctxAcct = ctx.a || (ctx.t && /\bthis (card|account)\b/.test(low) ? acctById(ctx.t.accountId) : null);
   if (ctxAcct && /^\s*(it'?s?|its|this( one| account| card)?|the (balance|rate|value|payment|owner|name) (on|of|for) (it|this)|the (balance|rate|value|payment|owner|name))\b/.test(low)) { const u = updParse(text, { ctxAcct }); if (u) return updStart(u); }
   // a sentence that names an account and says what to change is about the account, even with a transaction open

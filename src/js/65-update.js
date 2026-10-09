@@ -5,7 +5,9 @@
    change as old → new, asks which one when two accounts could match, and saves only after "yes". */
 const UPD_VERB = /^(?:(?:can you|could you|please|let'?s|i want to|i need to)\s+)*(update|set|change|make|rename|archive|close|mark|correct|fix)\b/;
 const UPD_STRIP = /^(?:(?:can you|could you|please|let'?s|i want to|i need to)\s+)*(update|set|change|correct|fix)\b/;
-const UPD_FIELDS = { balance: 'Balance', value: 'Value', owner: 'Owner', name: 'Name', last4: 'Last 4', rate: 'Interest rate', minPayment: 'Monthly payment', rental: 'Rental', archived: 'Archive' };
+const UPD_FIELDS = { balance: 'Balance', value: 'Value', owner: 'Owner', name: 'Name', last4: 'Last 4', rate: 'Interest rate', minPayment: 'Monthly payment', rental: 'Rental', archived: 'Archive', coinPrice: 'Price' };
+/* what a change is about: an account, or a coin's price (27-crypto.js) */
+const updName = c => c.coin ? coinName(c.coin) : acctById(c.accountId)?.name || '';
 
 /* Which accounts a stretch of words could mean, best first */
 function updFindAccounts(seg) {
@@ -119,6 +121,7 @@ function updChanges(a, f) {
 }
 function updShow(c) {
   const a = acctById(c.accountId), f = c.field;
+  if (f === 'coinPrice') return [c.from == null ? 'none' : priceFmt(c.from), priceFmt(c.to)];
   if (f === 'balance' || f === 'value' || f === 'minPayment') return [money(Math.abs(Number(c.from) || 0), { cents: false }), money(c.to, { cents: Math.abs(c.to) % 1 > 0.004 })];
   if (f === 'owner') return [memberName(c.from || 'joint'), memberName(c.to)];
   if (f === 'rate') return [c.from == null || c.from === '' ? 'none' : `${c.from}%`, `${c.to}%`];
@@ -127,6 +130,7 @@ function updShow(c) {
 }
 function updSay(c) {
   const a = acctById(c.accountId), [from, to] = updShow(c);
+  if (c.field === 'coinPrice') return `${coinName(c.coin)} price ${to}${c.from != null ? ` (was ${from})` : ''}`;
   if (c.field === 'archived') return `archive ${a.name}`;
   if (c.field === 'rental') return `mark ${a.name} as ${c.to ? '' : 'not '}a rental`;
   return `${a.name}: ${UPD_FIELDS[c.field].toLowerCase()} ${to}${c.field === 'balance' || c.field === 'value' ? ` (was ${from})` : ''}`;
@@ -137,7 +141,7 @@ function updStart(p) { CI.draft = { step: 'update', changes: p.changes, pending:
 function updPrompt() {
   const d = CI.draft; if (!d) return '';
   if (d.pending.length) { const p = d.pending[0]; const names = p.options.map(id => acctById(id)?.name); return `Which account did you mean${p.fields.balance != null ? ` for ${money(p.fields.balance, { cents: false })}` : ''}: ${names.length > 1 ? names.slice(0, -1).join(', ') + ' or ' + names[names.length - 1] : names[0]}?`; }
-  const real = d.changes.filter(c => !c.same && !c.note), notes = d.changes.filter(c => c.same || c.note).map(c => c.note ? `${acctById(c.accountId)?.name}: ${c.note}` : `${acctById(c.accountId)?.name}’s ${UPD_FIELDS[c.field].toLowerCase()} is already ${updShow(c)[1]}.`);
+  const real = d.changes.filter(c => !c.same && !c.note), notes = d.changes.filter(c => c.same || c.note).map(c => c.note ? `${updName(c)}: ${c.note}` : `${updName(c)}’s ${UPD_FIELDS[c.field].toLowerCase()} is already ${updShow(c)[1]}.`);
   if (!real.length) return notes.join(' ') || 'Nothing to change.';
   return `${notes.length ? notes.join(' ') + ' ' : ''}${real.length === 1 ? 'Update ' + updSay(real[0]) : 'Update ' + real.length + ' things: ' + real.map(updSay).join('; ')}? Say “yes” to save.`;
 }
@@ -161,6 +165,8 @@ function updAnswer(raw) {
   }
   if (/^(yes|yep|yeah|sure|save( it)?|do it|go ahead|correct|that'?s right|update( it)?|confirm|ok(ay)?|sounds good)\b/.test(s)) return updApply();
   if (/^(no|nope|cancel|never ?mind|stop|don'?t)\b/.test(s) && !/\d/.test(s)) { CI.draft = null; CI.heard = 'OK, nothing was changed.'; return CI.heard; }
+  const coins = coinParse(raw.replace(/^\s*(and|also|plus)\s+/i, ''));   // "and ethereum is 2,450"
+  if (coins) { for (const c of coins.changes) { d.changes = d.changes.filter(x => x.coin !== c.coin); d.changes.push(c); } return updPrompt(); }
   const more = updParse(raw, { force: true });   // "and the Roth is 85k", or a correction for the same account
   const lastAcct = d.changes.length ? acctById(d.changes[d.changes.length - 1].accountId) : null;
   if (!more && lastAcct && !/^(no|nope|actually|make it|i mean|sorry)\b/.test(s)) {
@@ -177,7 +183,7 @@ function updAnswer(raw) {
   }
   if (d.changes.length === 1 && /^(?:(?:no|nope|actually|make it|i mean|sorry)[, ]+)*\$?\s*[\d,]+(?:\.\d+)?\s*(?:k|thousand|percent|%)?$/.test(s)) {   // "no, 12,500": a new amount for the one change
     const n = ciNumber(s.replace(/percent|%/g, '')); const c = d.changes[0];
-    if (n != null && ['balance', 'value', 'minPayment', 'rate'].includes(c.field)) { c.to = Math.abs(n); return updPrompt(); }
+    if (n != null && ['balance', 'value', 'minPayment', 'rate', 'coinPrice'].includes(c.field) && !(c.field === 'coinPrice' && n <= 0)) { c.to = Math.abs(n); delete c.same; return updPrompt(); }
   }
   CI.heard = `I didn’t catch that. ${updPrompt()}`; return CI.heard;
 }
@@ -187,6 +193,7 @@ function updApply() {
   if (!real.length) { CI.draft = null; return ''; }
   d.changes = real;
   for (const c of d.changes) {
+    if (c.field === 'coinPrice') { setCoinPrice(c.coin, c.to); continue; }
     const a = acctById(c.accountId); if (!a) continue;
     if (c.field === 'balance' || c.field === 'value') setBalance(a, isLiability(a) ? Math.abs(c.to) : c.to);
     else if (c.field === 'rate') a.rate = c.to;
@@ -195,7 +202,7 @@ function updApply() {
     else a[c.field] = c.to;
   }
   commit({ silent: true });
-  const text = `Updated ${d.changes.length === 1 ? updSay(d.changes[0]) : listWords([...new Set(d.changes.map(c => acctById(c.accountId)?.name))])}.`;
+  const text = `Updated ${d.changes.length === 1 ? updSay(d.changes[0]) : listWords([...new Set(d.changes.map(updName))])}.`;
   CI.last = { text, undo: true, n: 0 };
   CI.draft = null;
   return text;
@@ -203,10 +210,11 @@ function updApply() {
 function updCardHtml() {
   const d = CI.draft; if (!d) return '';
   const p = d.pending[0];
-  const rows = d.changes.map(c => { const [from, to] = updShow(c), name = `<strong>${esc(acctById(c.accountId)?.name || '')}</strong> <span class="muted">${esc(UPD_FIELDS[c.field])}</span>`;
+  const rows = d.changes.map(c => { const [from, to] = updShow(c), name = `<strong>${esc(updName(c))}</strong> <span class="muted">${esc(UPD_FIELDS[c.field])}</span>`;
+    const fx = c.field === 'coinPrice' && !c.same ? `<ul class="upd-fx">${coinEffects(c.coin, c.to).map(e => `<li>${esc(e.acct)}: ${amountFmt(e.amount, true)} ${esc(c.coin)}, ${money(e.from, { cents: false })} → ${money(e.to, { cents: false })}</li>`).join('')}</ul>` : '';
     if (c.note) return `<li class="upd-note">${name} <span class="muted">${esc(c.note)}</span></li>`;
     if (c.same) return `<li class="upd-note">${name} <span class="muted">already ${esc(to)}</span></li>`;
-    return `<li>${name} <span class="upd-from">${esc(from)}</span> → <span class="upd-to">${esc(to)}</span></li>`; }).join('');
+    return `<li>${name} <span class="upd-from">${esc(from)}</span> → <span class="upd-to">${esc(to)}</span>${fx}</li>`; }).join('');
   const real = d.changes.filter(c => !c.same && !c.note).length;
   return `<section class="panel ci-card tell-card"><div class="ci-top"><span class="ci-kicker">Update</span></div>
     ${rows ? `<ul class="upd-list">${rows}</ul>` : ''}

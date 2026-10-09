@@ -6,7 +6,7 @@ const ACCOUNT_TYPES = {
   retirement:     { label: 'Retirement',            side: 'asset',     bucket: 'invest' },
   education:      { label: 'Education or custodial', side: 'asset',    bucket: 'invest' },
   hsa:            { label: 'HSA',                   side: 'asset',     bucket: 'invest' },
-  crypto:         { label: 'Crypto',                side: 'asset',     bucket: 'invest',   cls: 'Crypto' },
+  crypto:         { label: 'Cryptocurrency',        side: 'asset',     bucket: 'invest',   cls: 'Crypto' },   // coins held like funds (27-crypto.js)
   private:        { label: 'Private investment',    side: 'asset',     bucket: 'illiquid', cls: 'Private & alternatives' },
   realestate:     { label: 'Real estate',           side: 'asset',     bucket: 'illiquid', cls: 'Real estate' },
   vehicle:        { label: 'Vehicle',               side: 'asset',     bucket: 'illiquid', cls: 'Other' },

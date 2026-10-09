@@ -1,7 +1,7 @@
 /* ================= Investments ================= */
 VIEWS.investments = () => {
   const accts = activeAccounts().filter(a => ACCOUNT_TYPES[a.type]?.bucket === 'invest' || a.type === 'private');
-  if (!accts.length) return pageHead('Investments') + emptyState('No investment accounts yet', 'Add a brokerage, retirement, 529 or private account, then import a positions file from your brokerage or enter holdings by hand.', `<button class="btn primary" data-act="add-account" data-type="brokerage">Add an investment account</button><button class="btn" data-act="import">Import positions</button>`);
+  if (!accts.length) return pageHead('Investments') + emptyState('No investment accounts yet', 'Add a brokerage, retirement, 529, cryptocurrency or private account, then import a positions file from your brokerage or enter holdings (or coins) by hand.', `<button class="btn primary" data-act="add-account" data-type="brokerage">Add an investment account</button><button class="btn" data-act="import">Import positions</button>`);
   const total = sum(accts.map(accountValue));
   const hs = state.holdings.filter(h => accts.some(a => a.id === h.accountId));
   const withCost = hs.filter(h => h.costBasis != null && h.costBasis !== '' && h.assetClass !== 'Cash');
@@ -14,10 +14,11 @@ VIEWS.investments = () => {
   const re = all.rows.find(r => r.cls === 'Real estate');
 
   return pageHead('Investments', `${accts.length} account${accts.length > 1 ? 's' : ''}, ${hs.length} holding${hs.length === 1 ? '' : 's'}`,
-    `<button class="btn" data-act="import">Import positions</button><button class="btn primary" data-act="add-holding">Add holding</button>`) + `
+    `${(() => { const many = accts.filter(a => holdingsFor(a.id).length); return many.length > 1 ? `<button class="btn ghost" data-act="holdings-all">${many.every(a => holdingsCollapsed()[a.id]) ? 'Expand all' : 'Collapse all'}</button>` : ''; })()}<button class="btn" data-act="import">Import positions</button><button class="btn primary" data-act="add-holding">Add holding</button>`) + `
   <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Market value</th><th class="num hide-sm">Cost basis</th><th class="num">Unrealized gain</th><th class="num">Return on cost</th></tr></thead>
     <tbody><tr><th scope="row">All investments</th><td class="num">${money(total, { cents: false })}</td><td class="num hide-sm">${cost ? money(cost, { cents: false }) : '—'}</td><td class="num ${signClass(mval - cost)}">${cost ? money(mval - cost, { cents: false, sign: true }) : '—'}</td><td class="num ${signClass(mval - cost)}">${cost ? pct((mval - cost) / cost) : '—'}</td></tr></tbody></table>
     <p class="muted small">Gains count only holdings with a cost basis. Cash positions are left out.</p></section>
+  ${cryptoPricesPanel()}
 
   <section class="panel">
     <header class="panel-head"><h2>Allocation</h2><span class="muted small">Targets ${targetSum ? `add to ${targetSum}%` : 'are optional'}</span></header>
@@ -54,17 +55,18 @@ VIEWS.investments = () => {
   })()}
 
   ${accts.map(a => {
-    const list = holdingsFor(a.id).sort((x, y) => holdingValue(y) - holdingValue(x));
+    const list = holdingsFor(a.id).sort((x, y) => holdingValue(y) - holdingValue(x)), crypto = isCryptoAcct(a);
     const v = accountValue(a);
-    return `<section class="acct-group"><table class="ledger holdings-table" data-sort-id="holdings"><colgroup><col style="width:10%"><col style="width:24%"><col class="hide-sm" style="width:17%"><col class="hide-sm" style="width:9%"><col class="hide-sm" style="width:10%"><col style="width:11%"><col class="hide-sm" style="width:10%"><col style="width:9%"></colgroup>
-      <thead><tr><th scope="col" colspan="2"><button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button> <span class="muted small">${esc(ACCOUNT_TYPES[a.type].label)}${a.institution ? `, ${esc(a.institution)}` : ''}</span></th><th class="hide-sm">Class</th><th class="num hide-sm">Shares</th><th class="num hide-sm">Price</th><th class="num">Value</th><th class="num hide-sm">Cost basis</th><th class="num">Gain</th></tr></thead>
+    const folded = list.length && holdingsCollapsed()[a.id];
+    return `<section class="acct-group"><table class="ledger holdings-table ${folded ? 'collapsed' : ''}" data-sort-id="holdings" data-acct="${a.id}"><colgroup><col style="width:10%"><col style="width:24%"><col class="hide-sm" style="width:17%"><col class="hide-sm" style="width:9%"><col class="hide-sm" style="width:10%"><col style="width:11%"><col class="hide-sm" style="width:10%"><col style="width:9%"></colgroup>
+      <thead><tr><th scope="col" colspan="2">${list.length ? collapseBtn(a, folded) : ''}<button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button>${list.length ? ` <span class="coll-count muted small">${list.length} holding${list.length === 1 ? '' : 's'}</span>` : ''} <span class="muted small">${esc(ACCOUNT_TYPES[a.type].label)}${a.institution ? `, ${esc(a.institution)}` : ''}</span></th><th class="hide-sm">Class</th><th class="num hide-sm">${crypto ? 'Amount' : 'Shares'}</th><th class="num hide-sm">Price</th><th class="num">Value</th><th class="num hide-sm">Cost basis</th><th class="num">Gain</th></tr></thead>
       <tbody>${list.length ? list.map(h => {
         const hv = holdingValue(h), g = h.costBasis != null && h.costBasis !== '' ? hv - h.costBasis : null;
         const old = h.private && daysBetween(h.priceDate || '2000-01-01', today()) > 90;
         return `<tr><th scope="row"><button class="linklike" data-edit-holding="${h.id}"><strong>${esc(h.symbol)}</strong></button></th>
-          <td class="muted">${esc(h.name || '')}${h.private ? `<div class="small">Private. ${old ? `<span class="tag warn">Marked ${dateLabel(h.priceDate, true)}</span>` : `Marked ${dateLabel(h.priceDate, true)}`}</div>` : ''}</td>
+          <td class="muted">${esc(h.name || '')}${crypto ? `<div class="small only-sm">${amountFmt(h.shares, true)} ${esc(h.symbol)} at ${priceFmt(h.price)}</div>` : ''}${h.private ? `<div class="small">Private. ${old ? `<span class="tag warn">Marked ${dateLabel(h.priceDate, true)}</span>` : `Marked ${dateLabel(h.priceDate, true)}`}</div>` : ''}</td>
           <td class="hide-sm"><span class="swatch" style="background:${CLASS_COLORS[h.assetClass] || CLASS_COLORS.Unclassified}"></span>${esc(h.assetClass || 'Unclassified')}</td>
-          <td class="num hide-sm">${(+h.shares).toLocaleString('en-US', { maximumFractionDigits: 4 })}</td><td class="num hide-sm">${money(h.price)}</td>
+          <td class="num hide-sm">${amountFmt(h.shares, crypto)}</td><td class="num hide-sm">${priceFmt(h.price)}</td>
           <td class="num">${money(hv, { cents: false })}</td><td class="num hide-sm">${g == null ? '<span class="muted">—</span>' : money(h.costBasis, { cents: false })}</td>
           <td class="num ${g == null ? '' : signClass(g)}">${g == null ? '' : `${money(g, { cents: false, sign: true })}<div class="small">${h.costBasis ? pct(g / h.costBasis, 0) : ''}</div>`}</td></tr>`;
       }).join('') : `<tr><td colspan="8" class="muted">No holdings listed. The account counts at its balance of ${money(v, { cents: false })}${a.assetClass ? `, as ${esc(a.assetClass)}` : ''}. <button class="linklike" data-act="add-holding" data-acct="${a.id}">Add holdings</button></td></tr>`}</tbody>
@@ -288,3 +290,67 @@ VIEWS.review = p => {
   </section>`;
 };
 
+/* Crypto prices: one row per coin you hold in a Cryptocurrency account. Type today's prices and save; each price is
+   used in every account that holds that coin. */
+function cryptoPricesPanel() {
+  const held = cryptoHeld();
+  if (!held.length) return '';
+  return `<section class="panel crypto-prices" id="crypto-prices">
+    <header class="panel-head"><h2>Crypto prices</h2><span class="muted small">One price per coin, in every account that holds it</span></header>
+    <form data-crypto-prices>
+    <table class="ledger compact"><thead><tr><th>Coin</th><th class="num hide-sm">You hold</th><th class="num">Price</th><th class="hide-sm">As of</th><th class="num">Value</th></tr></thead>
+    <tbody>${held.map(c => `<tr><th scope="row"><strong>${esc(c.symbol)}</strong> <span class="muted small">${esc(c.name)}</span><div class="muted small only-sm">${amountFmt(c.amount, true)} ${esc(c.symbol)}</div></th>
+      <td class="num hide-sm">${amountFmt(c.amount, true)}</td>
+      <td class="num coin-price-cell" data-v="${c.price}"><span class="cur">$</span><input class="coin-price" data-coin="${esc(c.symbol)}" data-was="${c.price}" inputmode="decimal" value="${c.price}" aria-label="Price of ${esc(c.name)}" autocomplete="off"></td>
+      <td class="hide-sm" data-v="${esc(c.priceDate || '')}">${staleTag(c.priceDate, CRYPTO_STALE_DAYS)}</td>
+      <td class="num">${money(c.value, { cents: false })}</td></tr>`).join('')}</tbody>
+    <tfoot><tr><th scope="row">Total</th><td class="hide-sm"></td><td></td><td class="hide-sm"></td><td class="num total">${money(sum(held.map(c => c.value)), { cents: false })}</td></tr></tfoot></table>
+    <div class="actions"><button class="btn primary" type="submit">Save prices</button><span class="muted small">Type today’s prices from your exchange or wallet app. Ọrọ̀ doesn’t look prices up online. You can also say “bitcoin is 62,000” to Talk.</span></div>
+    </form></section>`;
+}
+document.addEventListener('submit', e => {
+  const f = e.target;
+  if (!f.matches?.('[data-crypto-prices]')) return;
+  e.preventDefault();
+  const changed = [];
+  for (const inp of f.querySelectorAll('.coin-price')) {
+    const p = parseAmount(inp.value);
+    if (!inp.value.trim()) continue;
+    if (!isFinite(p) || p <= 0) { inp.focus(); return toast(`Type a price for ${coinName(inp.dataset.coin)}, like 62,000.`); }
+    if (Math.abs(p - Number(inp.dataset.was)) > 1e-12) changed.push([inp.dataset.coin, p]);
+  }
+  if (!changed.length) return toast('No prices changed.');
+  for (const [sym, p] of changed) setCoinPrice(sym, p);
+  commit();
+  toast(`Updated ${listWords(changed.map(([sym]) => coinName(sym)))} ${changed.length === 1 ? 'price' : 'prices'}.`);
+});
+
+/* Each account's holdings fold away to just its total. Remembered on this device. */
+function holdingsCollapsed() { try { return JSON.parse(localStorage.getItem('oro.collapsed') || '{}') || {}; } catch (e) { return {}; } }
+function setHoldingsCollapsed(map) { try { localStorage.setItem('oro.collapsed', JSON.stringify(map)); } catch (e) { /* storage blocked: it lasts until the page redraws */ } }
+const CHEVRON = '<svg class="chev" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+function collapseBtn(a, folded) {
+  return `<button type="button" class="coll-btn" data-collapse="${a.id}" aria-expanded="${folded ? 'false' : 'true'}" aria-label="${folded ? 'Show' : 'Hide'} ${esc(a.name)} holdings" title="${folded ? 'Show the holdings' : 'Fold the holdings away'}">${CHEVRON}</button>`;
+}
+function paintCollapseAll() {
+  const b = $('[data-act="holdings-all"]'); if (!b) return;
+  const tables = $$('.holdings-table[data-acct]').filter(t => t.querySelector('.coll-btn'));
+  b.textContent = tables.length && tables.every(t => t.classList.contains('collapsed')) ? 'Expand all' : 'Collapse all';
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-collapse]'); if (!b) return;
+  e.preventDefault();
+  const id = b.dataset.collapse, t = b.closest('table'), folded = !t.classList.contains('collapsed');
+  t.classList.toggle('collapsed', folded);
+  b.setAttribute('aria-expanded', folded ? 'false' : 'true');
+  const name = acctById(id)?.name || '';
+  b.setAttribute('aria-label', `${folded ? 'Show' : 'Hide'} ${name} holdings`); b.title = folded ? 'Show the holdings' : 'Fold the holdings away';
+  const map = holdingsCollapsed(); if (folded) map[id] = true; else delete map[id];
+  setHoldingsCollapsed(map); paintCollapseAll();
+});
+function holdingsAll() {   // Collapse all / Expand all (ACTIONS['holdings-all'] in 60-app.js)
+  const ids = activeAccounts().filter(a => holdingsFor(a.id).length).map(a => a.id), map = holdingsCollapsed();
+  const fold = !ids.every(id => map[id]);
+  for (const id of ids) { if (fold) map[id] = true; else delete map[id]; }
+  setHoldingsCollapsed(map); render();
+}

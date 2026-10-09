@@ -18,6 +18,7 @@ const ACTIONS = {
   'more-pages': () => morePagesSheet(),
   'loan-detail': el => loanModal(el.dataset.id),
   'tx-filters': () => { UI.txFilters = !$('.filters')?.classList.contains('open'); render(); },
+  'holdings-all': () => holdingsAll(),
   'tx-clear': () => {   // everything: all months, no account/category/person/flag/tag filter, no search, everyone's spending
     UI.txFilters = undefined;
     if (UI.lens) { UI.lens = ''; try { sessionStorage.setItem('keel.lens', ''); } catch (e2) { /* ignore */ } }

@@ -152,7 +152,7 @@ const ACCOUNT_TYPES = {
   retirement:     { label: 'Retirement',            side: 'asset',     bucket: 'invest' },
   education:      { label: 'Education or custodial', side: 'asset',    bucket: 'invest' },
   hsa:            { label: 'HSA',                   side: 'asset',     bucket: 'invest' },
-  crypto:         { label: 'Crypto',                side: 'asset',     bucket: 'invest',   cls: 'Crypto' },
+  crypto:         { label: 'Cryptocurrency',        side: 'asset',     bucket: 'invest',   cls: 'Crypto' },   // coins held like funds (27-crypto.js)
   private:        { label: 'Private investment',    side: 'asset',     bucket: 'illiquid', cls: 'Private & alternatives' },
   realestate:     { label: 'Real estate',           side: 'asset',     bucket: 'illiquid', cls: 'Real estate' },
   vehicle:        { label: 'Vehicle',               side: 'asset',     bucket: 'illiquid', cls: 'Other' },
@@ -1485,6 +1485,124 @@ function loanPaymentCandidates(a) {
   return [...groups.values()].sort((x, y) => y.n - x.n || y.last.localeCompare(x.last)).slice(0, 8);
 }
 
+/* ---------- Cryptocurrency ----------
+   A Cryptocurrency account holds coins the way a brokerage account holds funds: amount × price = value, so its balance
+   follows the price. Prices are typed in (Investments › Crypto prices, a coin's dialog, Check-in, or said to Talk), or
+   come from a positions file; Ọrọ̀ doesn't go online for them, like every other price in it. A coin has one price, so
+   changing it updates every Cryptocurrency account that holds that coin. (Only Cryptocurrency accounts: a brokerage
+   holding with the same ticker, like the Grayscale Bitcoin Mini Trust "BTC", is a fund with its own price.) */
+const CRYPTO_COINS = [
+  ['BTC', 'Bitcoin', ['bitcoin', 'bitcoins', 'btc', 'xbt']],
+  ['ETH', 'Ethereum', ['ethereum', 'ether', 'eth']],
+  ['SOL', 'Solana', ['solana', 'sol']],
+  ['XRP', 'XRP', ['xrp', 'ripple']],
+  ['USDC', 'USD Coin', ['usdc', 'usd coin']],
+  ['USDT', 'Tether', ['usdt', 'tether']],
+  ['ADA', 'Cardano', ['cardano', 'ada']],
+  ['DOGE', 'Dogecoin', ['dogecoin', 'doge']],
+  ['LTC', 'Litecoin', ['litecoin', 'ltc']],
+  ['BCH', 'Bitcoin Cash', ['bitcoin cash', 'bch']],
+  ['AVAX', 'Avalanche', ['avalanche', 'avax']],
+  ['DOT', 'Polkadot', ['polkadot', 'dot']],
+  ['LINK', 'Chainlink', ['chainlink', 'link']],
+  ['XLM', 'Stellar', ['stellar', 'xlm', 'lumens']],
+  ['POL', 'Polygon', ['polygon', 'matic', 'pol']],
+  ['SHIB', 'Shiba Inu', ['shiba inu', 'shiba', 'shib']],
+  ['ATOM', 'Cosmos', ['cosmos', 'atom']],
+  ['UNI', 'Uniswap', ['uniswap', 'uni']],
+  ['TRX', 'TRON', ['tron', 'trx']],
+  ['TON', 'Toncoin', ['toncoin', 'ton']],
+  ['SUI', 'Sui', ['sui']],
+  ['HBAR', 'Hedera', ['hedera', 'hbar']],
+  ['NEAR', 'NEAR Protocol', ['near protocol', 'near']],
+  ['DAI', 'Dai', ['dai']],
+];
+const CRYPTO_STALE_DAYS = 7;   // prices move fast; Check-in asks for one older than a week
+/* Spot bitcoin and ether funds held at a brokerage count as Crypto for allocation (guessAssetClass) */
+const CRYPTO_FUNDS = /^(IBIT|FBTC|GBTC|BITB|ARKB|HODL|BRRR|EZBC|BTCO|BTCW|DEFI|BITO|BTF|ETHA|FETH|ETHE|ETHW|CETH|QETH|EZET|ETHV)$/;
+
+const coinRe = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function coinBySymbol(sym) { const s = String(sym || '').toUpperCase(); return CRYPTO_COINS.find(c => c[0] === s) || null; }
+/* "bitcoin", "BTC", "Bitcoin (BTC)" → the coin */
+function coinFind(text) {
+  const t = String(text || '').toLowerCase().replace(/[()]/g, ' ').trim();
+  if (!t) return null;
+  return CRYPTO_COINS.find(c => c[0].toLowerCase() === t || c[1].toLowerCase() === t || c[2].includes(t))
+    || CRYPTO_COINS.find(c => new RegExp(`\\b(${c[2].map(escRe).join('|')}|${c[0].toLowerCase()})\\b`).test(t) && t.split(/\s+/).length <= 3)
+    || null;
+}
+function isCryptoAcct(a) { return a?.type === 'crypto'; }
+function coinHoldings(sym) {
+  const s = String(sym || '').toUpperCase();
+  return state.holdings.filter(h => h.symbol === s && !h.private && isCryptoAcct(acctById(h.accountId)) && !acctById(h.accountId)?.archived);
+}
+function coinName(sym) { const c = coinBySymbol(sym); return c ? c[1] : (coinHoldings(sym).find(h => h.name)?.name || String(sym).toUpperCase()); }
+/* Every coin held in a Cryptocurrency account, with its amount, price and value */
+function cryptoHeld() {
+  const by = {};
+  for (const h of state.holdings) {
+    const a = acctById(h.accountId);
+    if (!isCryptoAcct(a) || a.archived || h.private) continue;
+    const x = by[h.symbol] ||= { symbol: h.symbol, name: '', amount: 0, value: 0, price: h.price, priceDate: h.priceDate || '', holdings: [] };
+    x.amount += +h.shares || 0; x.value += holdingValue(h); x.holdings.push(h);
+    if ((h.priceDate || '') > (x.priceDate || '')) { x.price = h.price; }
+    if (!x.priceDate || (h.priceDate || '') < x.priceDate) x.priceDate = h.priceDate || '';   // the oldest, so a stale one shows
+  }
+  return Object.values(by).map(x => ({ ...x, name: coinName(x.symbol) })).sort((a, b) => b.value - a.value);
+}
+/* One price for a coin, in every Cryptocurrency account that holds it */
+function setCoinPrice(sym, price, date = today()) {
+  const hs = coinHoldings(sym);
+  for (const h of hs) { h.price = price; h.priceDate = date; }
+  return hs.length;
+}
+function cryptoStale(days = CRYPTO_STALE_DAYS) { return cryptoHeld().filter(c => !c.priceDate || daysBetween(c.priceDate, today()) > days); }
+
+/* Prices under a dollar keep their digits ($0.000012), so a coin like Shiba Inu doesn't show as $0.00 */
+function priceFmt(p) {
+  const n = Number(p);
+  if (!isFinite(n)) return '—';
+  if (Math.abs(n) >= 1 || n === 0) return money(n);
+  const dec = Math.min(10, Math.max(2, Math.ceil(-Math.log10(Math.abs(n))) + 3));
+  const [whole, frac = ''] = Math.abs(n).toFixed(dec).split('.');
+  return (n < 0 ? '−' : '') + '$' + whole + '.' + frac.replace(/0+$/, '').padEnd(2, '0');   // at least cents: $0.50
+}
+function amountFmt(n, crypto) { return (+n || 0).toLocaleString('en-US', { maximumFractionDigits: crypto ? 8 : 4 }); }
+
+/* ---- Talk and Check-in: "bitcoin is 62,000", "BTC at 62k", "ethereum price 2,450 and solana 140" ---- */
+function coinMentions() {   // coins you hold, with every way of saying them, longest first
+  const out = [];
+  for (const c of cryptoHeld()) {
+    const known = coinBySymbol(c.symbol);
+    const words = new Set([c.symbol.toLowerCase(), ...(known ? known[2] : []), c.name.toLowerCase()]);
+    for (const w of words) if (w.length >= 2) out.push({ symbol: c.symbol, word: w });
+  }
+  return out.sort((a, b) => b.word.length - a.word.length);
+}
+function coinParse(text) {
+  const s = String(text || '').toLowerCase().replace(/[’‘]/g, "'").replace(/,(?=\d{3}\b)/g, '').trim();
+  if (!s || /\b(my|our|i have|i own|we have|we own|i bought|i sold|bought|sold|account|wallet|holdings?|balance|owe|transaction|charge|one is|ones are|rule)\b/.test(s)) return null;
+  const ments = coinMentions(); if (!ments.length) return null;
+  const changes = [];
+  for (const seg of s.split(/\s*(?:\band\b|;|,\s*(?=[a-z]))\s*/)) {
+    const hit = ments.find(m => new RegExp(`(^|[^a-z])${coinRe(m.word)}([^a-z]|$)`).test(seg));
+    if (!hit) continue;
+    const at = new RegExp(`(^|[^a-z])${coinRe(hit.word)}(?=[^a-z]|$)`).exec(seg);
+    const rest = seg.slice(at.index + at[1].length + hit.word.length);
+    const m = rest.match(/^\s*(?:'s\s+)?(?:price\s*)?(?:is\s+|at\s+|@\s*|=\s*|:\s*|to\s+|now\s+|worth\s+|trading\s+at\s+|currently\s+|going for\s+)*\$?\s*(\d+(?:\.\d+)?)\s*(k|thousand|m|million)?\b\s*(?:a coin|per coin|each)?\s*$/);
+    if (!m) { if (/\d/.test(rest)) return null; continue; }
+    let n = parseFloat(m[1]); if (/^(k|thousand)$/.test(m[2] || '')) n *= 1e3; else if (/^(m|million)$/.test(m[2] || '')) n *= 1e6;
+    if (!(n > 0)) return null;
+    const cur = cryptoHeld().find(c => c.symbol === hit.symbol);
+    changes.push({ coin: hit.symbol, field: 'coinPrice', from: cur?.price, to: n, ...(cur && Math.abs(cur.price - n) < 1e-12 ? { same: true } : {}) });
+  }
+  return changes.length ? { changes, pending: [] } : null;
+}
+/* what a price change does to each account's value, for the confirm card */
+function coinEffects(sym, price) {
+  return coinHoldings(sym).map(h => ({ acct: acctById(h.accountId)?.name || '', amount: +h.shares || 0, from: holdingValue(h), to: (+h.shares || 0) * price }));
+}
+
 /* Charts are drawn at the host's real pixel width after each render, so text stays legible on any screen. */
 const ChartSpecs = {};
 function chartHost(spec) {
@@ -1934,7 +2052,7 @@ function parsePositionsCSV(rows) {
 function guessAssetClass(symbol, name) {
   const s = (symbol || '').toUpperCase(), n = (name || '').toUpperCase();
   if (/^(SPAXX|FDRXX|FZFXX|FCASH|SWVXX|SNVXX|VMFXX|VMRXX|SPRXX|CORE|CASH|MMDA)/.test(s) || /MONEY MARKET|CASH RESERVE|GOVERNMENT CASH|SWEEP|CORE POSITION/.test(n)) return 'Cash';
-  if (/^(BTC|ETH|SOL|IBIT|FBTC|GBTC|ETHE|FETH|BITO)$/.test(s) || /BITCOIN|ETHEREUM|CRYPTO/.test(n)) return 'Crypto';
+  if (/^(BTC|ETH)$/.test(s) || CRYPTO_FUNDS.test(s) || /BITCOIN|ETHEREUM|CRYPTO/.test(n)) return 'Crypto';   // coins, and spot bitcoin and ether funds
   if (/^(VNQ|VNQI|SCHH|XLRE|IYR|FREL|USRT)$/.test(s) || /\bREIT\b|REAL ESTATE/.test(n)) return 'Real estate';
   if (/^(BND|AGG|BNDX|VGIT|VGSH|VGLT|SCHZ|FXNAX|FBND|TLT|IEF|SHY|SGOV|BIL|MUB|VTEB|TIP|SCHP|LQD|HYG|JNK|VCIT|VCSH)$/.test(s) || /\bBOND|TREASUR|\bMUNI|FIXED INCOME|INCOME FUND|T-BILL|AGGREGATE|\bCD\b|CERTIFICATE OF DEPOSIT/.test(n)) return 'Bonds';
   if (/^(VXUS|VEA|VWO|IXUS|IEFA|IEMG|EFA|EEM|FTIHX|FSPSX|SCHF|SPDW|VTIAX|FZILX)$/.test(s) || /INTERNATIONAL|INTL|EMERGING|EX[- ]US|DEVELOPED MKT|FOREIGN|WORLD EX/.test(n)) return 'International stocks';
@@ -2854,8 +2972,10 @@ function applyPositionsItem(it) {
     const accountId = targets[p.srcAccount || ''] || targets[Object.keys(targets)[0]];
     const prev = old[accountId + '|' + p.symbol];
     const existing = state.holdings.find(h => h.accountId === accountId && h.symbol === p.symbol);
-    const rec = { symbol: p.symbol, name: p.name, shares: p.shares, price: p.price, costBasis: p.costBasis ?? prev?.costBasis ?? null, er: prev?.er, assetClass: p.assetClass, priceDate: today(), accountId };
+    const crypto = isCryptoAcct(acctById(accountId)) && p.assetClass !== 'Cash';   // everything in a Cryptocurrency account is a coin
+    const rec = { symbol: p.symbol, name: p.name, shares: p.shares, price: p.price, costBasis: p.costBasis ?? prev?.costBasis ?? null, er: prev?.er, assetClass: crypto ? 'Crypto' : p.assetClass, priceDate: today(), accountId };
     if (existing) Object.assign(existing, rec); else state.holdings.push({ id: uid(), ...rec });
+    if (crypto && p.price > 0) setCoinPrice(p.symbol, p.price);   // one price per coin, in every crypto account
   }
   for (const id of touched) { const a = acctById(id); if (a) a.balanceDate = today(); }
   return { count: P.length, accounts: [...touched] };
@@ -3338,7 +3458,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '19ace2d';
+const ORO_BUILD = '308ee88';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -3929,7 +4049,7 @@ VIEWS.accounts = p => {
     : BUCKETS.map(b => ({ label: b.label, debt: b.id === 'debt', accts: activeAccounts().filter(a => ACCOUNT_TYPES[a.type]?.bucket === b.id) })).filter(g => g.accts.length);
   const archived = state.accounts.filter(a => a.archived);
   const multi = members().length > 1;
-  return pageHead('Accounts', updating ? 'Type in current balances from your statements, then save.' : 'Everything you own and owe.',
+  return pageHead('Accounts', updating ? `Type in current balances from your statements, then save.${cryptoHeld().length ? ' Crypto accounts follow their coin prices: update those on Investments › Crypto prices.' : ''}` : 'Everything you own and owe.',
     updating ? `<a class="btn ghost" href="#/accounts">Cancel</a><button class="btn primary" data-act="save-balances">Save balances</button>`
       : `${multi ? `<div class="seg small" role="group" aria-label="Group by"><button class="${byOwner ? '' : 'on'}" data-by="">By type</button><button class="${byOwner ? 'on' : ''}" data-by="owner">By owner</button></div>` : ''}<a class="btn" href="#/accounts?update=1">Update balances</a>${checkinOn() ? '<a class="btn" href="#/checkin?talk=1">Add or update by talking</a>' : ''}<button class="btn primary" data-act="add-account">Add account</button>`) + `
   <section class="alloc-bar-wrap detail-only">${(() => { const segs = [['Cash', t.cash, 'var(--c2)'], ['Investments', t.invest, 'var(--c1)'], ['Property and private', t.illiquid, 'var(--c4)']]; const tot = t.assets || 1; return `<div class="stack tall" role="img" aria-label="Assets by type">${segs.map(([l, v, c]) => v > 0 ? `<span style="width:${v / tot * 100}%;background:${c}" title="${l} ${pct(v / tot, 0)}"></span>` : '').join('')}</div><p class="legend">${segs.map(([l, v, c]) => `<span><i style="background:${c}"></i>${l} ${pct(v / tot, 0)}</span>`).join('')}<span><i style="background:var(--neg)"></i>Debt is ${pct(t.liabilities / tot, 0)} of assets</span></p>`; })()}</section>
@@ -3961,7 +4081,7 @@ VIEWS.accounts = p => {
 /* ================= Investments ================= */
 VIEWS.investments = () => {
   const accts = activeAccounts().filter(a => ACCOUNT_TYPES[a.type]?.bucket === 'invest' || a.type === 'private');
-  if (!accts.length) return pageHead('Investments') + emptyState('No investment accounts yet', 'Add a brokerage, retirement, 529 or private account, then import a positions file from your brokerage or enter holdings by hand.', `<button class="btn primary" data-act="add-account" data-type="brokerage">Add an investment account</button><button class="btn" data-act="import">Import positions</button>`);
+  if (!accts.length) return pageHead('Investments') + emptyState('No investment accounts yet', 'Add a brokerage, retirement, 529, cryptocurrency or private account, then import a positions file from your brokerage or enter holdings (or coins) by hand.', `<button class="btn primary" data-act="add-account" data-type="brokerage">Add an investment account</button><button class="btn" data-act="import">Import positions</button>`);
   const total = sum(accts.map(accountValue));
   const hs = state.holdings.filter(h => accts.some(a => a.id === h.accountId));
   const withCost = hs.filter(h => h.costBasis != null && h.costBasis !== '' && h.assetClass !== 'Cash');
@@ -3974,10 +4094,11 @@ VIEWS.investments = () => {
   const re = all.rows.find(r => r.cls === 'Real estate');
 
   return pageHead('Investments', `${accts.length} account${accts.length > 1 ? 's' : ''}, ${hs.length} holding${hs.length === 1 ? '' : 's'}`,
-    `<button class="btn" data-act="import">Import positions</button><button class="btn primary" data-act="add-holding">Add holding</button>`) + `
+    `${(() => { const many = accts.filter(a => holdingsFor(a.id).length); return many.length > 1 ? `<button class="btn ghost" data-act="holdings-all">${many.every(a => holdingsCollapsed()[a.id]) ? 'Expand all' : 'Collapse all'}</button>` : ''; })()}<button class="btn" data-act="import">Import positions</button><button class="btn primary" data-act="add-holding">Add holding</button>`) + `
   <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Market value</th><th class="num hide-sm">Cost basis</th><th class="num">Unrealized gain</th><th class="num">Return on cost</th></tr></thead>
     <tbody><tr><th scope="row">All investments</th><td class="num">${money(total, { cents: false })}</td><td class="num hide-sm">${cost ? money(cost, { cents: false }) : '—'}</td><td class="num ${signClass(mval - cost)}">${cost ? money(mval - cost, { cents: false, sign: true }) : '—'}</td><td class="num ${signClass(mval - cost)}">${cost ? pct((mval - cost) / cost) : '—'}</td></tr></tbody></table>
     <p class="muted small">Gains count only holdings with a cost basis. Cash positions are left out.</p></section>
+  ${cryptoPricesPanel()}
 
   <section class="panel">
     <header class="panel-head"><h2>Allocation</h2><span class="muted small">Targets ${targetSum ? `add to ${targetSum}%` : 'are optional'}</span></header>
@@ -4014,17 +4135,18 @@ VIEWS.investments = () => {
   })()}
 
   ${accts.map(a => {
-    const list = holdingsFor(a.id).sort((x, y) => holdingValue(y) - holdingValue(x));
+    const list = holdingsFor(a.id).sort((x, y) => holdingValue(y) - holdingValue(x)), crypto = isCryptoAcct(a);
     const v = accountValue(a);
-    return `<section class="acct-group"><table class="ledger holdings-table" data-sort-id="holdings"><colgroup><col style="width:10%"><col style="width:24%"><col class="hide-sm" style="width:17%"><col class="hide-sm" style="width:9%"><col class="hide-sm" style="width:10%"><col style="width:11%"><col class="hide-sm" style="width:10%"><col style="width:9%"></colgroup>
-      <thead><tr><th scope="col" colspan="2"><button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button> <span class="muted small">${esc(ACCOUNT_TYPES[a.type].label)}${a.institution ? `, ${esc(a.institution)}` : ''}</span></th><th class="hide-sm">Class</th><th class="num hide-sm">Shares</th><th class="num hide-sm">Price</th><th class="num">Value</th><th class="num hide-sm">Cost basis</th><th class="num">Gain</th></tr></thead>
+    const folded = list.length && holdingsCollapsed()[a.id];
+    return `<section class="acct-group"><table class="ledger holdings-table ${folded ? 'collapsed' : ''}" data-sort-id="holdings" data-acct="${a.id}"><colgroup><col style="width:10%"><col style="width:24%"><col class="hide-sm" style="width:17%"><col class="hide-sm" style="width:9%"><col class="hide-sm" style="width:10%"><col style="width:11%"><col class="hide-sm" style="width:10%"><col style="width:9%"></colgroup>
+      <thead><tr><th scope="col" colspan="2">${list.length ? collapseBtn(a, folded) : ''}<button class="linklike" data-edit-acct="${a.id}">${esc(a.name)}</button>${list.length ? ` <span class="coll-count muted small">${list.length} holding${list.length === 1 ? '' : 's'}</span>` : ''} <span class="muted small">${esc(ACCOUNT_TYPES[a.type].label)}${a.institution ? `, ${esc(a.institution)}` : ''}</span></th><th class="hide-sm">Class</th><th class="num hide-sm">${crypto ? 'Amount' : 'Shares'}</th><th class="num hide-sm">Price</th><th class="num">Value</th><th class="num hide-sm">Cost basis</th><th class="num">Gain</th></tr></thead>
       <tbody>${list.length ? list.map(h => {
         const hv = holdingValue(h), g = h.costBasis != null && h.costBasis !== '' ? hv - h.costBasis : null;
         const old = h.private && daysBetween(h.priceDate || '2000-01-01', today()) > 90;
         return `<tr><th scope="row"><button class="linklike" data-edit-holding="${h.id}"><strong>${esc(h.symbol)}</strong></button></th>
-          <td class="muted">${esc(h.name || '')}${h.private ? `<div class="small">Private. ${old ? `<span class="tag warn">Marked ${dateLabel(h.priceDate, true)}</span>` : `Marked ${dateLabel(h.priceDate, true)}`}</div>` : ''}</td>
+          <td class="muted">${esc(h.name || '')}${crypto ? `<div class="small only-sm">${amountFmt(h.shares, true)} ${esc(h.symbol)} at ${priceFmt(h.price)}</div>` : ''}${h.private ? `<div class="small">Private. ${old ? `<span class="tag warn">Marked ${dateLabel(h.priceDate, true)}</span>` : `Marked ${dateLabel(h.priceDate, true)}`}</div>` : ''}</td>
           <td class="hide-sm"><span class="swatch" style="background:${CLASS_COLORS[h.assetClass] || CLASS_COLORS.Unclassified}"></span>${esc(h.assetClass || 'Unclassified')}</td>
-          <td class="num hide-sm">${(+h.shares).toLocaleString('en-US', { maximumFractionDigits: 4 })}</td><td class="num hide-sm">${money(h.price)}</td>
+          <td class="num hide-sm">${amountFmt(h.shares, crypto)}</td><td class="num hide-sm">${priceFmt(h.price)}</td>
           <td class="num">${money(hv, { cents: false })}</td><td class="num hide-sm">${g == null ? '<span class="muted">—</span>' : money(h.costBasis, { cents: false })}</td>
           <td class="num ${g == null ? '' : signClass(g)}">${g == null ? '' : `${money(g, { cents: false, sign: true })}<div class="small">${h.costBasis ? pct(g / h.costBasis, 0) : ''}</div>`}</td></tr>`;
       }).join('') : `<tr><td colspan="8" class="muted">No holdings listed. The account counts at its balance of ${money(v, { cents: false })}${a.assetClass ? `, as ${esc(a.assetClass)}` : ''}. <button class="linklike" data-act="add-holding" data-acct="${a.id}">Add holdings</button></td></tr>`}</tbody>
@@ -4248,6 +4370,70 @@ VIEWS.review = p => {
   </section>`;
 };
 
+/* Crypto prices: one row per coin you hold in a Cryptocurrency account. Type today's prices and save; each price is
+   used in every account that holds that coin. */
+function cryptoPricesPanel() {
+  const held = cryptoHeld();
+  if (!held.length) return '';
+  return `<section class="panel crypto-prices" id="crypto-prices">
+    <header class="panel-head"><h2>Crypto prices</h2><span class="muted small">One price per coin, in every account that holds it</span></header>
+    <form data-crypto-prices>
+    <table class="ledger compact"><thead><tr><th>Coin</th><th class="num hide-sm">You hold</th><th class="num">Price</th><th class="hide-sm">As of</th><th class="num">Value</th></tr></thead>
+    <tbody>${held.map(c => `<tr><th scope="row"><strong>${esc(c.symbol)}</strong> <span class="muted small">${esc(c.name)}</span><div class="muted small only-sm">${amountFmt(c.amount, true)} ${esc(c.symbol)}</div></th>
+      <td class="num hide-sm">${amountFmt(c.amount, true)}</td>
+      <td class="num coin-price-cell" data-v="${c.price}"><span class="cur">$</span><input class="coin-price" data-coin="${esc(c.symbol)}" data-was="${c.price}" inputmode="decimal" value="${c.price}" aria-label="Price of ${esc(c.name)}" autocomplete="off"></td>
+      <td class="hide-sm" data-v="${esc(c.priceDate || '')}">${staleTag(c.priceDate, CRYPTO_STALE_DAYS)}</td>
+      <td class="num">${money(c.value, { cents: false })}</td></tr>`).join('')}</tbody>
+    <tfoot><tr><th scope="row">Total</th><td class="hide-sm"></td><td></td><td class="hide-sm"></td><td class="num total">${money(sum(held.map(c => c.value)), { cents: false })}</td></tr></tfoot></table>
+    <div class="actions"><button class="btn primary" type="submit">Save prices</button><span class="muted small">Type today’s prices from your exchange or wallet app. Ọrọ̀ doesn’t look prices up online. You can also say “bitcoin is 62,000” to Talk.</span></div>
+    </form></section>`;
+}
+document.addEventListener('submit', e => {
+  const f = e.target;
+  if (!f.matches?.('[data-crypto-prices]')) return;
+  e.preventDefault();
+  const changed = [];
+  for (const inp of f.querySelectorAll('.coin-price')) {
+    const p = parseAmount(inp.value);
+    if (!inp.value.trim()) continue;
+    if (!isFinite(p) || p <= 0) { inp.focus(); return toast(`Type a price for ${coinName(inp.dataset.coin)}, like 62,000.`); }
+    if (Math.abs(p - Number(inp.dataset.was)) > 1e-12) changed.push([inp.dataset.coin, p]);
+  }
+  if (!changed.length) return toast('No prices changed.');
+  for (const [sym, p] of changed) setCoinPrice(sym, p);
+  commit();
+  toast(`Updated ${listWords(changed.map(([sym]) => coinName(sym)))} ${changed.length === 1 ? 'price' : 'prices'}.`);
+});
+
+/* Each account's holdings fold away to just its total. Remembered on this device. */
+function holdingsCollapsed() { try { return JSON.parse(localStorage.getItem('oro.collapsed') || '{}') || {}; } catch (e) { return {}; } }
+function setHoldingsCollapsed(map) { try { localStorage.setItem('oro.collapsed', JSON.stringify(map)); } catch (e) { /* storage blocked: it lasts until the page redraws */ } }
+const CHEVRON = '<svg class="chev" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+function collapseBtn(a, folded) {
+  return `<button type="button" class="coll-btn" data-collapse="${a.id}" aria-expanded="${folded ? 'false' : 'true'}" aria-label="${folded ? 'Show' : 'Hide'} ${esc(a.name)} holdings" title="${folded ? 'Show the holdings' : 'Fold the holdings away'}">${CHEVRON}</button>`;
+}
+function paintCollapseAll() {
+  const b = $('[data-act="holdings-all"]'); if (!b) return;
+  const tables = $$('.holdings-table[data-acct]').filter(t => t.querySelector('.coll-btn'));
+  b.textContent = tables.length && tables.every(t => t.classList.contains('collapsed')) ? 'Expand all' : 'Collapse all';
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-collapse]'); if (!b) return;
+  e.preventDefault();
+  const id = b.dataset.collapse, t = b.closest('table'), folded = !t.classList.contains('collapsed');
+  t.classList.toggle('collapsed', folded);
+  b.setAttribute('aria-expanded', folded ? 'false' : 'true');
+  const name = acctById(id)?.name || '';
+  b.setAttribute('aria-label', `${folded ? 'Show' : 'Hide'} ${name} holdings`); b.title = folded ? 'Show the holdings' : 'Fold the holdings away';
+  const map = holdingsCollapsed(); if (folded) map[id] = true; else delete map[id];
+  setHoldingsCollapsed(map); paintCollapseAll();
+});
+function holdingsAll() {   // Collapse all / Expand all (ACTIONS['holdings-all'] in 60-app.js)
+  const ids = activeAccounts().filter(a => holdingsFor(a.id).length).map(a => a.id), map = holdingsCollapsed();
+  const fold = !ids.every(id => map[id]);
+  for (const id of ids) { if (fold) map[id] = true; else delete map[id]; }
+  setHoldingsCollapsed(map); render();
+}
 
 /* ================= Reports ================= */
 const PERIODS = [['m', 'This month'], ['lm', 'Last month'], ['ytd', 'This year'], ['12m', 'Last 12 months'], ['ly', 'Last year'], ['custom', 'Custom']];
@@ -4983,6 +5169,7 @@ function acctModal(id, presetType) {
     if (newMort) state.accounts.push(newMort);
     closeModal(); commit();
     if (newMort) toast(`${a ? 'Saved' : 'Added'} ${rec.name} and added ${newMort.name} under Liabilities.`);
+    else if (!a && isCryptoAcct(target)) toast(`Added ${rec.name}. Add the coins it holds and its value will follow their prices.`, { label: 'Add coins', fn: () => holdingModal(null, target.id) });
     else if (!a) toast(`Added ${rec.name}.`);
   };
   if (a) {
@@ -5067,32 +5254,62 @@ function holdingModal(id, presetAcct) {
   const h = id ? state.holdings.find(x => x.id === id) : null;
   const invAccts = activeAccounts().filter(a => ACCOUNT_TYPES[a.type]?.bucket === 'invest' || a.type === 'private');
   if (!invAccts.length) { toast('Add an investment account first.'); return acctModal(null, 'brokerage'); }
-  const v = h || { accountId: presetAcct || invAccts[0].id, symbol: '', name: '', shares: '', price: '', costBasis: '', assetClass: 'US stocks', priceDate: today(), private: acctById(presetAcct)?.type === 'private' };
+  const start = acctById(h?.accountId || presetAcct) || invAccts[0], crypto0 = isCryptoAcct(start);
+  const v = h || { accountId: start.id, symbol: '', name: '', shares: '', price: '', costBasis: '', assetClass: crypto0 ? 'Crypto' : 'US stocks', priceDate: today(), private: start.type === 'private' };
   const known = KNOWN_ER[String(v.symbol || '').toUpperCase()];
+  const lbl = (stock, coin) => `<span class="h-l" data-stock="${stock}" data-coin="${coin}">${crypto0 ? coin : stock}</span>`;
   openModal({
-    title: h ? `Edit ${h.symbol}` : 'Add holding',
-    body: `<form id="f" class="form-grid">
-      <label class="field"><span>Account</span><select name="accountId">${invAccts.map(a => `<option value="${a.id}" ${a.id === v.accountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
-      <label class="field"><span>Symbol or short name</span><input name="symbol" value="${esc(v.symbol)}" required autofocus></label>
-      <label class="field wide"><span>Description</span><input name="desc-label" data-key="name" value="${esc(v.name || '')}" autocomplete="off"></label>
-      <label class="field"><span>Shares or units</span><input name="shares" inputmode="decimal" value="${v.shares}"></label>
-      <label class="field"><span>Price per share</span><input name="price" inputmode="decimal" value="${v.price}"></label>
+    title: h ? `Edit ${h.symbol}` : crypto0 ? 'Add a coin' : 'Add holding',
+    body: `<form id="f" class="form-grid holding-form" data-crypto="${crypto0 ? '1' : ''}">
+      <label class="field"><span>Account</span><select name="accountId" id="h-acct">${invAccts.map(a => `<option value="${a.id}" ${a.id === v.accountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
+      <label class="field">${lbl('Symbol or short name', 'Coin')}<input name="symbol" id="h-sym" value="${esc(v.symbol)}" ${crypto0 ? 'list="coin-list"' : ''} required autofocus autocomplete="off" placeholder="${crypto0 ? 'Bitcoin, ETH…' : ''}"></label>
+      <datalist id="coin-list">${CRYPTO_COINS.map(c => `<option value="${c[0]}">${c[1]}</option>`).join('')}</datalist>
+      <label class="field wide"><span>Description</span><input name="desc-label" data-key="name" id="h-name" value="${esc(v.name || '')}" autocomplete="off"></label>
+      <label class="field">${lbl('Shares or units', 'Amount (coins)')}<input name="shares" inputmode="decimal" value="${v.shares}" autocomplete="off"></label>
+      <label class="field">${lbl('Price per share', 'Price per coin')}<input name="price" id="h-price" inputmode="decimal" value="${v.price}" autocomplete="off"></label>
       <label class="field"><span>Total cost basis</span><input name="costBasis" inputmode="decimal" value="${v.costBasis ?? ''}" placeholder="Optional"></label>
-      <label class="field"><span>Expense ratio (%)</span><input name="er" inputmode="decimal" value="${v.er ?? ''}" placeholder="${known != null ? known + ' (on file)' : 'e.g. 0.03'}"></label>
-      <label class="field"><span>Asset class</span><select name="assetClass">${ASSET_CLASSES.map(c => `<option ${c === v.assetClass ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
-      <label class="field"><span>Price as of</span><input type="date" name="priceDate" value="${v.priceDate || today()}"></label>
-      <label class="check wide"><input type="checkbox" name="private" ${v.private ? 'checked' : ''}> Private or illiquid (valued by your own marks)</label>
+      <label class="field not-crypto"><span>Expense ratio (%)</span><input name="er" inputmode="decimal" value="${v.er ?? ''}" placeholder="${known != null ? known + ' (on file)' : 'e.g. 0.03'}"></label>
+      <label class="field"><span>Asset class</span><select name="assetClass" id="h-class">${ASSET_CLASSES.map(c => `<option ${c === v.assetClass ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+      <label class="field"><span>Price as of</span><input type="date" name="priceDate" id="h-date" value="${v.priceDate || today()}"></label>
+      <label class="check wide not-crypto"><input type="checkbox" name="private" ${v.private ? 'checked' : ''}> Private or illiquid (valued by your own marks)</label>
+      <p class="muted small wide only-crypto">A coin has one price: a new price here is used in every crypto account that holds this coin. Ọrọ̀ doesn’t look prices up online.</p>
     </form>`,
-    actions: `${h ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${h ? 'Save' : 'Add holding'}</button>`,
+    actions: `${h ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${h ? 'Save' : crypto0 ? 'Add coin' : 'Add holding'}</button>`,
   });
+  const f = $('#f'), sym = $('#h-sym'), isCrypto = () => isCryptoAcct(acctById($('#h-acct').value));
+  const paint = () => {
+    const c = isCrypto();
+    f.dataset.crypto = c ? '1' : '';
+    for (const el of f.querySelectorAll('.h-l')) el.textContent = c ? el.dataset.coin : el.dataset.stock;
+    if (c) { sym.setAttribute('list', 'coin-list'); sym.placeholder = 'Bitcoin, ETH…'; } else { sym.removeAttribute('list'); sym.placeholder = ''; }
+    if (!h) { $('#modal-title').textContent = c ? 'Add a coin' : 'Add holding'; $('#save').textContent = c ? 'Add coin' : 'Add holding'; }
+  };
+  // "bitcoin" → BTC, Bitcoin, Crypto, and the price you already use for it in another account
+  const fillCoin = () => {
+    if (!isCrypto() || !sym.value.trim()) return;
+    const c = coinFind(sym.value), s2 = c ? c[0] : sym.value.trim().toUpperCase();
+    if (c) { sym.value = c[0]; if (!$('#h-name').value.trim()) $('#h-name').value = c[1]; }
+    $('#h-class').value = 'Crypto';
+    const held = cryptoHeld().find(x => x.symbol === s2 && x.holdings.some(y => y.id !== h?.id));
+    if (held && !$('#h-price').value.trim()) { $('#h-price').value = held.price; $('#h-date').value = held.priceDate || today(); }
+  };
+  $('#h-acct').onchange = () => { paint(); if (!h && isCrypto()) $('#h-class').value = 'Crypto'; fillCoin(); };
+  sym.addEventListener('change', fillCoin);
   $('#save').onclick = () => {
-    const d = formData($('#f'));
+    const d = formData(f), acct = acctById(d.accountId), crypto = isCryptoAcct(acct);
     const shares = parseAmount(d.shares), price = parseAmount(d.price), cb = parseAmount(d.costBasis), er = parseFloat(d.er);
-    if (!d.symbol.trim() || !isFinite(shares) || !isFinite(price)) return toast('Fill in a symbol, shares and price.');
-    const rec = { accountId: d.accountId, symbol: d.symbol.trim().toUpperCase(), name: d.name.trim(), shares, price, costBasis: isFinite(cb) ? cb : null, er: isFinite(er) ? er : undefined, assetClass: d.assetClass, priceDate: d.priceDate || today(), private: d.private };
+    let symbol = d.symbol.trim();
+    if (crypto) { const c = coinFind(symbol); if (c) symbol = c[0]; }
+    if (!symbol || !isFinite(shares) || !isFinite(price)) return toast(crypto ? 'Fill in a coin, the amount and the price.' : 'Fill in a symbol, shares and price.');
+    const rec = { accountId: d.accountId, symbol: symbol.toUpperCase(), name: d.name.trim() || (crypto ? coinBySymbol(symbol)?.[1] || '' : ''), shares, price, costBasis: isFinite(cb) ? cb : null, er: crypto ? undefined : isFinite(er) ? er : undefined, assetClass: crypto ? 'Crypto' : d.assetClass, priceDate: d.priceDate || today(), private: crypto ? false : d.private };
     if (h && (h.price !== price || h.shares !== shares) && rec.priceDate === h.priceDate) rec.priceDate = today();
-    if (h) Object.assign(h, rec); else state.holdings.push({ id: uid(), ...rec });
+    let saved = h;
+    if (h) Object.assign(h, rec); else { saved = { id: uid(), ...rec }; state.holdings.push(saved); }
+    // one price per coin: the same coin in your other crypto accounts takes this price too
+    const others = crypto ? coinHoldings(rec.symbol).filter(x => x !== saved && (x.price !== price || x.priceDate !== rec.priceDate)).length : 0;
+    if (crypto) setCoinPrice(rec.symbol, price, rec.priceDate);
     closeModal(); commit();
+    if (others) toast(`${coinName(rec.symbol)} is ${priceFmt(price)} in your other ${others === 1 ? 'crypto account' : `${others} crypto accounts`} too.`);
   };
   if (h) $('#del').onclick = async () => { if (await confirmBox('Delete holding', `Remove ${esc(h.symbol)} (${money(holdingValue(h))})?`, 'Delete', true)) { state.holdings = state.holdings.filter(x => x.id !== h.id); commit(); } };
 }
@@ -5495,6 +5712,7 @@ const ACTIONS = {
   'more-pages': () => morePagesSheet(),
   'loan-detail': el => loanModal(el.dataset.id),
   'tx-filters': () => { UI.txFilters = !$('.filters')?.classList.contains('open'); render(); },
+  'holdings-all': () => holdingsAll(),
   'tx-clear': () => {   // everything: all months, no account/category/person/flag/tag filter, no search, everyone's spending
     UI.txFilters = undefined;
     if (UI.lens) { UI.lens = ''; try { sessionStorage.setItem('keel.lens', ''); } catch (e2) { /* ignore */ } }
@@ -6616,6 +6834,7 @@ function ciItems(w) {
   const txs = state.transactions.filter(t => ciNeeds(t) && (CI.older || ciInWindow(t, win))).sort((a, b) => a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id)));
   for (const t of txs) items.push({ id: 'tx:' + t.id, kind: t.flag ? 'flag' : 'uncat', tx: t.id });
   if (w !== 'day') for (const a of ciStaleBalances()) items.push({ id: `bal:${a.id}:${a.balanceDate}`, kind: 'balance', accountId: a.id });
+  if (w !== 'day') for (const c of cryptoStale()) items.push({ id: `coin:${c.symbol}:${c.priceDate}`, kind: 'coin', symbol: c.symbol });   // crypto prices older than a week
   if (w !== 'day') { const b = ciBudgets(); if (b.length) items.push({ id: `budget:${thisMonth()}:${b.map(x => x.c.id).join(',')}`, kind: 'budget', list: b }); }
   const due = upcoming(Math.max(1, daysBetween(now, win.ahead)));
   if (due.length) items.push({ id: `due:${w}:${now}`, kind: 'due', list: due });
@@ -6664,6 +6883,7 @@ function ciSummary(items, win, spoken) {
   if (imp.length === 1) parts.push(`${acctById(imp[0].accountId)?.name || 'one account'} hasn’t been imported since ${spoken ? MONTHS[+imp[0].newest.slice(5, 7) - 1] + ' ' + +imp[0].newest.slice(8) : dateLabel(imp[0].newest)}`);
   else if (imp.length) parts.push(`${imp.length} accounts haven’t been imported lately`);
   const bal = n('balance'); if (bal) parts.push(`${bal} balance${bal === 1 ? '' : 's'} to update`);
+  const coins = n('coin'); if (coins) parts.push(`${coins} crypto price${coins === 1 ? '' : 's'} to update`);
   const bud = items.find(i => i.kind === 'budget');
   if (bud) { const over = bud.list.filter(x => x.v.available < -0.01); if (over.length) parts.push(`${listWords(over.slice(0, 2).map(x => x.c.name))}${over.length > 2 ? ' and more' : ''} ${over.length === 1 ? 'is' : 'are'} over budget`); }
   if (items.some(i => i.kind === 'review')) parts.push(`${MONTHS[+items.find(i => i.kind === 'review').month.slice(5) - 1]} still needs its review`);
@@ -6720,6 +6940,7 @@ function ciCardSpeech(item) {
     }
     case 'import': { const a = acctById(item.accountId); return `${a?.name || 'This account'}’s newest transaction is from ${MONTHS[+item.newest.slice(5, 7) - 1]} ${+item.newest.slice(8)}, ${item.age} days ago. Time to import a fresh file.`; }
     case 'balance': { const a = acctById(item.accountId); return `${a?.name} was last updated ${sayDate(a.balanceDate)}. What’s the balance now?`; }
+    case 'coin': { const c = cryptoHeld().find(x => x.symbol === item.symbol); return c ? `${c.name}’s price was last updated ${c.priceDate ? sayDate(c.priceDate) : 'a while ago'}. What is it now?` : ''; }
     case 'budget': return item.list.map(x => x.v.available < -0.01 ? `${x.c.name} is over by ${sayMoney(-x.v.available) || 'a bit'}` : `${x.c.name} is ${pct(x.v.actual / Math.max(1, x.v.budget + (x.v.carry || 0)), 0)} used`).join('. ') + '.';
     case 'due': return 'Coming up: ' + item.list.slice(0, 4).map(u => `${u.name}${sayMoney(u.amount) ? ', ' + sayMoney(u.amount) : ''}, ${sayDate(u.date)}`).join('; ') + '.';
     case 'older': return `There ${item.n === 1 ? 'is' : 'are'} also ${item.n} older transaction${item.n === 1 ? '' : 's'} that still need you. Go through them too?`;
@@ -6773,6 +6994,11 @@ function ciCardHtml(item, q) {
     case 'import': {
       const a = acctById(item.accountId);
       return body(esc(a?.name || 'Account'), `<p class="ci-meta">Newest transaction: ${dateLabel(item.newest)}, ${item.age} days ago.</p>`, '<button class="btn primary" data-ci="import">Import a file</button>');
+    }
+    case 'coin': {
+      const c = cryptoHeld().find(x => x.symbol === item.symbol); if (!c) return '';
+      return body(`${esc(c.name)} price`, `<p class="ci-meta">${priceFmt(c.price)} as of ${c.priceDate ? dateLabel(c.priceDate) : 'no date'}. You hold ${amountFmt(c.amount, true)} ${esc(c.symbol)}, ${money(c.value, { cents: false })}${c.holdings.length > 1 ? ` across ${c.holdings.length} accounts` : ''}.</p>
+        <form class="ci-bal" data-ci-bal><input id="ci-bal" inputmode="decimal" placeholder="Price today" aria-label="${esc(c.name)} price today" autocomplete="off"><button class="btn primary" type="submit">Save</button></form>`, '<a class="btn" href="#/investments">Investments</a>');
     }
     case 'balance': {
       const a = acctById(item.accountId);
@@ -6906,6 +7132,11 @@ function ciDo(a, item) {
     case 'note': if (t) { t.memo = a.text; commit({ silent: true }); CI.heard = `Note added: ${a.text}`; return CI.heard; } return '';
     case 'flag': if (t) { t.flag = true; commit({ silent: true }); return done('flagged', `Flagged ${prettyPayee(t.payee) || t.payee} to come back to.`, true, 'Flagged.'); } return '';
     case 'unflag': if (t) { delete t.flag; commit({ silent: true }); return done('sorted', `Cleared the flag on ${prettyPayee(t.payee) || t.payee}.`); } return '';
+    case 'coinprice': {
+      if (!(a.value > 0) || !coinHoldings(item.symbol).length) return '';
+      setCoinPrice(item.symbol, a.value); commit({ silent: true });
+      return done('sorted', `${coinName(item.symbol)} price updated to ${priceFmt(a.value)}.`, true, 'Saved.');
+    }
     case 'balance': {
       const acc = acctById(item.accountId); if (!acc || !isFinite(a.value)) return '';
       const v = ACCOUNT_TYPES[acc.type]?.side === 'liability' ? Math.abs(a.value) : a.value;
@@ -7036,8 +7267,8 @@ document.addEventListener('submit', e => {
   if (f.matches('[data-ci-bal]')) {
     e.preventDefault();
     const item = ciCurrent(), n = ciNumber(($('#ci-bal')?.value || '').replace(/%/g, ''));
-    if (!item || n == null) return toast(item?.what === 'rate' ? 'Type the rate, like 6.25.' : 'Type the balance, like 12,400.');
-    return ciRun({ act: item.kind === 'gap' && item.what === 'rate' ? 'rate' : 'balance', value: n }, item);
+    if (!item || n == null || (item.kind === 'coin' && !(n > 0))) return toast(item?.kind === 'coin' ? 'Type the price, like 62,000.' : item?.what === 'rate' ? 'Type the rate, like 6.25.' : 'Type the balance, like 12,400.');
+    return ciRun({ act: item.kind === 'coin' ? 'coinprice' : item.kind === 'gap' && item.what === 'rate' ? 'rate' : 'balance', value: n }, item);
   }
   if (f.matches('[data-ci-say]')) {
     e.preventDefault();
@@ -7053,6 +7284,15 @@ document.addEventListener('submit', e => {
       return;
     }
     const item = ciCurrent();
+    const cp = coinParse(text);
+    if (cp && !(item?.kind === 'coin' && cp.changes.length === 1 && cp.changes[0].coin === item.symbol)) {
+      CI.intro = false;
+      const reply = updStart(cp);
+      render();
+      if (CI.talking) ciSpeak(reply);
+      const again = $('#ci-say'); if (again) { again.value = ''; again.focus(); }
+      return;
+    }
     const upd = updParse(text);
     // an update for the account the card is already asking about is just the card's answer
     const own = upd && item && (item.kind === 'balance' || (item.kind === 'gap' && item.what !== 'notx')) && !upd.pending.length && upd.changes.length === 1 && upd.changes[0].accountId === item.accountId && ['balance', 'value', 'rate'].includes(upd.changes[0].field);
@@ -7214,6 +7454,7 @@ function ciUnderstand(text, item) {
       return { act: 'unknown', text: raw };
     }
     case 'balance': { const n = ciNumber(s); if (n != null) return { act: 'balance', value: n }; break; }
+    case 'coin': { const cp = coinParse(s); const n = cp?.changes.length === 1 && cp.changes[0].coin === item.symbol ? cp.changes[0].to : ciNumber(s); if (n > 0) return { act: 'coinprice', value: n }; break; }
     case 'gap':
       if (item.what === 'notx') { if (CI_SAY.import.test(s)) return { act: 'import' }; if (/\b(by hand|manual|manually|myself|hand)\b/.test(s)) return { act: 'hand' }; break; }
       if (/^(i )?(don'?t know|not sure|no idea|leave it|skip it for good|it'?s zero|zero|none)$/.test(s)) return { act: 'not-needed' };
@@ -7249,7 +7490,7 @@ const TELL_TYPES = [
   ['savings', /\b(savings|money market|high[- ]yield|cd|certificate of deposit)\b/],
   ['checking', /\bchecking\b/],
   ['credit', /\b(credit cards?|card|amex|american express|visa|mastercard|sapphire)\b/],
-  ['crypto', /\b(crypto|bitcoin|ethereum|coinbase)\b/],
+  ['crypto', /\b(crypto(currency|currencies)?|bitcoin|ethereum|coinbase|kraken|gemini|crypto\.com|cold wallet|hardware wallet|ledger wallet|trezor)\b/],
   ['private', /\b(private (investment|equity)|pre[- ]?ipo|angel investment|secondary)\b/],
   ['brokerage', /\b(brokerage|investment account|taxable account|individual account|trading account|stock account)\b/],
   ['realestate', /\b(property|house|home|condo|townhouse|town home|rental|duplex|two[- ]flat|three[- ]flat|real estate|land|cabin|vacation home)\b/],
@@ -7259,7 +7500,7 @@ const TELL_TYPES = [
 const TELL_TYPE_WORDS = { checking: 'checking', savings: 'savings', credit: 'credit card', brokerage: 'brokerage', retirement: 'retirement', education: '529 or custodial', hsa: 'HSA', crypto: 'crypto', private: 'private investment', realestate: 'property', vehicle: 'vehicle', mortgage: 'mortgage', loan: 'loan', otherAsset: 'other asset', otherLiability: 'other debt' };
 const TELL_INSTITUTIONS = ['Charles Schwab', 'Schwab', 'Chase', 'JPMorgan', 'Fidelity', 'Vanguard', 'Bank of America', 'Wells Fargo', 'Citibank', 'Citi', 'Capital One', 'American Express', 'Amex', 'Discover', 'BMO', 'PNC', 'US Bank', 'U.S. Bank',
   'Ally', 'Marcus', 'Goldman Sachs', 'Robinhood', 'E*Trade', 'E-Trade', 'Etrade', 'Merrill Lynch', 'Merrill', 'Morgan Stanley', 'Coinbase', 'SoFi', 'Wealthfront', 'Betterment', 'TD Bank', 'Huntington', 'Fifth Third', 'Citizens',
-  'Navy Federal', 'USAA', 'Apple', 'Synchrony', 'Barclays', 'Northern Trust', 'Wintrust', 'Alliant', 'Associated Bank', 'Mr. Cooper', 'Mr Cooper', 'Rocket Mortgage', 'Guaranteed Rate', 'Truist', 'Regions', 'KeyBank', 'Santander',
+  'Navy Federal', 'USAA', 'Kraken', 'Gemini', 'River', 'Strike', 'Cash App', 'Crypto.com', 'Binance.US', 'Ledger', 'Trezor', 'Apple', 'Synchrony', 'Barclays', 'Northern Trust', 'Wintrust', 'Alliant', 'Associated Bank', 'Mr. Cooper', 'Mr Cooper', 'Rocket Mortgage', 'Guaranteed Rate', 'Truist', 'Regions', 'KeyBank', 'Santander',
   'HSBC', 'Interactive Brokers', 'T. Rowe Price', 'T Rowe Price', 'Empower', 'John Hancock', 'Voya', 'TIAA', 'Nelnet', 'Navient', 'Mohela', 'Toyota Financial', 'Honda Financial', 'Ford Credit', 'Tesla', 'PayPal', 'Venmo'];
 const TELL_CANON = { 'Schwab': 'Charles Schwab', 'Citibank': 'Citi', 'Amex': 'American Express', 'U.S. Bank': 'US Bank', 'E-Trade': 'E*Trade', 'Etrade': 'E*Trade', 'Merrill': 'Merrill Lynch', 'Mr Cooper': 'Mr. Cooper', 'T Rowe Price': 'T. Rowe Price' };
 const tellLedgerType = t => !!ACCOUNT_TYPES[t]?.ledger;
@@ -7351,7 +7592,7 @@ function tellQuestions(d) {
   if (!f.name && !f.institution && !skip('institution')) q.push('institution');
   if (members().length > 1 && !f.owner) q.push('owner');
   if (f.balance == null) q.push(tellDebtType(f.type) && f.type !== 'credit' ? 'owed' : 'balance');
-  if ((tellLedgerType(f.type) || tellInvestType(f.type)) && !f.last4 && !skip('last4')) q.push('last4');
+  if ((tellLedgerType(f.type) || (tellInvestType(f.type) && f.type !== 'crypto')) && !f.last4 && !skip('last4')) q.push('last4');   // wallets don't have account numbers
   if (['mortgage', 'loan'].includes(f.type)) {
     if (f.rate == null && !skip('rate')) q.push('rate');
     if (f.payment == null && !skip('payment')) q.push('payment');
@@ -7529,6 +7770,7 @@ function tellAfterText(d) {
   const a = acctById(d.added); if (!a) return '';
   if (d.mort || LOAN_TYPES.has(a.type)) return `Want Ọrọ̀ to follow the ${d.mort ? 'mortgage ' : ''}payments from your bank imports, so the balance comes down on its own?`;
   if (a.type === 'realestate') return 'That’s it. Update the value now and then from Accounts › Update balances.';
+  if (a.type === 'crypto') return `Add the coins ${a.name} holds (like 0.5 bitcoin) so its value follows their prices, or keep the balance updated by hand?`;
   if (tellInvestType(a.type)) return `${a.name} has no holdings yet. Import a positions file from the brokerage, or keep the balance updated by hand?`;
   if (a.ledger) return `${a.name} has no transactions yet. Import a file now, or keep the balance updated by hand?`;
   return 'That’s it.';
@@ -7536,6 +7778,7 @@ function tellAfterText(d) {
 function tellAfterAnswer(s) {
   const d = CI.draft, a = acctById(d.added);
   if (!a) { CI.draft = null; return ''; }
+  if (a.type === 'crypto' && /\b(coins?|add (them|it|coins)|bitcoin|ethereum|yes|sure)\b/.test(s)) return tellAfter('coins');
   if (/\b(import|upload|file)\b/.test(s)) return tellAfter('import');
   if (/\b(by hand|manual|manually|myself|i'?ll update|hand)\b/.test(s)) return tellAfter('hand');
   if (/\b(follow|track|yes|sure|set (it )?up)\b/.test(s) && (d.mort || LOAN_TYPES.has(a.type))) return tellAfter('track');
@@ -7549,6 +7792,7 @@ function tellAfter(what) {
   CI.draft = null;
   if (!a) return '';
   if (what === 'import') { startImport(); return ''; }
+  if (what === 'coins') { holdingModal(null, a.id); return ''; }
   if (what === 'hand') {
     if (a.ledger) { a.ledger = false; delete a.anchorBalance; delete a.anchorDate; commit({ silent: true }); }
     CI.last = { text: `OK. Ọrọ̀ will ask for ${a.name}’s balance when it’s more than ${state.settings.staleDays || 35} days old.`, undo: false };
@@ -7569,6 +7813,7 @@ function tellCardHtml() {
     const loan = d.mort || LOAN_TYPES.has(a.type), acts = [];
     if (loan) acts.push('<button class="btn primary" data-ci="tell-track">Follow the payments</button>');
     else if (a.ledger) acts.push('<button class="btn primary" data-ci="tell-import">Import a file</button>', '<button class="btn" data-ci="tell-hand">Keep the balance by hand</button>');
+    else if (a.type === 'crypto') acts.push('<button class="btn primary" data-ci="tell-coins">Add coins</button>', '<button class="btn" data-ci="tell-hand">Balance by hand is fine</button>');
     else if (tellInvestType(a.type)) acts.push('<button class="btn primary" data-ci="tell-import">Import positions</button>', '<button class="btn" data-ci="tell-hand">Balance by hand is fine</button>');
     acts.push('<button class="btn" data-ci="tell-edit">Edit details</button>', '<button class="btn ghost" data-ci="tell-another">Add another</button>');
     return `<section class="panel ci-card tell-card"><div class="ci-top"><span class="ci-kicker">Added</span></div>
@@ -7606,6 +7851,7 @@ function tellClick(act, v) {
   if (act === 'tell-pick') { if (v) return updPick(v); const d = CI.draft; d?.pending.shift(); if (d && !d.changes.length && !d.pending.length) { CI.draft = null; return 'OK, nothing was changed.'; } return updPrompt(); }
   if (act === 'tell-save') return updApply();
   if (act === 'tell-import') return tellAfter('import');
+  if (act === 'tell-coins') return tellAfter('coins');
   if (act === 'tell-hand') return tellAfter('hand');
   if (act === 'tell-track') return tellAfter('track');
   if (act === 'tell-edit') return tellAfter('edit');
@@ -7656,7 +7902,9 @@ function gapSpeech(item) {
    change as old → new, asks which one when two accounts could match, and saves only after "yes". */
 const UPD_VERB = /^(?:(?:can you|could you|please|let'?s|i want to|i need to)\s+)*(update|set|change|make|rename|archive|close|mark|correct|fix)\b/;
 const UPD_STRIP = /^(?:(?:can you|could you|please|let'?s|i want to|i need to)\s+)*(update|set|change|correct|fix)\b/;
-const UPD_FIELDS = { balance: 'Balance', value: 'Value', owner: 'Owner', name: 'Name', last4: 'Last 4', rate: 'Interest rate', minPayment: 'Monthly payment', rental: 'Rental', archived: 'Archive' };
+const UPD_FIELDS = { balance: 'Balance', value: 'Value', owner: 'Owner', name: 'Name', last4: 'Last 4', rate: 'Interest rate', minPayment: 'Monthly payment', rental: 'Rental', archived: 'Archive', coinPrice: 'Price' };
+/* what a change is about: an account, or a coin's price (27-crypto.js) */
+const updName = c => c.coin ? coinName(c.coin) : acctById(c.accountId)?.name || '';
 
 /* Which accounts a stretch of words could mean, best first */
 function updFindAccounts(seg) {
@@ -7770,6 +8018,7 @@ function updChanges(a, f) {
 }
 function updShow(c) {
   const a = acctById(c.accountId), f = c.field;
+  if (f === 'coinPrice') return [c.from == null ? 'none' : priceFmt(c.from), priceFmt(c.to)];
   if (f === 'balance' || f === 'value' || f === 'minPayment') return [money(Math.abs(Number(c.from) || 0), { cents: false }), money(c.to, { cents: Math.abs(c.to) % 1 > 0.004 })];
   if (f === 'owner') return [memberName(c.from || 'joint'), memberName(c.to)];
   if (f === 'rate') return [c.from == null || c.from === '' ? 'none' : `${c.from}%`, `${c.to}%`];
@@ -7778,6 +8027,7 @@ function updShow(c) {
 }
 function updSay(c) {
   const a = acctById(c.accountId), [from, to] = updShow(c);
+  if (c.field === 'coinPrice') return `${coinName(c.coin)} price ${to}${c.from != null ? ` (was ${from})` : ''}`;
   if (c.field === 'archived') return `archive ${a.name}`;
   if (c.field === 'rental') return `mark ${a.name} as ${c.to ? '' : 'not '}a rental`;
   return `${a.name}: ${UPD_FIELDS[c.field].toLowerCase()} ${to}${c.field === 'balance' || c.field === 'value' ? ` (was ${from})` : ''}`;
@@ -7788,7 +8038,7 @@ function updStart(p) { CI.draft = { step: 'update', changes: p.changes, pending:
 function updPrompt() {
   const d = CI.draft; if (!d) return '';
   if (d.pending.length) { const p = d.pending[0]; const names = p.options.map(id => acctById(id)?.name); return `Which account did you mean${p.fields.balance != null ? ` for ${money(p.fields.balance, { cents: false })}` : ''}: ${names.length > 1 ? names.slice(0, -1).join(', ') + ' or ' + names[names.length - 1] : names[0]}?`; }
-  const real = d.changes.filter(c => !c.same && !c.note), notes = d.changes.filter(c => c.same || c.note).map(c => c.note ? `${acctById(c.accountId)?.name}: ${c.note}` : `${acctById(c.accountId)?.name}’s ${UPD_FIELDS[c.field].toLowerCase()} is already ${updShow(c)[1]}.`);
+  const real = d.changes.filter(c => !c.same && !c.note), notes = d.changes.filter(c => c.same || c.note).map(c => c.note ? `${updName(c)}: ${c.note}` : `${updName(c)}’s ${UPD_FIELDS[c.field].toLowerCase()} is already ${updShow(c)[1]}.`);
   if (!real.length) return notes.join(' ') || 'Nothing to change.';
   return `${notes.length ? notes.join(' ') + ' ' : ''}${real.length === 1 ? 'Update ' + updSay(real[0]) : 'Update ' + real.length + ' things: ' + real.map(updSay).join('; ')}? Say “yes” to save.`;
 }
@@ -7812,6 +8062,8 @@ function updAnswer(raw) {
   }
   if (/^(yes|yep|yeah|sure|save( it)?|do it|go ahead|correct|that'?s right|update( it)?|confirm|ok(ay)?|sounds good)\b/.test(s)) return updApply();
   if (/^(no|nope|cancel|never ?mind|stop|don'?t)\b/.test(s) && !/\d/.test(s)) { CI.draft = null; CI.heard = 'OK, nothing was changed.'; return CI.heard; }
+  const coins = coinParse(raw.replace(/^\s*(and|also|plus)\s+/i, ''));   // "and ethereum is 2,450"
+  if (coins) { for (const c of coins.changes) { d.changes = d.changes.filter(x => x.coin !== c.coin); d.changes.push(c); } return updPrompt(); }
   const more = updParse(raw, { force: true });   // "and the Roth is 85k", or a correction for the same account
   const lastAcct = d.changes.length ? acctById(d.changes[d.changes.length - 1].accountId) : null;
   if (!more && lastAcct && !/^(no|nope|actually|make it|i mean|sorry)\b/.test(s)) {
@@ -7828,7 +8080,7 @@ function updAnswer(raw) {
   }
   if (d.changes.length === 1 && /^(?:(?:no|nope|actually|make it|i mean|sorry)[, ]+)*\$?\s*[\d,]+(?:\.\d+)?\s*(?:k|thousand|percent|%)?$/.test(s)) {   // "no, 12,500": a new amount for the one change
     const n = ciNumber(s.replace(/percent|%/g, '')); const c = d.changes[0];
-    if (n != null && ['balance', 'value', 'minPayment', 'rate'].includes(c.field)) { c.to = Math.abs(n); return updPrompt(); }
+    if (n != null && ['balance', 'value', 'minPayment', 'rate', 'coinPrice'].includes(c.field) && !(c.field === 'coinPrice' && n <= 0)) { c.to = Math.abs(n); delete c.same; return updPrompt(); }
   }
   CI.heard = `I didn’t catch that. ${updPrompt()}`; return CI.heard;
 }
@@ -7838,6 +8090,7 @@ function updApply() {
   if (!real.length) { CI.draft = null; return ''; }
   d.changes = real;
   for (const c of d.changes) {
+    if (c.field === 'coinPrice') { setCoinPrice(c.coin, c.to); continue; }
     const a = acctById(c.accountId); if (!a) continue;
     if (c.field === 'balance' || c.field === 'value') setBalance(a, isLiability(a) ? Math.abs(c.to) : c.to);
     else if (c.field === 'rate') a.rate = c.to;
@@ -7846,7 +8099,7 @@ function updApply() {
     else a[c.field] = c.to;
   }
   commit({ silent: true });
-  const text = `Updated ${d.changes.length === 1 ? updSay(d.changes[0]) : listWords([...new Set(d.changes.map(c => acctById(c.accountId)?.name))])}.`;
+  const text = `Updated ${d.changes.length === 1 ? updSay(d.changes[0]) : listWords([...new Set(d.changes.map(updName))])}.`;
   CI.last = { text, undo: true, n: 0 };
   CI.draft = null;
   return text;
@@ -7854,10 +8107,11 @@ function updApply() {
 function updCardHtml() {
   const d = CI.draft; if (!d) return '';
   const p = d.pending[0];
-  const rows = d.changes.map(c => { const [from, to] = updShow(c), name = `<strong>${esc(acctById(c.accountId)?.name || '')}</strong> <span class="muted">${esc(UPD_FIELDS[c.field])}</span>`;
+  const rows = d.changes.map(c => { const [from, to] = updShow(c), name = `<strong>${esc(updName(c))}</strong> <span class="muted">${esc(UPD_FIELDS[c.field])}</span>`;
+    const fx = c.field === 'coinPrice' && !c.same ? `<ul class="upd-fx">${coinEffects(c.coin, c.to).map(e => `<li>${esc(e.acct)}: ${amountFmt(e.amount, true)} ${esc(c.coin)}, ${money(e.from, { cents: false })} → ${money(e.to, { cents: false })}</li>`).join('')}</ul>` : '';
     if (c.note) return `<li class="upd-note">${name} <span class="muted">${esc(c.note)}</span></li>`;
     if (c.same) return `<li class="upd-note">${name} <span class="muted">already ${esc(to)}</span></li>`;
-    return `<li>${name} <span class="upd-from">${esc(from)}</span> → <span class="upd-to">${esc(to)}</span></li>`; }).join('');
+    return `<li>${name} <span class="upd-from">${esc(from)}</span> → <span class="upd-to">${esc(to)}</span>${fx}</li>`; }).join('');
   const real = d.changes.filter(c => !c.same && !c.note).length;
   return `<section class="panel ci-card tell-card"><div class="ci-top"><span class="ci-kicker">Update</span></div>
     ${rows ? `<ul class="upd-list">${rows}</ul>` : ''}
@@ -7928,6 +8182,8 @@ function talkExamples(ctx) {
   else if (ctx.page === 'transactions' || ctx.page === 'checkin' || ctx.page === 'budget') ex.push('the Jewel Osco one on Tuesday is groceries', 'the $84.12 charge should be household, and make a rule', 'make a rule: Starbucks, Dunkin and Peet’s are coffee', 'flag the Best Buy charge');
   if (ctx.a) ex.push('the balance is 12,400', `rename it to ${ctx.a.name.split(' ')[0]} …`, 'it ends in 1234');
   if (!ctx.t && !ctx.sel.length && ['accounts', 'overview', 'property', 'investments', 'planning'].includes(ctx.page)) ex.push('Chase ending 1234 is 12,400', 'the home is worth 675k', 'rename the Amex to Blue Cash', 'the mortgage rate is 6.125 percent');
+  const coin = cryptoHeld()[0];
+  if (coin && coin.price >= 1 && !ctx.t && !ctx.sel.length && ['accounts', 'overview', 'investments', 'checkin'].includes(ctx.page)) ex.unshift(`${coin.name.toLowerCase()} is ${Math.round(coin.price * 1.02).toLocaleString('en-US')}`);
   ex.push('add a savings account at Ally with 40,000');
   return [...new Set(ex)].slice(0, 6);
 }
@@ -7977,6 +8233,7 @@ function talkUnderstand(text, { split = true } = {}) {
     if (parts.length > 1 && parts.some(p => TX_INTENT.test(p.toLowerCase()) && txParse(p, ctx))) { TALK.queue = parts.slice(1); return talkUnderstand(parts[0], { split: false }); }
   }
   // "it's for Sam", "the balance is 12,400" with an account open (or "this card" with a transaction open) are about that account
+  if (!TX_INTENT.test(low)) { const cp = coinParse(text); if (cp) return updStart(cp); }   // "bitcoin is 62,000"
   const ctxAcct = ctx.a || (ctx.t && /\bthis (card|account)\b/.test(low) ? acctById(ctx.t.accountId) : null);
   if (ctxAcct && /^\s*(it'?s?|its|this( one| account| card)?|the (balance|rate|value|payment|owner|name) (on|of|for) (it|this)|the (balance|rate|value|payment|owner|name))\b/.test(low)) { const u = updParse(text, { ctxAcct }); if (u) return updStart(u); }
   // a sentence that names an account and says what to change is about the account, even with a transaction open

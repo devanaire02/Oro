@@ -170,7 +170,7 @@ function parsePositionsCSV(rows) {
 function guessAssetClass(symbol, name) {
   const s = (symbol || '').toUpperCase(), n = (name || '').toUpperCase();
   if (/^(SPAXX|FDRXX|FZFXX|FCASH|SWVXX|SNVXX|VMFXX|VMRXX|SPRXX|CORE|CASH|MMDA)/.test(s) || /MONEY MARKET|CASH RESERVE|GOVERNMENT CASH|SWEEP|CORE POSITION/.test(n)) return 'Cash';
-  if (/^(BTC|ETH|SOL|IBIT|FBTC|GBTC|ETHE|FETH|BITO)$/.test(s) || /BITCOIN|ETHEREUM|CRYPTO/.test(n)) return 'Crypto';
+  if (/^(BTC|ETH)$/.test(s) || CRYPTO_FUNDS.test(s) || /BITCOIN|ETHEREUM|CRYPTO/.test(n)) return 'Crypto';   // coins, and spot bitcoin and ether funds
   if (/^(VNQ|VNQI|SCHH|XLRE|IYR|FREL|USRT)$/.test(s) || /\bREIT\b|REAL ESTATE/.test(n)) return 'Real estate';
   if (/^(BND|AGG|BNDX|VGIT|VGSH|VGLT|SCHZ|FXNAX|FBND|TLT|IEF|SHY|SGOV|BIL|MUB|VTEB|TIP|SCHP|LQD|HYG|JNK|VCIT|VCSH)$/.test(s) || /\bBOND|TREASUR|\bMUNI|FIXED INCOME|INCOME FUND|T-BILL|AGGREGATE|\bCD\b|CERTIFICATE OF DEPOSIT/.test(n)) return 'Bonds';
   if (/^(VXUS|VEA|VWO|IXUS|IEFA|IEMG|EFA|EEM|FTIHX|FSPSX|SCHF|SPDW|VTIAX|FZILX)$/.test(s) || /INTERNATIONAL|INTL|EMERGING|EX[- ]US|DEVELOPED MKT|FOREIGN|WORLD EX/.test(n)) return 'International stocks';

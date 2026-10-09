@@ -232,6 +232,7 @@ function acctModal(id, presetType) {
     if (newMort) state.accounts.push(newMort);
     closeModal(); commit();
     if (newMort) toast(`${a ? 'Saved' : 'Added'} ${rec.name} and added ${newMort.name} under Liabilities.`);
+    else if (!a && isCryptoAcct(target)) toast(`Added ${rec.name}. Add the coins it holds and its value will follow their prices.`, { label: 'Add coins', fn: () => holdingModal(null, target.id) });
     else if (!a) toast(`Added ${rec.name}.`);
   };
   if (a) {
@@ -316,32 +317,62 @@ function holdingModal(id, presetAcct) {
   const h = id ? state.holdings.find(x => x.id === id) : null;
   const invAccts = activeAccounts().filter(a => ACCOUNT_TYPES[a.type]?.bucket === 'invest' || a.type === 'private');
   if (!invAccts.length) { toast('Add an investment account first.'); return acctModal(null, 'brokerage'); }
-  const v = h || { accountId: presetAcct || invAccts[0].id, symbol: '', name: '', shares: '', price: '', costBasis: '', assetClass: 'US stocks', priceDate: today(), private: acctById(presetAcct)?.type === 'private' };
+  const start = acctById(h?.accountId || presetAcct) || invAccts[0], crypto0 = isCryptoAcct(start);
+  const v = h || { accountId: start.id, symbol: '', name: '', shares: '', price: '', costBasis: '', assetClass: crypto0 ? 'Crypto' : 'US stocks', priceDate: today(), private: start.type === 'private' };
   const known = KNOWN_ER[String(v.symbol || '').toUpperCase()];
+  const lbl = (stock, coin) => `<span class="h-l" data-stock="${stock}" data-coin="${coin}">${crypto0 ? coin : stock}</span>`;
   openModal({
-    title: h ? `Edit ${h.symbol}` : 'Add holding',
-    body: `<form id="f" class="form-grid">
-      <label class="field"><span>Account</span><select name="accountId">${invAccts.map(a => `<option value="${a.id}" ${a.id === v.accountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
-      <label class="field"><span>Symbol or short name</span><input name="symbol" value="${esc(v.symbol)}" required autofocus></label>
-      <label class="field wide"><span>Description</span><input name="desc-label" data-key="name" value="${esc(v.name || '')}" autocomplete="off"></label>
-      <label class="field"><span>Shares or units</span><input name="shares" inputmode="decimal" value="${v.shares}"></label>
-      <label class="field"><span>Price per share</span><input name="price" inputmode="decimal" value="${v.price}"></label>
+    title: h ? `Edit ${h.symbol}` : crypto0 ? 'Add a coin' : 'Add holding',
+    body: `<form id="f" class="form-grid holding-form" data-crypto="${crypto0 ? '1' : ''}">
+      <label class="field"><span>Account</span><select name="accountId" id="h-acct">${invAccts.map(a => `<option value="${a.id}" ${a.id === v.accountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
+      <label class="field">${lbl('Symbol or short name', 'Coin')}<input name="symbol" id="h-sym" value="${esc(v.symbol)}" ${crypto0 ? 'list="coin-list"' : ''} required autofocus autocomplete="off" placeholder="${crypto0 ? 'Bitcoin, ETH…' : ''}"></label>
+      <datalist id="coin-list">${CRYPTO_COINS.map(c => `<option value="${c[0]}">${c[1]}</option>`).join('')}</datalist>
+      <label class="field wide"><span>Description</span><input name="desc-label" data-key="name" id="h-name" value="${esc(v.name || '')}" autocomplete="off"></label>
+      <label class="field">${lbl('Shares or units', 'Amount (coins)')}<input name="shares" inputmode="decimal" value="${v.shares}" autocomplete="off"></label>
+      <label class="field">${lbl('Price per share', 'Price per coin')}<input name="price" id="h-price" inputmode="decimal" value="${v.price}" autocomplete="off"></label>
       <label class="field"><span>Total cost basis</span><input name="costBasis" inputmode="decimal" value="${v.costBasis ?? ''}" placeholder="Optional"></label>
-      <label class="field"><span>Expense ratio (%)</span><input name="er" inputmode="decimal" value="${v.er ?? ''}" placeholder="${known != null ? known + ' (on file)' : 'e.g. 0.03'}"></label>
-      <label class="field"><span>Asset class</span><select name="assetClass">${ASSET_CLASSES.map(c => `<option ${c === v.assetClass ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
-      <label class="field"><span>Price as of</span><input type="date" name="priceDate" value="${v.priceDate || today()}"></label>
-      <label class="check wide"><input type="checkbox" name="private" ${v.private ? 'checked' : ''}> Private or illiquid (valued by your own marks)</label>
+      <label class="field not-crypto"><span>Expense ratio (%)</span><input name="er" inputmode="decimal" value="${v.er ?? ''}" placeholder="${known != null ? known + ' (on file)' : 'e.g. 0.03'}"></label>
+      <label class="field"><span>Asset class</span><select name="assetClass" id="h-class">${ASSET_CLASSES.map(c => `<option ${c === v.assetClass ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+      <label class="field"><span>Price as of</span><input type="date" name="priceDate" id="h-date" value="${v.priceDate || today()}"></label>
+      <label class="check wide not-crypto"><input type="checkbox" name="private" ${v.private ? 'checked' : ''}> Private or illiquid (valued by your own marks)</label>
+      <p class="muted small wide only-crypto">A coin has one price: a new price here is used in every crypto account that holds this coin. Ọrọ̀ doesn’t look prices up online.</p>
     </form>`,
-    actions: `${h ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${h ? 'Save' : 'Add holding'}</button>`,
+    actions: `${h ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${h ? 'Save' : crypto0 ? 'Add coin' : 'Add holding'}</button>`,
   });
+  const f = $('#f'), sym = $('#h-sym'), isCrypto = () => isCryptoAcct(acctById($('#h-acct').value));
+  const paint = () => {
+    const c = isCrypto();
+    f.dataset.crypto = c ? '1' : '';
+    for (const el of f.querySelectorAll('.h-l')) el.textContent = c ? el.dataset.coin : el.dataset.stock;
+    if (c) { sym.setAttribute('list', 'coin-list'); sym.placeholder = 'Bitcoin, ETH…'; } else { sym.removeAttribute('list'); sym.placeholder = ''; }
+    if (!h) { $('#modal-title').textContent = c ? 'Add a coin' : 'Add holding'; $('#save').textContent = c ? 'Add coin' : 'Add holding'; }
+  };
+  // "bitcoin" → BTC, Bitcoin, Crypto, and the price you already use for it in another account
+  const fillCoin = () => {
+    if (!isCrypto() || !sym.value.trim()) return;
+    const c = coinFind(sym.value), s2 = c ? c[0] : sym.value.trim().toUpperCase();
+    if (c) { sym.value = c[0]; if (!$('#h-name').value.trim()) $('#h-name').value = c[1]; }
+    $('#h-class').value = 'Crypto';
+    const held = cryptoHeld().find(x => x.symbol === s2 && x.holdings.some(y => y.id !== h?.id));
+    if (held && !$('#h-price').value.trim()) { $('#h-price').value = held.price; $('#h-date').value = held.priceDate || today(); }
+  };
+  $('#h-acct').onchange = () => { paint(); if (!h && isCrypto()) $('#h-class').value = 'Crypto'; fillCoin(); };
+  sym.addEventListener('change', fillCoin);
   $('#save').onclick = () => {
-    const d = formData($('#f'));
+    const d = formData(f), acct = acctById(d.accountId), crypto = isCryptoAcct(acct);
     const shares = parseAmount(d.shares), price = parseAmount(d.price), cb = parseAmount(d.costBasis), er = parseFloat(d.er);
-    if (!d.symbol.trim() || !isFinite(shares) || !isFinite(price)) return toast('Fill in a symbol, shares and price.');
-    const rec = { accountId: d.accountId, symbol: d.symbol.trim().toUpperCase(), name: d.name.trim(), shares, price, costBasis: isFinite(cb) ? cb : null, er: isFinite(er) ? er : undefined, assetClass: d.assetClass, priceDate: d.priceDate || today(), private: d.private };
+    let symbol = d.symbol.trim();
+    if (crypto) { const c = coinFind(symbol); if (c) symbol = c[0]; }
+    if (!symbol || !isFinite(shares) || !isFinite(price)) return toast(crypto ? 'Fill in a coin, the amount and the price.' : 'Fill in a symbol, shares and price.');
+    const rec = { accountId: d.accountId, symbol: symbol.toUpperCase(), name: d.name.trim() || (crypto ? coinBySymbol(symbol)?.[1] || '' : ''), shares, price, costBasis: isFinite(cb) ? cb : null, er: crypto ? undefined : isFinite(er) ? er : undefined, assetClass: crypto ? 'Crypto' : d.assetClass, priceDate: d.priceDate || today(), private: crypto ? false : d.private };
     if (h && (h.price !== price || h.shares !== shares) && rec.priceDate === h.priceDate) rec.priceDate = today();
-    if (h) Object.assign(h, rec); else state.holdings.push({ id: uid(), ...rec });
+    let saved = h;
+    if (h) Object.assign(h, rec); else { saved = { id: uid(), ...rec }; state.holdings.push(saved); }
+    // one price per coin: the same coin in your other crypto accounts takes this price too
+    const others = crypto ? coinHoldings(rec.symbol).filter(x => x !== saved && (x.price !== price || x.priceDate !== rec.priceDate)).length : 0;
+    if (crypto) setCoinPrice(rec.symbol, price, rec.priceDate);
     closeModal(); commit();
+    if (others) toast(`${coinName(rec.symbol)} is ${priceFmt(price)} in your other ${others === 1 ? 'crypto account' : `${others} crypto accounts`} too.`);
   };
   if (h) $('#del').onclick = async () => { if (await confirmBox('Delete holding', `Remove ${esc(h.symbol)} (${money(holdingValue(h))})?`, 'Delete', true)) { state.holdings = state.holdings.filter(x => x.id !== h.id); commit(); } };
 }

@@ -266,6 +266,7 @@ function ciItems(w) {
   const txs = state.transactions.filter(t => ciNeeds(t) && (CI.older || ciInWindow(t, win))).sort((a, b) => a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id)));
   for (const t of txs) items.push({ id: 'tx:' + t.id, kind: t.flag ? 'flag' : 'uncat', tx: t.id });
   if (w !== 'day') for (const a of ciStaleBalances()) items.push({ id: `bal:${a.id}:${a.balanceDate}`, kind: 'balance', accountId: a.id });
+  if (w !== 'day') for (const c of cryptoStale()) items.push({ id: `coin:${c.symbol}:${c.priceDate}`, kind: 'coin', symbol: c.symbol });   // crypto prices older than a week
   if (w !== 'day') { const b = ciBudgets(); if (b.length) items.push({ id: `budget:${thisMonth()}:${b.map(x => x.c.id).join(',')}`, kind: 'budget', list: b }); }
   const due = upcoming(Math.max(1, daysBetween(now, win.ahead)));
   if (due.length) items.push({ id: `due:${w}:${now}`, kind: 'due', list: due });
@@ -314,6 +315,7 @@ function ciSummary(items, win, spoken) {
   if (imp.length === 1) parts.push(`${acctById(imp[0].accountId)?.name || 'one account'} hasn’t been imported since ${spoken ? MONTHS[+imp[0].newest.slice(5, 7) - 1] + ' ' + +imp[0].newest.slice(8) : dateLabel(imp[0].newest)}`);
   else if (imp.length) parts.push(`${imp.length} accounts haven’t been imported lately`);
   const bal = n('balance'); if (bal) parts.push(`${bal} balance${bal === 1 ? '' : 's'} to update`);
+  const coins = n('coin'); if (coins) parts.push(`${coins} crypto price${coins === 1 ? '' : 's'} to update`);
   const bud = items.find(i => i.kind === 'budget');
   if (bud) { const over = bud.list.filter(x => x.v.available < -0.01); if (over.length) parts.push(`${listWords(over.slice(0, 2).map(x => x.c.name))}${over.length > 2 ? ' and more' : ''} ${over.length === 1 ? 'is' : 'are'} over budget`); }
   if (items.some(i => i.kind === 'review')) parts.push(`${MONTHS[+items.find(i => i.kind === 'review').month.slice(5) - 1]} still needs its review`);
@@ -370,6 +372,7 @@ function ciCardSpeech(item) {
     }
     case 'import': { const a = acctById(item.accountId); return `${a?.name || 'This account'}’s newest transaction is from ${MONTHS[+item.newest.slice(5, 7) - 1]} ${+item.newest.slice(8)}, ${item.age} days ago. Time to import a fresh file.`; }
     case 'balance': { const a = acctById(item.accountId); return `${a?.name} was last updated ${sayDate(a.balanceDate)}. What’s the balance now?`; }
+    case 'coin': { const c = cryptoHeld().find(x => x.symbol === item.symbol); return c ? `${c.name}’s price was last updated ${c.priceDate ? sayDate(c.priceDate) : 'a while ago'}. What is it now?` : ''; }
     case 'budget': return item.list.map(x => x.v.available < -0.01 ? `${x.c.name} is over by ${sayMoney(-x.v.available) || 'a bit'}` : `${x.c.name} is ${pct(x.v.actual / Math.max(1, x.v.budget + (x.v.carry || 0)), 0)} used`).join('. ') + '.';
     case 'due': return 'Coming up: ' + item.list.slice(0, 4).map(u => `${u.name}${sayMoney(u.amount) ? ', ' + sayMoney(u.amount) : ''}, ${sayDate(u.date)}`).join('; ') + '.';
     case 'older': return `There ${item.n === 1 ? 'is' : 'are'} also ${item.n} older transaction${item.n === 1 ? '' : 's'} that still need you. Go through them too?`;
@@ -423,6 +426,11 @@ function ciCardHtml(item, q) {
     case 'import': {
       const a = acctById(item.accountId);
       return body(esc(a?.name || 'Account'), `<p class="ci-meta">Newest transaction: ${dateLabel(item.newest)}, ${item.age} days ago.</p>`, '<button class="btn primary" data-ci="import">Import a file</button>');
+    }
+    case 'coin': {
+      const c = cryptoHeld().find(x => x.symbol === item.symbol); if (!c) return '';
+      return body(`${esc(c.name)} price`, `<p class="ci-meta">${priceFmt(c.price)} as of ${c.priceDate ? dateLabel(c.priceDate) : 'no date'}. You hold ${amountFmt(c.amount, true)} ${esc(c.symbol)}, ${money(c.value, { cents: false })}${c.holdings.length > 1 ? ` across ${c.holdings.length} accounts` : ''}.</p>
+        <form class="ci-bal" data-ci-bal><input id="ci-bal" inputmode="decimal" placeholder="Price today" aria-label="${esc(c.name)} price today" autocomplete="off"><button class="btn primary" type="submit">Save</button></form>`, '<a class="btn" href="#/investments">Investments</a>');
     }
     case 'balance': {
       const a = acctById(item.accountId);
@@ -556,6 +564,11 @@ function ciDo(a, item) {
     case 'note': if (t) { t.memo = a.text; commit({ silent: true }); CI.heard = `Note added: ${a.text}`; return CI.heard; } return '';
     case 'flag': if (t) { t.flag = true; commit({ silent: true }); return done('flagged', `Flagged ${prettyPayee(t.payee) || t.payee} to come back to.`, true, 'Flagged.'); } return '';
     case 'unflag': if (t) { delete t.flag; commit({ silent: true }); return done('sorted', `Cleared the flag on ${prettyPayee(t.payee) || t.payee}.`); } return '';
+    case 'coinprice': {
+      if (!(a.value > 0) || !coinHoldings(item.symbol).length) return '';
+      setCoinPrice(item.symbol, a.value); commit({ silent: true });
+      return done('sorted', `${coinName(item.symbol)} price updated to ${priceFmt(a.value)}.`, true, 'Saved.');
+    }
     case 'balance': {
       const acc = acctById(item.accountId); if (!acc || !isFinite(a.value)) return '';
       const v = ACCOUNT_TYPES[acc.type]?.side === 'liability' ? Math.abs(a.value) : a.value;
@@ -686,8 +699,8 @@ document.addEventListener('submit', e => {
   if (f.matches('[data-ci-bal]')) {
     e.preventDefault();
     const item = ciCurrent(), n = ciNumber(($('#ci-bal')?.value || '').replace(/%/g, ''));
-    if (!item || n == null) return toast(item?.what === 'rate' ? 'Type the rate, like 6.25.' : 'Type the balance, like 12,400.');
-    return ciRun({ act: item.kind === 'gap' && item.what === 'rate' ? 'rate' : 'balance', value: n }, item);
+    if (!item || n == null || (item.kind === 'coin' && !(n > 0))) return toast(item?.kind === 'coin' ? 'Type the price, like 62,000.' : item?.what === 'rate' ? 'Type the rate, like 6.25.' : 'Type the balance, like 12,400.');
+    return ciRun({ act: item.kind === 'coin' ? 'coinprice' : item.kind === 'gap' && item.what === 'rate' ? 'rate' : 'balance', value: n }, item);
   }
   if (f.matches('[data-ci-say]')) {
     e.preventDefault();
@@ -703,6 +716,15 @@ document.addEventListener('submit', e => {
       return;
     }
     const item = ciCurrent();
+    const cp = coinParse(text);
+    if (cp && !(item?.kind === 'coin' && cp.changes.length === 1 && cp.changes[0].coin === item.symbol)) {
+      CI.intro = false;
+      const reply = updStart(cp);
+      render();
+      if (CI.talking) ciSpeak(reply);
+      const again = $('#ci-say'); if (again) { again.value = ''; again.focus(); }
+      return;
+    }
     const upd = updParse(text);
     // an update for the account the card is already asking about is just the card's answer
     const own = upd && item && (item.kind === 'balance' || (item.kind === 'gap' && item.what !== 'notx')) && !upd.pending.length && upd.changes.length === 1 && upd.changes[0].accountId === item.accountId && ['balance', 'value', 'rate'].includes(upd.changes[0].field);
@@ -864,6 +886,7 @@ function ciUnderstand(text, item) {
       return { act: 'unknown', text: raw };
     }
     case 'balance': { const n = ciNumber(s); if (n != null) return { act: 'balance', value: n }; break; }
+    case 'coin': { const cp = coinParse(s); const n = cp?.changes.length === 1 && cp.changes[0].coin === item.symbol ? cp.changes[0].to : ciNumber(s); if (n > 0) return { act: 'coinprice', value: n }; break; }
     case 'gap':
       if (item.what === 'notx') { if (CI_SAY.import.test(s)) return { act: 'import' }; if (/\b(by hand|manual|manually|myself|hand)\b/.test(s)) return { act: 'hand' }; break; }
       if (/^(i )?(don'?t know|not sure|no idea|leave it|skip it for good|it'?s zero|zero|none)$/.test(s)) return { act: 'not-needed' };

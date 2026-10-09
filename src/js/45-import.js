@@ -488,8 +488,10 @@ function applyPositionsItem(it) {
     const accountId = targets[p.srcAccount || ''] || targets[Object.keys(targets)[0]];
     const prev = old[accountId + '|' + p.symbol];
     const existing = state.holdings.find(h => h.accountId === accountId && h.symbol === p.symbol);
-    const rec = { symbol: p.symbol, name: p.name, shares: p.shares, price: p.price, costBasis: p.costBasis ?? prev?.costBasis ?? null, er: prev?.er, assetClass: p.assetClass, priceDate: today(), accountId };
+    const crypto = isCryptoAcct(acctById(accountId)) && p.assetClass !== 'Cash';   // everything in a Cryptocurrency account is a coin
+    const rec = { symbol: p.symbol, name: p.name, shares: p.shares, price: p.price, costBasis: p.costBasis ?? prev?.costBasis ?? null, er: prev?.er, assetClass: crypto ? 'Crypto' : p.assetClass, priceDate: today(), accountId };
     if (existing) Object.assign(existing, rec); else state.holdings.push({ id: uid(), ...rec });
+    if (crypto && p.price > 0) setCoinPrice(p.symbol, p.price);   // one price per coin, in every crypto account
   }
   for (const id of touched) { const a = acctById(id); if (a) a.balanceDate = today(); }
   return { count: P.length, accounts: [...touched] };
