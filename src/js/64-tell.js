@@ -176,6 +176,7 @@ function tellStart(text, kind) {
 function tellPrompt() {
   const d = CI.draft; if (!d) return '';
   if (d.step === 'after') return tellAfterText(d);
+  if (d.step === 'update') return updPrompt();
   const q = tellQuestions(d)[0];
   d.ask = q || null;
   if (q) return tellAsk(q, d);
@@ -186,6 +187,7 @@ const TELL_NO = /^(no|nope|nah|there isn'?t|it isn'?t|not really|none|we don'?t|
 const TELL_SKIP = /^(skip|pass|not sure|don'?t know|i don'?t know|no idea|later|leave it( blank)?|none|no)$/;
 function tellAnswer(raw) {
   const d = CI.draft; if (!d) return '';
+  if (d.step === 'update') return updAnswer(raw);
   const s = String(raw).toLowerCase().replace(/[’‘]/g, "'").replace(/[.!?]+$/, '').trim();
   if (/^(cancel|never ?mind|stop|forget it|don'?t add it|scratch that)$/.test(s)) { CI.draft = null; CI.heard = 'OK, nothing was added.'; return CI.heard; }
   if (d.step === 'after') return tellAfterAnswer(s);
@@ -324,6 +326,7 @@ function tellAfter(what) {
 /* ---------- the card ---------- */
 function tellCardHtml() {
   const d = CI.draft; if (!d) return '';
+  if (d.step === 'update') return updCardHtml();
   if (d.step === 'after') {
     const a = acctById(d.added); if (!a) return '';
     const loan = d.mort || LOAN_TYPES.has(a.type), acts = [];
@@ -362,7 +365,9 @@ function tellClick(act, v) {
   if (act === 'tell-start') return tellStart('', v);
   if (act === 'tell-chip') return tellChip(v);
   if (act === 'tell-add') { const d = CI.draft; if (d) d.ask = null; return tellCommit(); }
-  if (act === 'tell-cancel') { CI.draft = null; return 'OK, nothing was added.'; }
+  if (act === 'tell-cancel') { const upd = CI.draft?.step === 'update'; CI.draft = null; return upd ? 'OK, nothing was changed.' : 'OK, nothing was added.'; }
+  if (act === 'tell-pick') { if (v) return updPick(v); const d = CI.draft; d?.pending.shift(); if (d && !d.changes.length && !d.pending.length) { CI.draft = null; return 'OK, nothing was changed.'; } return updPrompt(); }
+  if (act === 'tell-save') return updApply();
   if (act === 'tell-import') return tellAfter('import');
   if (act === 'tell-hand') return tellAfter('hand');
   if (act === 'tell-track') return tellAfter('track');

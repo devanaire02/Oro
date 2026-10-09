@@ -3305,7 +3305,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '214af4f';
+const ORO_BUILD = '020512f';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -3744,7 +3744,7 @@ VIEWS.accounts = p => {
   const multi = members().length > 1;
   return pageHead('Accounts', updating ? 'Type in current balances from your statements, then save.' : 'Everything you own and owe.',
     updating ? `<a class="btn ghost" href="#/accounts">Cancel</a><button class="btn primary" data-act="save-balances">Save balances</button>`
-      : `${multi ? `<div class="seg small" role="group" aria-label="Group by"><button class="${byOwner ? '' : 'on'}" data-by="">By type</button><button class="${byOwner ? 'on' : ''}" data-by="owner">By owner</button></div>` : ''}<a class="btn" href="#/accounts?update=1">Update balances</a>${checkinOn() ? '<a class="btn" href="#/checkin?add=account">Add by talking</a>' : ''}<button class="btn primary" data-act="add-account">Add account</button>`) + `
+      : `${multi ? `<div class="seg small" role="group" aria-label="Group by"><button class="${byOwner ? '' : 'on'}" data-by="">By type</button><button class="${byOwner ? 'on' : ''}" data-by="owner">By owner</button></div>` : ''}<a class="btn" href="#/accounts?update=1">Update balances</a>${checkinOn() ? '<a class="btn" href="#/checkin?talk=1">Add or update by talking</a>' : ''}<button class="btn primary" data-act="add-account">Add account</button>`) + `
   <section class="alloc-bar-wrap detail-only">${(() => { const segs = [['Cash', t.cash, 'var(--c2)'], ['Investments', t.invest, 'var(--c1)'], ['Property and private', t.illiquid, 'var(--c4)']]; const tot = t.assets || 1; return `<div class="stack tall" role="img" aria-label="Assets by type">${segs.map(([l, v, c]) => v > 0 ? `<span style="width:${v / tot * 100}%;background:${c}" title="${l} ${pct(v / tot, 0)}"></span>` : '').join('')}</div><p class="legend">${segs.map(([l, v, c]) => `<span><i style="background:${c}"></i>${l} ${pct(v / tot, 0)}</span>`).join('')}<span><i style="background:var(--neg)"></i>Debt is ${pct(t.liabilities / tot, 0)} of assets</span></p>`; })()}</section>
   ${groups.map(g => {
     const subtotal = sum(g.accts.map(a => g.signed ? signedValue(a) : accountValue(a)));
@@ -6128,7 +6128,7 @@ function registerOffline() {
 const CI_WINDOWS = [['day', 'Today'], ['week', 'This week'], ['month', 'This month']];
 const CI = { w: 'week', handled: [], skipped: new Set(), older: false, talking: false, heard: '', last: null, back: null, choose: null, wParam: '', sayBack: '', draft: null, addParam: '' };
 function ciReset() {
-  Object.assign(CI, { w: 'week', handled: [], skipped: new Set(), older: false, talking: false, heard: '', last: null, back: null, choose: null, wParam: '', sayBack: '', draft: null, addParam: '' });
+  Object.assign(CI, { w: 'week', handled: [], skipped: new Set(), older: false, talking: false, heard: '', last: null, back: null, choose: null, wParam: '', sayBack: '', draft: null, addParam: '', talkParam: '', intro: false });
   ciHush();
 }
 const checkinOn = () => state.settings.checkin !== false;
@@ -6447,6 +6447,20 @@ function ciSummary(items, win, spoken) {
   }
   return `${lead}: ${listWords(parts)}.`;
 }
+/* Opened from Accounts: what you can say to add or update */
+function ciIntroHtml() {
+  return `<section class="panel ci-card tell-card"><div class="ci-top"><span class="ci-kicker">Add or update by talking</span></div>
+    <p class="ci-guess tell-q">What would you like to add or change?</p>
+    <ul class="ci-examples muted">
+      <li>“Chase savings is 12,400” · “the home is worth 675k”</li>
+      <li>“Alex’s 401k is 312,000 and the Roth is 85k”</li>
+      <li>“rename the Amex to Blue Cash” · “Sam’s card ends in 1234”</li>
+      <li>“change the owner of the brokerage to Julissa” · “the mortgage rate is 6.125 percent”</li>
+      <li>“add a savings account at Ally with 40,000” · “archive the old Citi card”</li>
+    </ul>
+    <div class="ci-actions"><button class="btn" data-ci="tell-start" data-v="account">Add an account</button><button class="btn" data-ci="tell-start" data-v="property">Add a property</button><a class="btn ghost" href="#/accounts?update=1">Type in balances instead</a></div>
+    <div class="ci-foot"><button class="btn ghost" data-ci="intro-close">Back to Check-in</button></div></section>`;
+}
 /* The Check-in button on Overview, with how many things this week has for you */
 function ciButton() {
   if (!checkinOn()) return '';
@@ -6580,6 +6594,7 @@ function checkinSettings() {
 VIEWS.checkin = p => {
   const sub = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   if (!checkinOn()) return pageHead('Check-in', sub) + `<section class="panel narrow"><p>Check-in is turned off.</p><div class="actions"><button class="btn primary" data-ci="turn-on">Turn it on</button></div></section>`;
+  if (p.talk && p.talk !== CI.talkParam) { CI.talkParam = p.talk; CI.intro = true; }
   if (p.add && p.add !== CI.addParam) { CI.addParam = p.add; tellStart('', p.add === 'property' ? 'property' : ''); }
   if (p.w && p.w !== CI.wParam && CI_WINDOWS.some(([k]) => k === p.w)) { CI.wParam = p.w; if (p.w !== CI.w) { CI.w = p.w; CI.handled = []; CI.back = null; } }
   const q = ciQueue(), prefs = voicePrefs();
@@ -6591,12 +6606,12 @@ VIEWS.checkin = p => {
     : `<div class="ci-progress"><div class="ci-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${q.total}" aria-valuenow="${Math.min(q.pos - 1, q.total)}" aria-label="Progress"><i style="width:${Math.round(100 * (q.pos - 1) / Math.max(1, q.total))}%"></i></div>${talk}</div>`;
   const last = CI.last ? `<p class="ci-last">${esc(CI.last.text)}${CI.last.undo ? ' <button class="linklike" data-ci="undo">Undo</button>' : ''}</p>` : '';
   // the answer box sits above the card, so with the phone's keyboard up the card is still in view
-  const say = prefs.box ? `<form class="ci-say" data-ci-say autocomplete="off"><input id="ci-say" type="text" enterkeyhint="go" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="${isTouch() ? 'Tap here, then the keyboard’s mic' : q.cur || CI.draft ? 'Type an answer' : 'Say “add a savings account at Chase…”'}" aria-label="Answer"><button class="btn" type="submit">Go</button></form>` : '';
-  const hint = (say ? `<p class="ci-hint muted small">${CI.draft ? 'Answer the question, or change anything: “call it Chase Sapphire”, “the balance is 13,000”, “it’s Julissa’s”. Say “cancel” to stop.'
-    : 'Say “yes”, a category, a person, “flag it”, “skip”, “back” or “always”. For a split: “half groceries, half household”. Add a note with “note:” and what to write. To add an account: “add a checking account at Chase ending 4321 with 12,400 for Julissa”.'}</p>` : '')
+  const say = prefs.box ? `<form class="ci-say" data-ci-say autocomplete="off"><input id="ci-say" type="text" enterkeyhint="go" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="${isTouch() ? 'Tap here, then the keyboard’s mic' : q.cur || CI.draft ? 'Type an answer' : 'Say “add a savings account at Chase…”'}" aria-label="Answer"${CI.intro && !isTouch() ? ' autofocus' : ''}><button class="btn" type="submit">Go</button></form>` : '';
+  const hint = (say ? `<p class="ci-hint muted small">${CI.draft?.step === 'update' ? 'Say “yes” to save, “cancel” to stop, or add another change: “and the Roth is 85k”.' : CI.draft ? 'Answer the question, or change anything: “call it Chase Sapphire”, “the balance is 13,000”, “it’s Julissa’s”. Say “cancel” to stop.'
+    : 'Say “yes”, a category, a person, “flag it”, “skip”, “back” or “always”. For a split: “half groceries, half household”. Add a note with “note:” and what to write. To add an account: “add a checking account at Chase ending 4321 with 12,400 for Julissa”. To update one: “Chase savings is 12,400”, “rename the Amex to Blue Cash”.'}</p>` : '')
     + (CI.draft ? '' : '<div class="ci-add-row"><button class="btn ghost" data-ci="tell-start" data-v="account">Add an account</button><button class="btn ghost" data-ci="tell-start" data-v="property">Add a property</button></div>');
-  let card = CI.draft ? tellCardHtml() : q.cur ? ciCardHtml(q.cur, q) : '';
-  if (!q.cur && !CI.draft) {
+  let card = CI.draft ? tellCardHtml() : CI.intro ? ciIntroHtml() : q.cur ? ciCardHtml(q.cur, q) : '';
+  if (!q.cur && !CI.draft && !CI.intro) {
     const did = CI.handled.filter(h => h.what !== 'skipped').length, skipped = CI.handled.filter(h => h.what === 'skipped').length;
     card = `<section class="panel ci-done"><h2>${q.items.length ? 'That’s everything' : 'You’re all caught up'} for ${CI.w === 'day' ? 'today' : CI.w === 'week' ? 'this week' : 'this month'}.</h2>
       ${CI.handled.length ? `<p>${did ? `You took care of ${did}` : 'Nothing changed'}${skipped ? `${did ? ' and' : ','} skipped ${skipped}` : ''}.</p>` : ''}
@@ -6748,7 +6763,8 @@ document.addEventListener('click', e => {
   if (act === 'say-card') return ciSpeak(CI.draft ? tellPrompt() : ciCardSpeech(ciCurrent()));
   if (act === 'revisit') { CI.handled = CI.handled.filter(h => h.what !== 'skipped'); CI.skipped.clear(); return ciAfter(''); }
   if (act === 'undo') return ciAfter(ciUndo());
-  if (act.startsWith('tell-')) { CI.heard = ''; const reply = tellClick(act, v); render(); if (CI.talking && reply) ciSpeak(reply); return; }
+  if (act === 'intro-close') { CI.intro = false; return render(); }
+  if (act.startsWith('tell-')) { CI.heard = ''; CI.intro = false; const reply = tellClick(act, v); render(); if (CI.talking && reply) ciSpeak(reply); return; }
   if (act === 'file-sure') {
     const ts = ciItems(CI.w).items.filter(i => i.kind === 'uncat').map(ciTx).filter(t => t && ciGuess(t)?.sure);
     for (const t of ts) { const g = ciGuess(t); t.categoryId = g.id; if (g.person && !t.person) t.person = g.person; }
@@ -6791,7 +6807,7 @@ document.addEventListener('submit', e => {
     if (!text.trim()) return;
     const low = text.trim().toLowerCase().replace(/[’‘]/g, "'");
     if (CI.draft || (TELL_ADD.test(low) && !/^add (a )?note\b/.test(low) && (tellFindType(low) || /\b(account|property)\b/.test(low)))) {
-      CI.heard = '';
+      CI.heard = ''; CI.intro = false;
       const reply = CI.draft ? tellAnswer(text) : tellStart(text);
       render();
       if (CI.talking) ciSpeak(reply);
@@ -6799,7 +6815,19 @@ document.addEventListener('submit', e => {
       return;
     }
     const item = ciCurrent();
-    if (!item) { CI.heard = 'Nothing left to answer here. To add something, say “add a checking account…” or “add a property…”.'; render(); return; }
+    const upd = updParse(text);
+    // an update for the account the card is already asking about is just the card's answer
+    const own = upd && item && (item.kind === 'balance' || (item.kind === 'gap' && item.what !== 'notx')) && !upd.pending.length && upd.changes.length === 1 && upd.changes[0].accountId === item.accountId && ['balance', 'value', 'rate'].includes(upd.changes[0].field);
+    if (upd && !own) {
+      CI.intro = false;
+      const reply = updStart(upd);
+      render();
+      if (CI.talking) ciSpeak(reply);
+      const again = $('#ci-say'); if (again) { again.value = ''; again.focus(); }
+      return;
+    }
+    CI.intro = false;
+    if (!item) { CI.heard = 'Nothing left to answer here. To add or update something, say “add a checking account…” or “Chase savings is 12,400”.'; render(); return; }
     const a = ciUnderstand(text, item);
     CI.heard = '';
     const before = CI.handled.length, back = CI.back;
@@ -6809,7 +6837,7 @@ document.addEventListener('submit', e => {
     const again = $('#ci-say'); if (again) { again.value = ''; again.focus(); }   // keep the keyboard up for the next answer
   }
 });
-window.addEventListener('hashchange', () => { if (!/^#\/?checkin/.test(location.hash)) { CI.addParam = ''; if (CI.talking) { CI.talking = false; ciHush(); } } });
+window.addEventListener('hashchange', () => { if (!/^#\/?checkin/.test(location.hash)) { CI.addParam = ''; CI.talkParam = ''; CI.intro = false; if (CI.talking) { CI.talking = false; ciHush(); } } });
 if (canSpeak()) {
   const onVoices = () => { liveVoices(); refreshVoiceMenu(); };
   try { speechSynthesis.addEventListener('voiceschanged', onVoices); } catch (e) { try { speechSynthesis.onvoiceschanged = onVoices; } catch (e2) { /* older browsers */ } }
@@ -6848,7 +6876,7 @@ const CI_SYNONYMS = {
   haircut: ['personal', 'hair'], gift: ['gift'], present: ['gift'], amazon: ['shopping'], household: ['household', 'home'], home: ['home', 'household'],
 };
 const ciStem = w => w.replace(/ies$/, 'y').replace(/(ss|us)$/, m => m + '#').replace(/(ses|xes|ches|shes)$/, m => m.slice(0, -2)).replace(/s$/, '').replace(/#$/, '');
-const ciTokens = s => String(s || '').toLowerCase().replace(/&/g, ' and ').replace(/'s\b/g, '').replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w => w && !CI_STOP.has(w)).map(ciStem);
+const ciTokens = s => String(s || '').toLowerCase().replace(/[’‘]/g, "'").replace(/(\d+)\s*\(?([a-z])\)?(?![a-z])/g, '$1$2').replace(/&/g, ' and ').replace(/'s\b/g, '').replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w => w && !CI_STOP.has(w)).map(ciStem);
 function ciEdit(a, b) {   // small edit distance, for dictation and typing slips
   if (Math.abs(a.length - b.length) > 2) return 9;
   const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
@@ -7146,6 +7174,7 @@ function tellStart(text, kind) {
 function tellPrompt() {
   const d = CI.draft; if (!d) return '';
   if (d.step === 'after') return tellAfterText(d);
+  if (d.step === 'update') return updPrompt();
   const q = tellQuestions(d)[0];
   d.ask = q || null;
   if (q) return tellAsk(q, d);
@@ -7156,6 +7185,7 @@ const TELL_NO = /^(no|nope|nah|there isn'?t|it isn'?t|not really|none|we don'?t|
 const TELL_SKIP = /^(skip|pass|not sure|don'?t know|i don'?t know|no idea|later|leave it( blank)?|none|no)$/;
 function tellAnswer(raw) {
   const d = CI.draft; if (!d) return '';
+  if (d.step === 'update') return updAnswer(raw);
   const s = String(raw).toLowerCase().replace(/[’‘]/g, "'").replace(/[.!?]+$/, '').trim();
   if (/^(cancel|never ?mind|stop|forget it|don'?t add it|scratch that)$/.test(s)) { CI.draft = null; CI.heard = 'OK, nothing was added.'; return CI.heard; }
   if (d.step === 'after') return tellAfterAnswer(s);
@@ -7294,6 +7324,7 @@ function tellAfter(what) {
 /* ---------- the card ---------- */
 function tellCardHtml() {
   const d = CI.draft; if (!d) return '';
+  if (d.step === 'update') return updCardHtml();
   if (d.step === 'after') {
     const a = acctById(d.added); if (!a) return '';
     const loan = d.mort || LOAN_TYPES.has(a.type), acts = [];
@@ -7332,7 +7363,9 @@ function tellClick(act, v) {
   if (act === 'tell-start') return tellStart('', v);
   if (act === 'tell-chip') return tellChip(v);
   if (act === 'tell-add') { const d = CI.draft; if (d) d.ask = null; return tellCommit(); }
-  if (act === 'tell-cancel') { CI.draft = null; return 'OK, nothing was added.'; }
+  if (act === 'tell-cancel') { const upd = CI.draft?.step === 'update'; CI.draft = null; return upd ? 'OK, nothing was changed.' : 'OK, nothing was added.'; }
+  if (act === 'tell-pick') { if (v) return updPick(v); const d = CI.draft; d?.pending.shift(); if (d && !d.changes.length && !d.pending.length) { CI.draft = null; return 'OK, nothing was changed.'; } return updPrompt(); }
+  if (act === 'tell-save') return updApply();
   if (act === 'tell-import') return tellAfter('import');
   if (act === 'tell-hand') return tellAfter('hand');
   if (act === 'tell-track') return tellAfter('track');
@@ -7375,4 +7408,179 @@ function gapSpeech(item) {
   if (item.what === 'balance') return `${a.name} doesn’t have a balance yet. What is it?`;
   if (item.what === 'rate') return `What’s the interest rate on ${a.name}?`;
   return '';
+}
+
+/* ================= Updating accounts by talking =================
+   "Chase savings is 12,400", "the home is worth 675k", "Alex's 401k is 312,000 and the Roth is 85k",
+   "rename the Amex to Blue Cash", "change the owner of the brokerage to Julissa", "the mortgage rate is 6.125 percent",
+   "Sam's card ends in 1234", "archive the SUV". Ọrọ̀ finds the account by its name (and type, owner, last 4), shows each
+   change as old → new, asks which one when two accounts could match, and saves only after "yes". */
+const UPD_VERB = /^(?:(?:can you|could you|please|let'?s|i want to|i need to)\s+)*(update|set|change|make|rename|archive|close|mark|correct|fix)\b/;
+const UPD_STRIP = /^(?:(?:can you|could you|please|let'?s|i want to|i need to)\s+)*(update|set|change|correct|fix)\b/;
+const UPD_FIELDS = { balance: 'Balance', value: 'Value', owner: 'Owner', name: 'Name', last4: 'Last 4', rate: 'Interest rate', minPayment: 'Monthly payment', rental: 'Rental', archived: 'Archive' };
+
+/* Which accounts a stretch of words could mean, best first */
+function updFindAccounts(seg) {
+  const low = seg.toLowerCase(), toks = ciTokens(seg), type = tellFindType(low), who = ciFindPerson(seg);
+  const l4 = (seg.match(/\b(\d{4})\b/g) || []);
+  return activeAccounts().map(a => {
+    const name = ciTokens(a.name);
+    const hit = name.filter(n => toks.some(w => tokSame(w, n))).length;
+    let s = name.length ? 2 * hit / name.length : 0;
+    if (a.institution && ciTokens(a.institution).length && ciTokens(a.institution).every(n => toks.some(w => tokSame(w, n)))) s += 0.5;
+    if (type) s += type === a.type ? 0.7 : -0.3;
+    if (a.last4 && l4.includes(a.last4)) s += 2;
+    if (who && who.id !== 'joint' && a.owner === who.id) s += 0.4;
+    return { a, s };
+  }).filter(x => x.s >= 0.9).sort((x, y) => y.s - x.s);
+}
+/* What one stretch of words wants changed (without the account) */
+function updFields(seg) {
+  const raw = seg, s = seg.toLowerCase().replace(/[’‘]/g, "'"), out = {};
+  if (/^(archive|close)\b|\b(archive|close (out )?(the|my|our)|closed (the|my|our|it|that)|no longer have|don'?t have (it|that) anymore)\b/.test(s)) out.archived = true;
+  const rn = raw.match(/\b(?:rename|call)\b.*?\bto\b\s+["“]?(.+?)["”]?\s*$/i) || raw.match(/\b(?:call it|name it|should be called)\s+["“]?(.+?)["”]?\s*$/i);
+  if (rn) { out.name = rn[1].replace(/[.!?]+$/, '').trim(); return out; }
+  if (/\b(owner|owned by|belongs to|is (now )?(\w+)'s|make (it|\w+(\s\w+)?) (joint|shared)|(joint|shared) (account|now))\b/.test(s)) {
+    const tail = s.match(/\b(?:to|by|is now|is|belongs to)\s+([a-z' ]+)$/);
+    const p = (tail && ciFindPerson(tail[1])) || (/\b(joint|shared)\b/.test(s) && members().some(m => m.id === 'joint') ? { id: 'joint' } : null) || ciFindPerson(s.replace(/^.*\b(owner|owned by|belongs to)\b/, ''));
+    if (p) out.owner = p.id;
+  }
+  const l4 = s.match(/\b(?:ends?(?:\s+in)?|ending(?:\s+in)?|last\s+(?:four|4)(?:\s+digits)?(?:\s+(?:is|are))?)\s*(\d{4})\b/);
+  let rest = s;
+  if (l4) { out.last4 = l4[1]; rest = rest.replace(l4[0], ' '); }
+  const rate = rest.match(/(\d+(?:\.\d+)?)\s*(?:%|percent)/) || rest.match(/\brate\b[^\d]*(\d+(?:\.\d+)?)/);
+  if (rate && parseFloat(rate[1]) < 30) { out.rate = parseFloat(rate[1]); rest = rest.replace(rate[0], ' '); }
+  const pay = rest.match(/\b(?:payment|paying|pay)\b[^\d$]*\$?\s*([\d,]+(?:\.\d+)?)/);
+  if (pay) { out.minPayment = ciNumber(pay[1]); rest = rest.replace(pay[0], ' '); }
+  if (/\b(not a rental|no longer a rental|isn'?t a rental|not rented)\b/.test(s)) out.rental = false;
+  else if (/\b(as a|is a|is now a|it'?s a) rental\b|\bnow rented\b/.test(s)) out.rental = true;
+  rest = rest.replace(/\b(401 ?k|403 ?b|457 ?b?|529)\b/g, ' ');
+  if (!out.archived && !('owner' in out)) {
+    const kw = rest.match(/\b(?:worth|valued at|value(?:\s+is|\s+of)?|balance(?:\s+is|\s+of)?|is now|is at|is|at|to|owe[sd]?|owing|has|now)\s*(?:about\s+|around\s+|roughly\s+)?(\$?\s*[\d,]+(?:\.\d+)?\s*(?:k|thousand|million|m)?)\b/);
+    const n = kw ? ciNumber(kw[1]) : null;
+    if (n != null) out.balance = Math.abs(n);
+    else if (/\b(is|to|at)\s+(zero|nothing)\b|\bpaid off\b/.test(rest)) out.balance = 0;
+  }
+  return out;
+}
+/* A whole sentence: { changes: [...], pending: [{ seg, fields, options }] } or null when it isn't an update */
+function updParse(text, { force = false } = {}) {
+  const raw = String(text || '').replace(/[’‘]/g, "'").trim();
+  const verb = UPD_VERB.test(raw.toLowerCase());
+  const segs = raw.replace(UPD_STRIP, ' ').split(/\s*(?:;|\band also\b|\band then\b|\band\b|,(?!\d{3}\b))\s*/i).map(x => x.trim()).filter(Boolean);
+  const changes = [], pending = [];
+  let lastAcct = null;
+  for (const seg of segs) {
+    const fields = updFields(seg);
+    if (!Object.keys(fields).length) continue;
+    const found = updFindAccounts(seg.replace(/\b(?:rename|call)\b.*?\bto\b.*$/i, m => m.replace(/\bto\b.*$/i, '')));
+    const strong = found[0] && (found[0].s >= 1.5 || verb || force);
+    if (found.length && strong && (found.length === 1 || found[0].s - found[1].s >= 0.5)) { lastAcct = found[0].a; changes.push(...updChanges(found[0].a, fields)); }
+    else if (found.length && strong) pending.push({ seg, fields, options: found.slice(0, 4).map(x => x.a.id) });
+    else if (!found.length && lastAcct && (verb || force) && Object.keys(fields).some(k => k !== 'balance')) changes.push(...updChanges(lastAcct, fields));   // "…and its rate is 6.1"
+  }
+  return changes.length || pending.length ? { changes, pending } : null;
+}
+function updChanges(a, f) {
+  const out = [];
+  for (const [k, v] of Object.entries(f)) {
+    if (k === 'rental' && a.type !== 'realestate') continue;
+    if ((k === 'rate' || k === 'minPayment') && !tellDebtType(a.type)) continue;
+    const field = k === 'balance' && a.type === 'realestate' ? 'value' : k;
+    const from = k === 'balance' ? accountValue(a) : a[k];
+    if (k === 'balance' && holdingsFor(a.id).length) { out.push({ accountId: a.id, field, from, to: v, note: 'Its value comes from its holdings. Import a positions file, or edit the holdings on Investments.' }); continue; }
+    const same = k === 'balance' ? Math.abs(round2(from) - round2(isLiability(a) ? Math.abs(v) : v)) < 0.005 : from === v || (k === 'name' && String(from).toLowerCase() === String(v).toLowerCase());
+    out.push({ accountId: a.id, field, from, to: v, ...(same ? { same: true } : {}) });
+  }
+  return out;
+}
+function updShow(c) {
+  const a = acctById(c.accountId), f = c.field;
+  if (f === 'balance' || f === 'value' || f === 'minPayment') return [money(Math.abs(Number(c.from) || 0), { cents: false }), money(c.to, { cents: Math.abs(c.to) % 1 > 0.004 })];
+  if (f === 'owner') return [memberName(c.from || 'joint'), memberName(c.to)];
+  if (f === 'rate') return [c.from == null || c.from === '' ? 'none' : `${c.from}%`, `${c.to}%`];
+  if (f === 'rental' || f === 'archived') return [c.from ? 'Yes' : 'No', c.to ? 'Yes' : 'No'];
+  return [c.from || 'none', c.to];
+}
+function updSay(c) {
+  const a = acctById(c.accountId), [from, to] = updShow(c);
+  if (c.field === 'archived') return `archive ${a.name}`;
+  if (c.field === 'rental') return `mark ${a.name} as ${c.to ? '' : 'not '}a rental`;
+  return `${a.name}: ${UPD_FIELDS[c.field].toLowerCase()} ${to}${c.field === 'balance' || c.field === 'value' ? ` (was ${from})` : ''}`;
+}
+
+/* ---------- the conversation ---------- */
+function updStart(p) { CI.draft = { step: 'update', changes: p.changes, pending: p.pending }; CI.choose = null; CI.heard = ''; return updPrompt(); }
+function updPrompt() {
+  const d = CI.draft; if (!d) return '';
+  if (d.pending.length) { const p = d.pending[0]; const names = p.options.map(id => acctById(id)?.name); return `Which account did you mean${p.fields.balance != null ? ` for ${money(p.fields.balance, { cents: false })}` : ''}: ${names.length > 1 ? names.slice(0, -1).join(', ') + ' or ' + names[names.length - 1] : names[0]}?`; }
+  const real = d.changes.filter(c => !c.same && !c.note), notes = d.changes.filter(c => c.same || c.note).map(c => c.note ? `${acctById(c.accountId)?.name}: ${c.note}` : `${acctById(c.accountId)?.name}’s ${UPD_FIELDS[c.field].toLowerCase()} is already ${updShow(c)[1]}.`);
+  if (!real.length) return notes.join(' ') || 'Nothing to change.';
+  return `${notes.length ? notes.join(' ') + ' ' : ''}${real.length === 1 ? 'Update ' + updSay(real[0]) : 'Update ' + real.length + ' things: ' + real.map(updSay).join('; ')}? Say “yes” to save.`;
+}
+function updPick(id) {
+  const d = CI.draft, p = d?.pending[0], a = acctById(id);
+  if (!p || !a) return updPrompt();
+  d.pending.shift(); d.changes.push(...updChanges(a, p.fields));
+  return updPrompt();
+}
+function updAnswer(raw) {
+  const d = CI.draft, s = String(raw).toLowerCase().replace(/[’‘]/g, "'").replace(/[.!?]+$/, '').trim();
+  if (d.pending.length) {
+    const opts = d.pending[0].options.map(acctById).filter(Boolean);
+    // only the offered accounts, by the words of their names
+    const words = ciTokens(raw), scored = opts.map(a => ({ a, s: ciTokens(a.name).filter(n => words.some(w => tokSame(w, n))).length })).sort((x, y) => y.s - x.s);
+    const hit = (scored[0]?.s > 0 && (scored.length === 1 || scored[0].s > scored[1].s) ? scored[0] : null)
+      || (/\b(first|1st|top)\b/.test(s) ? { a: opts[0] } : /\b(second|2nd)\b/.test(s) ? { a: opts[1] } : /\b(third|3rd)\b/.test(s) ? { a: opts[2] } : null);
+    if (hit?.a) return updPick(hit.a.id);
+    if (/^(skip|none|neither|never ?mind)$/.test(s)) { d.pending.shift(); return d.changes.length || d.pending.length ? updPrompt() : (CI.draft = null, 'OK, nothing was changed.'); }
+    CI.heard = `I didn’t catch which one. ${updPrompt()}`; return CI.heard;
+  }
+  if (/^(yes|yep|yeah|save( it)?|do it|go ahead|correct|that'?s right|update( it)?|confirm|ok(ay)?)\b/.test(s)) return updApply();
+  if (/^(no|nope|cancel|never ?mind|stop|don'?t)\b/.test(s) && !/\d/.test(s)) { CI.draft = null; CI.heard = 'OK, nothing was changed.'; return CI.heard; }
+  const more = updParse(raw, { force: true });   // "and the Roth is 85k", or a correction for the same account
+  if (more) {
+    for (const c of more.changes) { d.changes = d.changes.filter(x => !(x.accountId === c.accountId && x.field === c.field)); d.changes.push(c); }
+    d.pending.push(...more.pending);
+    return updPrompt();
+  }
+  if (d.changes.length === 1) {   // "no, 12,500": a new amount for the one change
+    const n = ciNumber(s); const c = d.changes[0];
+    if (n != null && ['balance', 'value', 'minPayment', 'rate'].includes(c.field)) { c.to = Math.abs(n); return updPrompt(); }
+  }
+  CI.heard = `I didn’t catch that. ${updPrompt()}`; return CI.heard;
+}
+function updApply() {
+  const d = CI.draft; if (!d) return '';
+  const real = d.changes.filter(c => !c.same && !c.note);
+  if (!real.length) { CI.draft = null; return ''; }
+  d.changes = real;
+  for (const c of d.changes) {
+    const a = acctById(c.accountId); if (!a) continue;
+    if (c.field === 'balance' || c.field === 'value') setBalance(a, isLiability(a) ? Math.abs(c.to) : c.to);
+    else if (c.field === 'rate') a.rate = c.to;
+    else if (c.field === 'minPayment') a.minPayment = round2(Math.abs(c.to));
+    else if (c.field === 'archived') a.archived = true;
+    else a[c.field] = c.to;
+  }
+  commit({ silent: true });
+  const text = `Updated ${d.changes.length === 1 ? updSay(d.changes[0]) : listWords([...new Set(d.changes.map(c => acctById(c.accountId)?.name))])}.`;
+  CI.last = { text, undo: true, n: 0 };
+  CI.draft = null;
+  return text;
+}
+function updCardHtml() {
+  const d = CI.draft; if (!d) return '';
+  const p = d.pending[0];
+  const rows = d.changes.map(c => { const [from, to] = updShow(c), name = `<strong>${esc(acctById(c.accountId)?.name || '')}</strong> <span class="muted">${esc(UPD_FIELDS[c.field])}</span>`;
+    if (c.note) return `<li class="upd-note">${name} <span class="muted">${esc(c.note)}</span></li>`;
+    if (c.same) return `<li class="upd-note">${name} <span class="muted">already ${esc(to)}</span></li>`;
+    return `<li>${name} <span class="upd-from">${esc(from)}</span> → <span class="upd-to">${esc(to)}</span></li>`; }).join('');
+  const real = d.changes.filter(c => !c.same && !c.note).length;
+  return `<section class="panel ci-card tell-card"><div class="ci-top"><span class="ci-kicker">Update</span></div>
+    ${rows ? `<ul class="upd-list">${rows}</ul>` : ''}
+    <p class="ci-guess tell-q">${esc(p ? updPrompt() : real ? (real === 1 ? 'Save this change?' : 'Save these changes?') : 'Nothing to change.')}</p>
+    ${p ? `<div class="ci-chips">${p.options.map(id => `<button class="ci-chip" data-ci="tell-pick" data-v="${esc(id)}">${esc(acctById(id)?.name || '')}</button>`).join('')}<button class="ci-chip" data-ci="tell-pick" data-v="">Neither</button></div>` : ''}
+    <div class="ci-actions">${!p && real ? '<button class="btn primary" data-ci="tell-save">Save</button>' : ''}</div>
+    <div class="ci-foot"><button class="btn ghost" data-ci="tell-cancel">${!p && !real ? 'Close' : 'Cancel'}</button></div></section>`;
 }
