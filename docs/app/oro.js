@@ -3200,6 +3200,7 @@ function paintTopbar(page) {
   const st = $('#side-tools');
   if (st) st.innerHTML = `${talkOn() ? `<button class="icon-btn talk-icon ${TALK.open ? 'on' : ''}" data-talk-open="" aria-label="Talk">${MIC_ICON}</button>` : ''}<button class="icon-btn" data-act="palette" aria-label="Search">${SEARCH_ICON}</button><button class="icon-btn eye" data-act="privacy" aria-pressed="${state.settings.privacy ? 'true' : 'false'}" aria-label="${state.settings.privacy ? 'Show amounts' : 'Hide amounts'}">${state.settings.privacy ? EYE_OFF : EYE}</button>`;
 }
+const CLEAR_ICON = '<svg class="clear-ico" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 const FLAG_ICON = '<svg class="flag-ico" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 14.5V2.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/><path d="M4.7 2.6h8.1l-1.9 3.1 1.9 3.1H4.7z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 const EYE = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>';
@@ -3307,7 +3308,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '005c699';
+const ORO_BUILD = 'cdb4fea';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -3631,6 +3632,9 @@ VIEWS.transactions = p => {
   const multi = members().length > 1;
   const nFilters = ['acct', 'cat', 'who', 'tag', 'flag'].filter(k => p[k]).length;
   const fOpen = UI.txFilters === undefined ? nFilters - (p.flag ? 1 : 0) > 0 : UI.txFilters;   // the flagged list keeps the filters folded
+  // One click back to everything: all months, every account, category, person, flag and tag, no search, everyone's spending
+  const narrowed = month !== 'all' || nFilters > 0 || !!p.q || !!UI.lens;
+  const clearBtn = cls => narrowed ? `<button class="btn small ghost tx-clear ${cls}" data-act="tx-clear" title="Show every transaction: all months, accounts and categories${multi ? ', everyone' : ''}, no search">${CLEAR_ICON}Clear filters</button>` : '';
 
   return pageHead('Transactions', `${list.length.toLocaleString()} shown${unc ? ` · <a href="#/transactions?cat=_none&m=all">${unc} uncategorized</a>` : ''}${nFlag ? ` · <a href="#/transactions?flag=1&m=all" class="flag-link">${FLAG_ICON}${nFlag} flagged</a>` : ''}`,
     `${unc ? `<button class="btn ghost" data-act="run-rules" title="Fill in uncategorized transactions using your rules, your past choices and Ọrọ̀’s merchant list">Auto-categorize</button>` : ''}<button class="btn" data-act="import">Import</button><button class="btn primary" data-act="add-txn">Add transaction</button>`) + lensNote() + `
@@ -3642,9 +3646,10 @@ VIEWS.transactions = p => {
     <label class="field inline more"><span>Flag</span><select data-filter="flag"><option value="">Any</option><option value="1" ${p.flag ? 'selected' : ''}>Flagged only</option></select></label>
     ${tags.length ? `<label class="field inline more"><span>Tag</span><select data-filter="tag"><option value="">Any tag</option>${tags.map(t => `<option ${t === p.tag ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>` : ''}
     <label class="field inline grow"><span>Search</span><input type="search" id="tx-search" data-filter="q" value="${esc(p.q || '')}" placeholder="Payee, memo, #tag, >100"></label>
-    <div class="filters-sm"><button class="btn small ghost" data-act="tx-filters" aria-expanded="${fOpen ? 'true' : 'false'}">${fOpen ? 'Fewer filters' : 'More filters'}${nFilters ? ` · ${nFilters} on` : ''}</button>${shown.length ? `<button class="btn small ghost" data-act="tx-select" aria-pressed="${UI.txSelect ? 'true' : 'false'}">${UI.txSelect ? 'Done selecting' : 'Select'}</button>` : ''}</div>
+    ${clearBtn('tx-clear-wide')}
+    <div class="filters-sm"><button class="btn small ghost" data-act="tx-filters" aria-expanded="${fOpen ? 'true' : 'false'}">${fOpen ? 'Fewer filters' : 'More filters'}${nFilters ? ` · ${nFilters} on` : ''}</button>${clearBtn('')}${shown.length ? `<button class="btn small ghost" data-act="tx-select" aria-pressed="${UI.txSelect ? 'true' : 'false'}">${UI.txSelect ? 'Done selecting' : 'Select'}</button>` : ''}</div>
   </div>
-  ${p.flag && shown.length ? `<p class="lens-note flag-note">${FLAG_ICON} Showing flagged transactions. Pick the right category and each one drops off this list. <a href="#/transactions">Show all</a></p>` : ''}
+  ${p.flag && shown.length ? `<p class="lens-note flag-note">${FLAG_ICON} Showing flagged transactions. Pick the right category and each one drops off this list. <button class="linklike" data-act="tx-clear">Show all</button></p>` : ''}
   <div class="bulk" id="bulk" hidden>
     <span id="bulk-count"></span>
     <select id="bulk-cat" aria-label="Category">${catOptions(null, true)}</select><button class="btn small" data-act="bulk-cat">Set category</button>
@@ -3672,8 +3677,8 @@ VIEWS.transactions = p => {
   ${list.length > limit ? `<p class="center"><button class="btn ghost" data-more="${limit + 250}">Show ${Math.min(250, list.length - limit)} more</button></p>` : ''}`
   : p.flag ? emptyState('Nothing flagged', 'When you’re not sure what a transaction was for, tap its flag (or check “Flag it” when you open it). Flagged ones collect here until you pick a category.', `<a class="btn" href="#/transactions">Back to transactions</a>`)
   : emptyState(state.transactions.length ? 'Nothing matches these filters' : 'No transactions yet',
-    state.transactions.length ? 'Try another month or clear the search.' : 'Import an OFX, QFX, CSV, QIF or PDF from your bank or card, or bring your history over from YNAB, Monarch, Mint or Copilot.',
-    state.transactions.length ? `<a class="btn" href="#/transactions?m=all">Show all months</a>` : `<button class="btn primary" data-act="import">Import a file</button>`)}`;
+    state.transactions.length ? 'Try another month, or clear the filters to see everything.' : 'Import an OFX, QFX, CSV, QIF or PDF from your bank or card, or bring your history over from YNAB, Monarch, Mint or Copilot.',
+    state.transactions.length ? `<button class="btn" data-act="tx-clear">${CLEAR_ICON}Clear filters</button>` : `<button class="btn primary" data-act="import">Import a file</button>`)}`;
 };
 
 /* ================= Budget ================= */
@@ -5311,6 +5316,11 @@ const ACTIONS = {
   'more-pages': () => morePagesSheet(),
   'loan-detail': el => loanModal(el.dataset.id),
   'tx-filters': () => { UI.txFilters = !$('.filters')?.classList.contains('open'); render(); },
+  'tx-clear': () => {   // everything: all months, no account/category/person/flag/tag filter, no search, everyone's spending
+    UI.txFilters = undefined;
+    if (UI.lens) { UI.lens = ''; try { sessionStorage.setItem('keel.lens', ''); } catch (e2) { /* ignore */ } }
+    go('#/transactions?m=all');
+  },
   'tx-select': () => { UI.txSelect = !UI.txSelect; if (!UI.txSelect) { $$('.tx-cb:checked').forEach(c => { c.checked = false; }); } render(); },
   'more-money-date': () => { closeModal(true); ACTIONS['money-date'](); },
   'money-date': el => startMoneyDate(el?.dataset.mk),

@@ -18,6 +18,11 @@ const ACTIONS = {
   'more-pages': () => morePagesSheet(),
   'loan-detail': el => loanModal(el.dataset.id),
   'tx-filters': () => { UI.txFilters = !$('.filters')?.classList.contains('open'); render(); },
+  'tx-clear': () => {   // everything: all months, no account/category/person/flag/tag filter, no search, everyone's spending
+    UI.txFilters = undefined;
+    if (UI.lens) { UI.lens = ''; try { sessionStorage.setItem('keel.lens', ''); } catch (e2) { /* ignore */ } }
+    go('#/transactions?m=all');
+  },
   'tx-select': () => { UI.txSelect = !UI.txSelect; if (!UI.txSelect) { $$('.tx-cb:checked').forEach(c => { c.checked = false; }); } render(); },
   'more-money-date': () => { closeModal(true); ACTIONS['money-date'](); },
   'money-date': el => startMoneyDate(el?.dataset.mk),

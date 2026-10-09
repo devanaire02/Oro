@@ -280,6 +280,8 @@ body.simple .detail-only { display: none !important; }
 .goal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; }
 .goal-card { display: flex; gap: 18px; align-items: flex-start; background: var(--sheet); border: 1px solid var(--rule); border-radius: 10px; padding: 18px; box-shadow: var(--shadow); }
 .goal-card h3 { margin: 0 0 4px; font-size: 18px; }
+.goal-card .s-value { white-space: normal; }   /* “$7,500 of $18,000” drops “of $18,000” to its own line when the card is narrow */
+.goal-card .s-value .muted { white-space: nowrap; }
 .goal-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 8px 0 10px; font-size: 13px; }
 .goal-facts dt { color: var(--muted); font-size: 12px; } .goal-facts dd { margin: 0; text-align: left; }
 
@@ -460,6 +462,8 @@ tr.needs .cat-select { border-color: var(--warn); color: var(--warn); }
 .att-chip { display: inline-flex; align-items: center; gap: 2px; background: var(--pad); border-radius: 6px; padding: 1px 2px 1px 8px; font-size: 13px; }
 .att-chip .icon-btn { width: 24px; height: 24px; font-size: 16px; }
 .filters { display: flex; gap: 12px 18px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.tx-clear { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tx-clear .clear-ico { opacity: .75; }
 .bulk { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border-radius: 8px; background: var(--sheet); border: 1px solid var(--ink-accent); margin-bottom: 12px; position: sticky; top: 64px; z-index: 5; box-shadow: var(--shadow); }
 .bulk select, .bulk input { padding: 4px 8px; font-size: 13px; }
 .toolbar { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; margin: 6px 0 10px; }
@@ -635,6 +639,7 @@ body.presenting { overflow: hidden; }
   .panel { padding: 14px 14px 12px; }
   .cat-select { max-width: 130px; }
   .filters .field.inline { flex-direction: column; align-items: stretch; gap: 2px; flex: 1 1 140px; }
+  .filters .tx-clear-wide { align-self: flex-end; }   /* level with the boxes when the labels sit above them */
   .meter-cell, .budget-table .meter-cell { display: none; }
   .budget-input { width: 64px; }
   .month-label { min-width: 110px; font-size: 15px; }
@@ -817,6 +822,7 @@ a, button, select, label, summary { touch-action: manipulation; }
   .filters .field.inline.more { display: none; }
   .filters.open .field.inline.more { display: flex; }
   .filters-sm { display: flex; gap: 8px; width: 100%; margin-top: -2px; }
+  .filters .tx-clear-wide { display: none; }
   .tx-table, .tx-table tbody, .tx-table tfoot { display: block; }
   .tx-table thead { display: none; }
   .tx-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "payee payee amt" "date cat cat"; column-gap: 10px; row-gap: 4px; align-items: center; padding: 11px 2px 10px; border-bottom: 1px solid var(--rule); }
@@ -1045,7 +1051,7 @@ a, button, select, label, summary { touch-action: manipulation; }
 .ci-examples { margin: 0 0 14px; padding-left: 18px; font-size: 14px; }
 .ci-examples li { margin: 3px 0; }
 .ci-add-row { display: flex; gap: 8px; flex-wrap: wrap; margin: -8px 0 24px; max-width: 680px; }
-/* ---------- Talk: beside the page on the Mac, a sheet on the iPhone ---------- */
+/* ---------- Talk: beside the page on a wide screen, a sheet on the iPhone, an upright iPad and a 10.2-inch iPad in landscape ---------- */
 .talk { position: fixed; top: 0; right: 0; bottom: 0; width: 390px; z-index: 35; display: flex; flex-direction: column; background: var(--pad); border-left: 1px solid var(--rule-strong); box-shadow: -12px 0 32px -18px rgba(0,0,0,.35); }
 .talk[hidden] { display: none; }
 body.talk-open .main-wrap { margin-right: 390px; }
@@ -1067,7 +1073,13 @@ body.talk-open .main-wrap { margin-right: 390px; }
 .tx-targets li { font-weight: 500; }
 .btn.talk-btn.on, .icon-btn.talk-icon.on { color: var(--ink-accent); border-color: var(--ink-accent); }
 @media (min-width: 861px) { body.talk-open .topbar { flex-wrap: wrap; row-gap: 8px; } body.talk-open .tb-right { flex-wrap: wrap; justify-content: flex-end; row-gap: 8px; } }   /* the top bar wraps rather than running under the panel */
-@media (max-width: 1100px) { body.talk-open .main-wrap { margin-right: 0; } .talk { box-shadow: -18px 0 40px -12px rgba(0,0,0,.35); } }
+/* Too narrow to sit beside the page (a 10.2-inch iPad in landscape, a smaller Mac window): a sheet over the page area
+   instead, so nothing on the page hides under it; the page scrolls clear of it */
+@media (min-width: 861px) and (max-width: 1100px) {
+  .talk { top: auto; left: 196px; width: auto; height: min(56vh, 560px); border-top: 1px solid var(--rule-strong); border-radius: 16px 16px 0 0; box-shadow: 0 -14px 40px -12px rgba(0,0,0,.35); }
+  body.talk-open .main-wrap { margin-right: 0; }
+  body.talk-open .main { padding-bottom: calc(58vh + 20px); }
+}
 @media (max-width: 860px) {
   .talk { top: auto; left: 0; width: auto; height: min(62vh, 600px); border-left: 0; border-top: 1px solid var(--rule-strong); border-radius: 16px 16px 0 0; box-shadow: 0 -14px 40px -12px rgba(0,0,0,.35); z-index: 45; }
   body.talk-open .main { padding-bottom: calc(64vh + 20px); }
