@@ -26,6 +26,7 @@ const ACTIONS = {
   'sync': () => syncSheet(),
   'sync-open': () => syncPickFile(),
   'sync-send': () => syncSend(),
+  'sync-discard': () => syncDiscard(),
   'run-rules': () => {
     let n = 0;
     const hist = categoryHistory();
@@ -36,7 +37,7 @@ const ACTIONS = {
     }
     if (n) commit();
     const left = state.transactions.filter(isUncat).length;
-    toast(n ? `Categorized ${n.toLocaleString()} transaction${n > 1 ? 's' : ''}.${left ? ` ${left.toLocaleString()} still need you.` : ''}` : 'Nothing new to categorize. Pick a category for one and Ọrọ̀ will offer to remember it.', n ? { label: 'Undo', fn: undo } : null);
+    toast(n ? `Categorized ${n.toLocaleString()} transaction${n > 1 ? 's' : ''}.${left ? ` ${left.toLocaleString()} still ${left === 1 ? 'needs' : 'need'} you.` : ''}` : 'Nothing new to categorize. Pick a category for one and Ọrọ̀ will offer to remember it.', n ? { label: 'Undo', fn: undo } : null);
   },
   'load-sample': async () => {
     if (state.accounts.length && !await confirmBox('Load sample data', 'This replaces everything in Ọrọ̀ with a fictional household. You can undo it right after.', 'Replace with sample data', true)) return;

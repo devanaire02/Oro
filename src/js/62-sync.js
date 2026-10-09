@@ -73,7 +73,8 @@ function opLabel(o, target) {
   const v = o.v || (o.op === 'del' ? null : undefined);
   const where = { transactions: 'transaction', accounts: 'account', categories: 'category', goals: 'goal', holdings: 'holding', recurring: 'recurring item', rules: 'rule' }[o.path[0]] || o.path.join(' › ');
   if (o.op === 'put' || o.op === 'del') {
-    const item = v || (Array.isArray(walkPath(target, o.path)) ? walkPath(target, o.path).find(x => x.id === o.id) : null) || {};
+    const list = walkPath(target, o.path);
+    const item = (Array.isArray(list) ? list.find(x => x.id === o.id) : null) || v || {};   // name it as it stands where it was kept
     const name = item.payee || item.name || item.text || item.symbol || o.id;
     return `${where} “${name}”`;
   }
@@ -254,7 +255,7 @@ async function syncOpenText(text, fileName = '') {
   const lm = next.meta?.lastMerge;
   if (lm && (!prev?.macSaved || lm.at > prev.macSaved)) msg += ` It includes ${changesWord(lm.applied)} from your ${lm.device || dev}, added on your Mac ${whenLabel(lm.at)}${lm.conflicts ? `; your Mac kept its own version of ${lm.conflicts === 1 ? 'one item' : lm.conflicts + ' items'}${lm.kept?.length ? ` (${lm.kept.slice(0, 2).join(', ')}${lm.kept.length > 2 ? '…' : ''})` : ''}` : ''}.`;
   const left = syncPending().length;
-  if (left) msg += ` ${changesWord(left)} made here still need to go to your Mac.`;
+  if (left) msg += ` ${changesWord(left)} made here still ${left === 1 ? 'needs' : 'need'} to go to your Mac.`;
   if (res?.conflicts.length) msg += ` Your Mac had also changed ${res.conflicts.length === 1 ? 'one item' : res.conflicts.length + ' items'} you edited here (${res.conflicts.slice(0, 2).join(', ')}${res.conflicts.length > 2 ? '…' : ''}), so its version was kept.`;
   toast(msg);
   if (!prev) go('#/overview');
@@ -319,7 +320,8 @@ function syncSheet() {
       <h3>${n ? `${changesWord(n)} to send` : 'Nothing to send'}</h3>
       <p class="muted small">${n ? `Made on this ${dev} and not on your Mac yet. In the share sheet, choose <strong>Save to Files</strong>, then <strong>iCloud Drive › Ọrọ̀ › inbox</strong>.` : sent ? (sent.merged ? `Your Mac added the last ${changesWord(sent.count)} you sent.` : `You sent ${changesWord(sent.count)} on ${esc(whenLabel(sent.at))}. Your Mac adds them the next time Ọrọ̀ is open on it.`) : `Everything you change here is listed until you send it.`}</p>
       ${dels > 20 ? `<p class="notice bad small">This includes deleting ${dels} items on your Mac. If that isn’t what you meant, get the latest from iCloud Drive first and redo your edits.</p>` : ''}
-      ${n ? `<button class="btn primary" data-act="sync-send">Send to your Mac</button>` : ''}
+      ${n ? `<ul class="sync-changes small">${pendingLabels().slice(0, 8).map(l => `<li>${esc(l)}</li>`).join('')}${n > 8 ? `<li class="muted">and ${n - 8} more</li>` : ''}</ul>
+      <div class="actions"><button class="btn primary" data-act="sync-send">Send to your Mac</button><button class="btn ghost danger-text" data-act="sync-discard">Discard these changes</button></div>` : ''}
     </div>
     <div class="sync-block">
       <h3>Get the latest from your Mac</h3>
@@ -336,6 +338,39 @@ function mergeNote(lm, dev) {
   if (!lm) return '';
   const kept = lm.conflicts ? ` It kept its own version of ${lm.conflicts === 1 ? 'one item' : lm.conflicts + ' items'} changed in both places${lm.kept?.length ? `: ${lm.kept.slice(0, 6).map(esc).join(', ')}${lm.kept.length > 6 ? '…' : ''}` : ''}.` : '';
   return ` Your Mac last added changes from your ${esc(lm.device || dev)} ${esc(whenLabel(lm.at))} (${changesWord(lm.applied)}${lm.files > 1 ? ` from ${lm.files} files` : ''}).${kept}`;
+}
+
+/* What's waiting to be sent, in words: "Account “Chase checking”: name", "Transaction “Jewel Osco”: category". */
+const FIELD_WORDS = { categoryId: 'category', payee: 'payee', amount: 'amount', memo: 'memo', name: 'name', flag: 'flag', tags: 'tags', person: 'person', date: 'date', balance: 'balance', balanceDate: 'balance date', owner: 'owner', budget: 'budget', mortgageId: 'mortgage', amort: 'payment tracking', rate: 'rate', minPayment: 'payment', splits: 'split', institution: 'institution', last4: 'last 4 digits' };
+function pendingLabels() {
+  const rec = SYNC.rec; if (!rec?.base) return [];
+  return syncPending().map(o => {
+    const label = opLabel(o, o.op === 'del' ? (rec.sentSnap || rec.base) : state), cap = label.charAt(0).toUpperCase() + label.slice(1);
+    if (o.op === 'del') return `${cap}: deleted`;
+    if (o.op !== 'put') return cap;
+    const before = itemAt(rec.sentSnap || rec.base, o);
+    if (!before) return `${cap}: added`;
+    const fields = [...new Set([...Object.keys(o.v), ...Object.keys(before)])].filter(k => stableStr(o.v[k]) !== stableStr(before[k])).map(k => FIELD_WORDS[k] || k);
+    return `${cap}: ${fields.slice(0, 3).join(', ')}`;
+  });
+}
+/* Throw away this device's unsent edits and go back to the Mac copy it last opened (Undo brings them back). */
+async function syncDiscard() {
+  const rec = SYNC.rec, n = rec?.base ? syncPending().length : 0;
+  if (!n) return toast('Nothing to discard.');
+  const dev = deviceLabel();
+  // unsent edits are the ones since the last send (or since the Mac copy was opened); anything already sent stays
+  const back = rec.sentSnap ? `how it was when you last sent changes (${whenLabel(rec.lastSent?.at)})` : `your Mac’s ${saveLabel(rec.macSaveNo, rec.macSaved)}`;
+  if (!await confirmBox('Discard changes on this ' + dev, `Remove the ${changesWord(n)} made on this ${dev} that ${n === 1 ? 'isn’t' : 'aren’t'} on your Mac? This ${dev} goes back to ${esc(back)}. Nothing on your Mac changes.`, 'Discard changes', true)) return;
+  const keep = {};
+  for (const k of SYNC_SKIP_SETTINGS) keep[k] = state.settings?.[k];
+  const next = cloneVal(rec.sentSnap || rec.base);
+  for (const k of SYNC_SKIP_SETTINGS) if (keep[k] !== undefined) next.settings[k] = keep[k];
+  state = next; invalidate(); applyTheme(); commit({ silent: true });
+  SYNC.cacheKey = null; SYNC.prepared = null;
+  await syncSave();
+  closeModal(true); render();
+  toast(`Discarded ${changesWord(n)}. This ${dev} is back to ${back}.`, { label: 'Undo', fn: () => { undo(); SYNC.cacheKey = null; render(); } });
 }
 
 /* ---------- Mac side: merge change files from inbox/ ---------- */

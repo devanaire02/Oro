@@ -715,6 +715,10 @@ body.presenting { overflow: hidden; }
 .loan-setup .form-grid { margin-top: 10px; }
 .loan-whatif { margin-top: 14px; }
 .loan-whatif .field.inline { max-width: 340px; }
+.sync-changes { margin: 6px 0 10px; padding-left: 18px; }
+.sync-changes li { margin: 2px 0; }
+.sync-block .actions { margin-top: 10px; }
+.sync-block .actions .btn { margin-top: 0; }
 .sync-note { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--rule); }
 .sync-block h3 { font: 600 15px/1.3 var(--sans); margin: 0 0 4px; }
 .sync-block .btn { margin-top: 10px; }
