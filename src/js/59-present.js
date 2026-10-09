@@ -166,6 +166,7 @@ function armAutoLock() {
 ['mousemove', 'keydown', 'mousedown', 'touchstart', 'wheel'].forEach(ev => document.addEventListener(ev, debounce(armAutoLock, 1000), { passive: true }));
 function lockNow() {
   if (!Store.key || $('.lock-screen')) return;
+  UI.sticky = {};   // filters start fresh after a lock
   if ($('#present')) { $('#present').remove(); document.body.classList.remove('presenting'); }
   closeModal(true);
   const wrap = document.createElement('div');

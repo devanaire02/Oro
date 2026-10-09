@@ -45,8 +45,18 @@ function memberOptions(sel, inherit) {
   return (inherit ? `<option value="">${esc(inherit)}</option>` : '') + members().map(m => `<option value="${m.id}" ${m.id === sel ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
 }
 
+/* Filters on these pages (month, account, category, report period, tax year…) stay as you left them while you move
+   around the app. They reset when the app restarts or locks. */
+const STICKY_PAGES = new Set(['transactions', 'budget', 'reports', 'planning', 'taxes']);
 function render() {
   if (!$('#main')) return;
+  {
+    const page = route().page, qs = location.hash.split('?')[1] || '';
+    const back = STICKY_PAGES.has(page) && page !== UI.lastPage && !qs && UI.sticky?.[page];
+    UI.lastPage = page;
+    if (back) { location.replace(`#/${page}?${UI.sticky[page]}`); return; }   // coming back from another section: pick up where you were
+    if (STICKY_PAGES.has(page)) (UI.sticky ||= {})[page] = qs;
+  }
   invalidate();
   const ae = document.activeElement;
   let focusSel = null;

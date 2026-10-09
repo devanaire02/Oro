@@ -3046,8 +3046,18 @@ function memberOptions(sel, inherit) {
   return (inherit ? `<option value="">${esc(inherit)}</option>` : '') + members().map(m => `<option value="${m.id}" ${m.id === sel ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
 }
 
+/* Filters on these pages (month, account, category, report period, tax year…) stay as you left them while you move
+   around the app. They reset when the app restarts or locks. */
+const STICKY_PAGES = new Set(['transactions', 'budget', 'reports', 'planning', 'taxes']);
 function render() {
   if (!$('#main')) return;
+  {
+    const page = route().page, qs = location.hash.split('?')[1] || '';
+    const back = STICKY_PAGES.has(page) && page !== UI.lastPage && !qs && UI.sticky?.[page];
+    UI.lastPage = page;
+    if (back) { location.replace(`#/${page}?${UI.sticky[page]}`); return; }   // coming back from another section: pick up where you were
+    if (STICKY_PAGES.has(page)) (UI.sticky ||= {})[page] = qs;
+  }
   invalidate();
   const ae = document.activeElement;
   let focusSel = null;
@@ -3227,7 +3237,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '86d2bb4';
+const ORO_BUILD = '02ef76f';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -5153,6 +5163,7 @@ function armAutoLock() {
 ['mousemove', 'keydown', 'mousedown', 'touchstart', 'wheel'].forEach(ev => document.addEventListener(ev, debounce(armAutoLock, 1000), { passive: true }));
 function lockNow() {
   if (!Store.key || $('.lock-screen')) return;
+  UI.sticky = {};   // filters start fresh after a lock
   if ($('#present')) { $('#present').remove(); document.body.classList.remove('presenting'); }
   closeModal(true);
   const wrap = document.createElement('div');
