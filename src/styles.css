@@ -1169,3 +1169,11 @@ body.talk-open .main-wrap { margin-right: 390px; }
 .holdings-table:not(.collapsed) .coll-count { display: none; }
 @media (max-width: 860px) { .coll-btn { width: 36px; height: 36px; margin-left: -8px; } }
 @media (max-width: 360px) { .crypto-prices .coin-price { width: 5.6em; padding: 4px 6px; } .crypto-prices .cur { display: none; } }
+/* ---------- Investments: fees ---------- */
+.fees-panel .fee-form { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule); }
+.fees-panel .fee-head { font: 600 15px var(--serif); margin: 0 0 4px; }
+.fees-panel .fee-er-cell { white-space: nowrap; }
+.fees-panel .fee-er { width: 5.5em; text-align: right; padding: 4px 8px; font: inherit; font-variant-numeric: tabular-nums; }
+.fees-panel .cur { color: var(--muted); margin-left: 3px; }
+.fees-panel .actions { margin-top: 10px; }
+@media (max-width: 640px) { .fees-panel .fee-er { width: 4.6em; } .fees-panel .ledger th, .fees-panel .ledger td { padding-left: 4px; padding-right: 4px; } }

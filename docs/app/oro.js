@@ -1343,18 +1343,74 @@ function deductionSummary(year) {
 
 /* ---------- fund fees ---------- */
 const KNOWN_ER = { VTI: 0.03, VOO: 0.03, VXUS: 0.05, BND: 0.03, BNDX: 0.07, VTSAX: 0.04, VFIAX: 0.04, VTIAX: 0.12, VBTLX: 0.04, VEA: 0.05, VWO: 0.08, VNQ: 0.13, VIG: 0.05, VYM: 0.06, SCHD: 0.06, SCHB: 0.03, SCHX: 0.03, SCHF: 0.06, SCHZ: 0.03, SPY: 0.0945, IVV: 0.03, ITOT: 0.03, IXUS: 0.07, AGG: 0.03, IEFA: 0.07, IEMG: 0.09, QQQ: 0.20, QQQM: 0.15, FXAIX: 0.015, FSKAX: 0.015, FTIHX: 0.06, FZROX: 0, FZILX: 0, FXNAX: 0.025, FSPSX: 0.035, SPAXX: 0.42, FDRXX: 0.37, VMFXX: 0.11, SWVXX: 0.34, ARKK: 0.75, GLD: 0.40, IAU: 0.25, IBIT: 0.25, FBTC: 0.25, TLT: 0.15, SGOV: 0.09, BIL: 0.1356, VGT: 0.09, XLK: 0.08, VUG: 0.04, VTV: 0.04, DIA: 0.16, IWM: 0.19, VB: 0.05, VO: 0.04 };
+/* More widely held index funds and ETFs. Expense ratios change now and then, so these are approximate starting points:
+   a figure you type in a holding always wins. */
+Object.assign(KNOWN_ER, {
+  // Vanguard ETFs
+  VT: 0.06, VV: 0.04, MGK: 0.07, MGC: 0.06, VBR: 0.07, VBK: 0.07, VOE: 0.07, VOT: 0.07, VXF: 0.05, VEU: 0.07, VSS: 0.07, VGK: 0.06, VPL: 0.07, VNQI: 0.12,
+  VTEB: 0.03, VCIT: 0.03, VCSH: 0.03, VCLT: 0.03, VGIT: 0.03, VGSH: 0.03, VGLT: 0.03, VTIP: 0.03, BSV: 0.03, BIV: 0.03, BLV: 0.03, VMBS: 0.03, VTC: 0.03,
+  VHT: 0.09, VFH: 0.09, VDE: 0.09, VIS: 0.09, VCR: 0.09, VDC: 0.09, VPU: 0.09, VAW: 0.09, VOX: 0.09, VONG: 0.07, VONV: 0.07, VONE: 0.07, VTHR: 0.07,
+  VOOG: 0.07, VOOV: 0.07, VIOO: 0.07, VYMI: 0.17, VIGI: 0.10, ESGV: 0.09, VWOB: 0.15, VUSB: 0.10,
+  // Vanguard mutual funds (Admiral and target-date)
+  VTSAX: 0.04, VFIAX: 0.04, VTIAX: 0.09, VBTLX: 0.04, VTABX: 0.10, VGSLX: 0.13, VIMAX: 0.05, VSMAX: 0.05, VWENX: 0.17, VWELX: 0.25, VWIAX: 0.15, VWINX: 0.22,
+  VTWAX: 0.10, VBIAX: 0.07, VTMFX: 0.09, VWIUX: 0.09, VDADX: 0.08, VEXAX: 0.05, VEMAX: 0.13, VTMGX: 0.05, VGSTX: 0.17, VSIAX: 0.07, VIGAX: 0.05, VVIAX: 0.05,
+  VTINX: 0.08, VTXVX: 0.08, VTWNX: 0.08, VTTVX: 0.08, VTHRX: 0.08, VTTHX: 0.08, VFORX: 0.08, VTIVX: 0.08, VFIFX: 0.08, VFFVX: 0.08, VTTSX: 0.08, VLXVX: 0.08, VSVNX: 0.08,
+  // Schwab
+  SCHA: 0.04, SCHM: 0.04, SCHG: 0.04, SCHV: 0.04, SCHE: 0.11, SCHC: 0.11, SCHH: 0.07, SCHP: 0.03, SCHR: 0.03, SCHO: 0.03, SCHQ: 0.03, SCHI: 0.03, SCHJ: 0.03,
+  SCHY: 0.08, SCHK: 0.03, SWPPX: 0.02, SWTSX: 0.03, SWISX: 0.06, SWAGX: 0.04, SWLGX: 0.035, SWMCX: 0.04, SWSSX: 0.04,
+  // iShares
+  IJH: 0.05, IJR: 0.06, IWF: 0.19, IWD: 0.19, IWB: 0.15, IWV: 0.20, IWR: 0.18, IWO: 0.24, IWN: 0.24, IUSB: 0.06, IUSG: 0.04, IUSV: 0.04, EFA: 0.35, EEM: 0.70, ACWI: 0.32,
+  MUB: 0.05, TIP: 0.18, SHY: 0.15, IEF: 0.15, LQD: 0.14, HYG: 0.49, USMV: 0.15, MTUM: 0.15, QUAL: 0.15, IVW: 0.18, IVE: 0.18, IGSB: 0.04, IGIB: 0.04,
+  GOVT: 0.05, SHV: 0.15, ETHA: 0.25, DGRO: 0.08, HDV: 0.08, SOXX: 0.35, EFV: 0.33, IDEV: 0.04, ISTB: 0.06, IMTB: 0.06, USRT: 0.08, REET: 0.14,
+  // SPDR (State Street)
+  SPLG: 0.02, SPTM: 0.03, SPDW: 0.03, SPEM: 0.07, SPAB: 0.03, SPYG: 0.04, SPYV: 0.04, SPSM: 0.03, SPMD: 0.03, SPTL: 0.03, SPTI: 0.03, SPTS: 0.03, SPIB: 0.04,
+  XLF: 0.08, XLE: 0.08, XLV: 0.08, XLY: 0.08, XLP: 0.08, XLI: 0.08, XLU: 0.08, XLB: 0.08, XLRE: 0.08, XLC: 0.08, MDY: 0.23, GLDM: 0.10, SDY: 0.35,
+  // Invesco and others
+  RSP: 0.20, SPLV: 0.25, JEPI: 0.35, JEPQ: 0.35, DGRW: 0.28, NOBL: 0.35, COWZ: 0.49, AVUV: 0.25, AVDV: 0.36, AVEM: 0.33, AVUS: 0.15, DFAC: 0.17,
+  // Fidelity ETFs and index mutual funds
+  FBND: 0.36, FTEC: 0.084, FHLC: 0.084, FENY: 0.084, FDIS: 0.084, FNCL: 0.084, FSTA: 0.084, FIDU: 0.084, FUTY: 0.084, FMAT: 0.084, FREL: 0.084, FCOM: 0.084,
+  ONEQ: 0.21, FBCG: 0.59, FETH: 0.25, FDVV: 0.15, FELC: 0.18,
+  FNILX: 0, FZIPX: 0, FSMDX: 0.025, FSSNX: 0.025, FSPGX: 0.035, FLCOX: 0.035, FPADX: 0.075, FUAMX: 0.03, FNSOX: 0.03, FSRNX: 0.07, FIPDX: 0.05, FSGGX: 0.055, FSEVX: 0.035,
+});
 function expenseRatioOf(h) { const er = h.er ?? KNOWN_ER[String(h.symbol || '').toUpperCase()]; return er == null || er === '' ? null : Number(er); }
-function feeAnalysis() {
-  const hs = state.holdings.filter(h => !h.private);
-  const known = hs.filter(h => expenseRatioOf(h) != null);
-  const value = sum(known.map(holdingValue));
-  const fees = sum(known.map(h => holdingValue(h) * expenseRatioOf(h) / 100));
-  const weighted = value ? fees / value * 100 : 0;
-  const total = sum(hs.map(holdingValue));
+
+/* What kind of holding this is, for fees: only funds carry an expense ratio. Individual stocks and bonds don't, coins
+   don't, and a money market's yield is already after its fee. You can say otherwise in the holding (h.fund). */
+const MMF = /^(SPAXX|FDRXX|FZFXX|FCASH|SWVXX|SNVXX|SNSXX|VMFXX|VMRXX|VUSXX|SPRXX|FZDXX|FDLXX|TTTXX|CORE|CASH|MMDA)/;
+const FUND_NAME = /\b(ETF|ETN|FUNDS?|FD|INDEX|IDX|PORTFOLIO|PORTF?|ISHARES|SPDR|ADMIRAL|ADM|INSTL?|INSTITUTIONAL|INVESTOR CL|TARGET (DATE|RETIREMENT)|FREEDOM|SELECT SECTOR|UNIT INVESTMENT|TR SER|TRUST SER|INTERVAL|CLOSED[- ]END|POWERSHARES|INVESCO|VANGUARD|SCHWAB|PROSHARES|DIREXION|WISDOMTREE|GLOBAL X|FIRST TRUST|ARK )\b/i;
+function holdingKind(h) {
+  const a = acctById(h.accountId), s = String(h.symbol || '').toUpperCase();
+  if (h.assetClass === 'Cash' || MMF.test(s) || /MONEY MARKET|CASH RESERVE|GOVT? CASH|SWEEP|CORE POSITION/i.test(h.name || '')) return 'cash';
+  if (a?.type === 'crypto') return 'coin';
+  if (h.private) return 'private';
+  if (h.fund === false) return 'stock';             // you said it isn't a fund
+  if (h.fund === true || (h.er != null && h.er !== '')) return 'fund';
+  if (KNOWN_ER[s] != null || /^[A-Z]{4}X$/.test(s) || FUND_NAME.test(h.name || '')) return 'fund';
+  return h.name ? 'stock' : 'unknown';              // a named holding that doesn't look like a fund: a stock, bond or CD
+}
+function feeAnalysis(accts) {
+  const ids = accts ? new Set(accts.map(a => a.id)) : null;
+  const hs = state.holdings.filter(h => !ids || ids.has(h.accountId));
+  const by = { fund: [], stock: [], coin: [], cash: [], private: [], unknown: [] };
+  for (const h of hs) by[holdingKind(h)].push(h);
+  const known = by.fund.filter(h => expenseRatioOf(h) != null), missingH = [...by.fund.filter(h => expenseRatioOf(h) == null), ...by.unknown];
+  const value = sum(known.map(holdingValue)), fees = sum(known.map(h => holdingValue(h) * expenseRatioOf(h) / 100));
+  const missingValue = sum(missingH.map(holdingValue)), stockValue = sum(by.stock.map(holdingValue)), coinValue = sum(by.coin.map(holdingValue));
+  const cashValue = sum(by.cash.map(holdingValue));
+  // the same fund in several accounts is one fund to ask about
+  const missing = Object.values(missingH.reduce((m, h) => { const k = h.symbol.toUpperCase(); (m[k] ||= { symbol: k, name: h.name, value: 0, holdings: [] }).value += holdingValue(h); m[k].holdings.push(h); return m; }, {})).sort((a, b) => b.value - a.value);
+  const invAccts = (accts || activeAccounts().filter(a => ACCOUNT_TYPES[a.type]?.bucket === 'invest')).filter(a => +a.advisoryFee > 0);
+  const advisory = sum(invAccts.map(a => accountValue(a) * a.advisoryFee / 100));
+  const invested = value + missingValue + stockValue + coinValue;                 // what fees are charged against (cash aside)
+  const allIn = invested ? (fees + advisory) / invested * 100 : 0;
   const g = 0.06, yrs = 20;
-  const drag = value * (Math.pow(1 + g, yrs) - Math.pow(1 + g - weighted / 100, yrs));
+  const drag = invested * (Math.pow(1 + g, yrs) - Math.pow(1 + g - allIn / 100, yrs));
   const top = known.map(h => ({ h, er: expenseRatioOf(h), fee: holdingValue(h) * expenseRatioOf(h) / 100 })).sort((a, b) => b.fee - a.fee);
-  return { value, fees: round2(fees), weighted, drag: round2(drag), coverage: total ? value / total : 0, top, unknown: hs.filter(h => expenseRatioOf(h) == null && h.assetClass !== 'Cash') };
+  return {
+    value, fees: round2(fees), weighted: value ? fees / value * 100 : 0, advisory: round2(advisory), advisoryAccts: invAccts.length, allIn, invested, drag: round2(drag),
+    coverage: value + missingValue ? value / (value + missingValue) : 1, top, missing, stockValue, coinValue, cashValue, nStocks: by.stock.length,
+    unknown: missingH,   // older callers
+  };
 }
 
 /* ---------- report periods ---------- */
@@ -3469,7 +3525,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '08b0645';
+const ORO_BUILD = 'f912bc7';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -4130,13 +4186,7 @@ VIEWS.investments = () => {
     const months = Object.keys(state.snapshots).sort().slice(-24);
     const histAccts = accts.filter(a => months.some(m => state.snapshots[m][a.id]));
     return `<div class="cols">
-    <section class="panel">
-      <header class="panel-head"><h2>What you pay in fund fees</h2><span class="muted small">${fa.coverage < 0.999 ? `Covers ${pct(fa.coverage, 0)} of holdings` : ''}</span></header>
-      ${fa.value ? `<dl class="kpis three"><div><dt>Weighted expense ratio</dt><dd class="num">${fa.weighted.toFixed(2)}%</dd></div><div><dt>Per year</dt><dd class="num">${money(fa.fees, { cents: false })}</dd></div><div><dt>Over 20 years</dt><dd class="num">${money(fa.drag, { cents: false })}</dd><span class="muted small">Growth lost at 6% a year</span></div></dl>
-      <table class="ledger compact" data-sort-id="fees"><thead><tr><th>Fund</th><th class="num">Expense ratio</th><th class="num">Per year</th></tr></thead><tbody>${fa.top.slice(0, 5).map(x => `<tr><th scope="row"><button class="linklike" data-edit-holding="${x.h.id}">${esc(x.h.symbol)}</button> <span class="muted small">${esc(x.h.name || '')}</span></th><td class="num ${x.er >= 0.5 ? 'neg' : ''}">${x.er.toFixed(2)}%</td><td class="num">${money(x.fee, { cents: false })}</td></tr>`).join('')}</tbody></table>
-      ${fa.unknown.length ? `<p class="muted small">No expense ratio on file for ${fa.unknown.slice(0, 4).map(h => esc(h.symbol)).join(', ')}${fa.unknown.length > 4 ? '…' : ''}. Add it in each holding.</p>` : ''}`
-      : '<p class="muted">Add holdings to see the fees inside your funds.</p>'}
-    </section>
+    ${feesPanel(fa)}
     <section class="panel">
       <header class="panel-head"><h2>Value over time</h2></header>
       ${chartHost({ type: 'stack', h: 230, labels: months.map(m => monthLabel(m, true)), series: histAccts.map((a, i) => ({ name: a.name, color: `var(--c${(i % 8) + 1})`, values: months.map(m => state.snapshots[m][a.id] || 0) })), empty: 'History builds as months pass.',
@@ -4445,6 +4495,67 @@ function holdingsAll() {   // Collapse all / Expand all (ACTIONS['holdings-all']
   for (const id of ids) { if (fold) map[id] = true; else delete map[id]; }
   setHoldingsCollapsed(map); render();
 }
+
+/* ---------- What you pay in fees ----------
+   Fund expense ratios (on file for ~270 common funds, or typed in), plus any advisory fee on the account. Individual
+   stocks and bonds, coins and cash carry no fund fee, so they're never "missing"; only real funds without a figure are
+   asked about, biggest first, and one answer covers that fund in every account. */
+function feesPanel(fa) {
+  if (!fa.invested && !fa.cashValue) return `<section class="panel"><header class="panel-head"><h2>What you pay in fees</h2></header><p class="muted">Add holdings to see the fees inside your funds.</p></section>`;
+  const notes = [];
+  if (fa.stockValue) notes.push(`individual stocks and bonds (${money(fa.stockValue, { cents: false })}) have no fund fee`);
+  if (fa.coinValue) notes.push(`neither does crypto (${money(fa.coinValue, { cents: false })})`);
+  if (fa.cashValue) notes.push(`money market funds (${money(fa.cashValue, { cents: false })}) are left out: their yield is already after their fee`);
+  return `<section class="panel fees-panel" id="fees">
+    <header class="panel-head"><h2>What you pay in fees</h2><span class="muted small">${fa.missing.length ? `Expense ratios known for ${pct(fa.coverage, 0)} of your funds` : fa.value ? 'Every fund has an expense ratio' : ''}</span></header>
+    <dl class="kpis three">
+      <div><dt>Fund fees a year</dt><dd class="num">${money(fa.fees, { cents: false })}</dd><span class="muted small">${fa.value ? `${fa.weighted.toFixed(2)}% on your funds` : 'No funds with a known fee'}</span></div>
+      ${fa.advisory ? `<div><dt>Advisory fees a year</dt><dd class="num">${money(fa.advisory, { cents: false })}</dd><span class="muted small">On ${fa.advisoryAccts} account${fa.advisoryAccts === 1 ? '' : 's'}</span></div>`
+        : `<div><dt>All in</dt><dd class="num">${fa.allIn.toFixed(2)}%</dd><span class="muted small">Of what you have invested. <button class="linklike" data-act="advisory-help">Advisory fee?</button></span></div>`}
+      <div><dt>Over 20 years</dt><dd class="num">${money(fa.drag, { cents: false })}</dd><span class="muted small">Growth lost at 6% a year${fa.advisory ? `, ${fa.allIn.toFixed(2)}% all in` : ''}</span></div>
+    </dl>
+    ${fa.top.length ? `<table class="ledger compact" data-sort-id="fees"><thead><tr><th>Fund</th><th class="num">Expense ratio</th><th class="num">Per year</th></tr></thead><tbody>${fa.top.slice(0, 5).map(x => `<tr><th scope="row"><button class="linklike" data-edit-holding="${x.h.id}">${esc(x.h.symbol)}</button> <span class="muted small">${esc(x.h.name || '')}</span></th><td class="num ${x.er >= 0.5 ? 'neg' : ''}">${x.er.toFixed(Math.abs(x.er * 100 - Math.round(x.er * 100)) < 1e-9 ? 2 : 3)}%</td><td class="num">${money(x.fee, { cents: false })}</td></tr>`).join('')}</tbody></table>` : ''}
+    ${notes.length ? `<p class="muted small">${esc(notes.join('; ').replace(/^./, c => c.toUpperCase()))}.</p>` : ''}
+    ${fa.missing.length ? `<form class="fee-form" data-fee-form>
+      <h3 class="fee-head">${fa.missing.length === 1 ? 'One fund needs' : `${fa.missing.length} funds need`} an expense ratio</h3>
+      <p class="muted small">From the fund’s page or your brokerage. Biggest first; one entry covers that fund in every account. If one isn’t a fund (a stock, bond or CD), say so.</p>
+      <table class="ledger compact"><tbody>${fa.missing.slice(0, 8).map(m => `<tr><th scope="row"><strong>${esc(m.symbol)}</strong> <span class="muted small">${esc(m.name || '')}</span></th><td class="num hide-sm">${money(m.value, { cents: false })}</td>
+        <td class="num fee-er-cell"><input class="fee-er" data-sym="${esc(m.symbol)}" inputmode="decimal" placeholder="0.00" aria-label="Expense ratio for ${esc(m.symbol)}" autocomplete="off"><span class="cur">%</span></td>
+        <td class="acts"><button type="button" class="btn small ghost" data-notfund="${esc(m.symbol)}">Not a fund</button></td></tr>`).join('')}</tbody></table>
+      ${fa.missing.length > 8 ? `<p class="muted small">…and ${fa.missing.length - 8} smaller one${fa.missing.length - 8 === 1 ? '' : 's'}; they’ll move up as you fill these in.</p>` : ''}
+      <div class="actions"><button class="btn primary" type="submit">Save expense ratios</button></div>
+    </form>` : ''}
+  </section>`;
+}
+function setFundFee(sym, patch) {
+  const hs = state.holdings.filter(h => String(h.symbol).toUpperCase() === sym && !h.private);
+  for (const h of hs) Object.assign(h, patch);
+  return hs.length;
+}
+document.addEventListener('submit', e => {
+  const f = e.target;
+  if (!f.matches?.('[data-fee-form]')) return;
+  e.preventDefault();
+  const got = [];
+  for (const inp of f.querySelectorAll('.fee-er')) {
+    if (!inp.value.trim()) continue;
+    const er = parseFloat(inp.value.replace(/[%\s]/g, ''));
+    if (!isFinite(er) || er < 0 || er > 5) { inp.focus(); return toast(`That doesn’t look like an expense ratio for ${inp.dataset.sym}. Type it as a percent, like 0.03.`); }
+    got.push([inp.dataset.sym, er]);
+  }
+  if (!got.length) return toast('Type an expense ratio for at least one fund.');
+  for (const [sym, er] of got) setFundFee(sym, { er, fund: true });
+  commit();
+  toast(`Saved ${got.length === 1 ? `${got[0][0]}’s expense ratio` : `${got.length} expense ratios`}.`, { label: 'Undo', fn: undo });
+});
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-notfund]'); if (!b) return;
+  e.preventDefault();
+  const sym = b.dataset.notfund;
+  setFundFee(sym, { fund: false });
+  commit();
+  toast(`${sym} counts as a stock or bond: no fund fee.`, { label: 'Undo', fn: undo });
+});
 
 /* ================= Reports ================= */
 const PERIODS = [['m', 'This month'], ['lm', 'Last month'], ['ytd', 'This year'], ['12m', 'Last 12 months'], ['ly', 'Last year'], ['custom', 'Custom']];
@@ -5117,6 +5228,7 @@ function acctModal(id, presetType) {
            <label class="field"><span>As of</span><input type="date" name="balanceDate" value="${(a && a.ledger ? a.anchorDate : v.balanceDate) || today()}"></label>`}
       <div class="when-ledger wide"><label class="check"><input type="checkbox" name="ledger" ${(v.ledger ?? ACCOUNT_TYPES[v.type].ledger) ? 'checked' : ''}> Keep the balance up to date from transactions</label><small class="muted">The balance above is the starting point; imported transactions after that date move it. Lets you reconcile against statements.</small></div>
       <div class="when-cash wide"><label class="check"><input type="checkbox" name="forecast" ${(v.forecast ?? ACCOUNT_TYPES[v.type].forecast) ? 'checked' : ''}> Include in the cash-flow forecast</label></div>
+      <label class="field when-invest"><span>Advisory fee (% a year)</span><input name="advisoryFee" inputmode="decimal" value="${v.advisoryFee ?? ''}" placeholder="Optional, like 0.8" autocomplete="off"></label>
       <label class="field when-invest"><span>Treat as (when no holdings)</span><select name="assetClass">${ASSET_CLASSES.map(c => `<option ${c === (v.assetClass || 'US stocks') ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
       <label class="field when-debt"><span>Interest rate (%)</span><input name="rate" inputmode="decimal" value="${v.rate ?? ''}"></label>
       <label class="field when-debt"><span id="minpay-label">${LOAN_TYPES.has(v.type) ? 'Principal and interest per month' : 'Minimum payment'}</span><input name="minPayment" inputmode="decimal" value="${v.minPayment ?? ''}"></label>
@@ -5165,7 +5277,7 @@ function acctModal(id, presetType) {
     }
     const rec = { name: d.name.trim(), type: d.type, institution: d.institution.trim(), last4: d.last4.trim(), notes: d.notes, forecast: d.forecast, ledger: d.ledger && !hasHoldings };
     if ('owner' in d) rec.owner = d.owner;
-    if (ACCOUNT_TYPES[d.type].bucket === 'invest') rec.assetClass = d.assetClass;
+    if (ACCOUNT_TYPES[d.type].bucket === 'invest') { rec.assetClass = d.assetClass; const af = parseFloat(String(d.advisoryFee || '').replace(/[%\s]/g, '')); rec.advisoryFee = isFinite(af) && af > 0 && af < 5 ? af : null; }
     if (ACCOUNT_TYPES[d.type].bucket === 'debt') { rec.rate = d.rate === '' ? null : parseFloat(d.rate); rec.minPayment = d.minPayment === '' ? null : parseAmount(d.minPayment); }
     if (d.type === 'realestate') Object.assign(rec, { mortgageId: d.mortgageId || null, rental: d.rental, rentalGroup: d.rentalGroup, cashInvested: parseAmount(d.cashInvested) || null, units: parseInt(d.units) || null, buildingBasis: parseAmount(d.buildingBasis) || null, placedInService: d.placedInService || null });
     if ('cash' in d) rec.cash = round2(parseAmount(d.cash || '0') || 0);
@@ -5279,9 +5391,10 @@ function holdingModal(id, presetAcct) {
       <label class="field">${lbl('Shares or units', 'Amount (coins)')}<input name="shares" inputmode="decimal" value="${v.shares}" autocomplete="off"></label>
       <label class="field">${lbl('Price per share', 'Price per coin')}<input name="price" id="h-price" inputmode="decimal" value="${v.price}" autocomplete="off"></label>
       <label class="field"><span>Total cost basis</span><input name="costBasis" inputmode="decimal" value="${v.costBasis ?? ''}" placeholder="Optional"></label>
-      <label class="field not-crypto"><span>Expense ratio (%)</span><input name="er" inputmode="decimal" value="${v.er ?? ''}" placeholder="${known != null ? known + ' (on file)' : 'e.g. 0.03'}"></label>
+      <label class="field not-crypto"><span>Expense ratio (%)</span><input name="er" inputmode="decimal" value="${v.er ?? ''}" placeholder="${known != null ? known + ' (on file, approximate)' : 'e.g. 0.03'}"></label>
       <label class="field"><span>Asset class</span><select name="assetClass" id="h-class">${ASSET_CLASSES.map(c => `<option ${c === v.assetClass ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
       <label class="field"><span>Price as of</span><input type="date" name="priceDate" id="h-date" value="${v.priceDate || today()}"></label>
+      <label class="check wide not-crypto"><input type="checkbox" name="notFund" ${v.fund === false ? 'checked' : ''}> Not a fund: an individual stock, bond or CD (no fund fee)</label>
       <label class="check wide not-crypto"><input type="checkbox" name="private" ${v.private ? 'checked' : ''}> Private or illiquid (valued by your own marks)</label>
       <p class="muted small wide only-crypto">A coin has one price: a new price here is used in every crypto account that holds this coin. Ọrọ̀ doesn’t look prices up online.</p>
     </form>`,
@@ -5312,7 +5425,7 @@ function holdingModal(id, presetAcct) {
     let symbol = d.symbol.trim();
     if (crypto) { const c = coinFind(symbol); if (c) symbol = c[0]; }
     if (!symbol || !isFinite(shares) || !isFinite(price)) return toast(crypto ? 'Fill in a coin, the amount and the price.' : 'Fill in a symbol, shares and price.');
-    const rec = { accountId: d.accountId, symbol: symbol.toUpperCase(), name: d.name.trim() || (crypto ? coinBySymbol(symbol)?.[1] || '' : ''), shares, price, costBasis: isFinite(cb) ? cb : null, er: crypto ? undefined : isFinite(er) ? er : undefined, assetClass: crypto ? 'Crypto' : d.assetClass, priceDate: d.priceDate || today(), private: crypto ? false : d.private };
+    const rec = { accountId: d.accountId, symbol: symbol.toUpperCase(), name: d.name.trim() || (crypto ? coinBySymbol(symbol)?.[1] || '' : ''), shares, price, costBasis: isFinite(cb) ? cb : null, er: crypto || d.notFund ? undefined : isFinite(er) ? er : undefined, fund: crypto ? undefined : d.notFund ? false : isFinite(er) ? true : h?.fund === false ? undefined : h?.fund, assetClass: crypto ? 'Crypto' : d.assetClass, priceDate: d.priceDate || today(), private: crypto ? false : d.private };
     if (h && (h.price !== price || h.shares !== shares) && rec.priceDate === h.priceDate) rec.priceDate = today();
     let saved = h;
     if (h) Object.assign(h, rec); else { saved = { id: uid(), ...rec }; state.holdings.push(saved); }
@@ -5724,6 +5837,7 @@ const ACTIONS = {
   'loan-detail': el => loanModal(el.dataset.id),
   'tx-filters': () => { UI.txFilters = !$('.filters')?.classList.contains('open'); render(); },
   'holdings-all': () => holdingsAll(),
+  'advisory-help': () => toast('If an account pays an advisory or wrap fee, add it in that account (Edit account › Advisory fee) and it’s counted here.'),
   'tx-clear': () => {   // everything: all months, no account/category/person/flag/tag filter, no search, everyone's spending
     UI.txFilters = undefined;
     if (UI.lens) { UI.lens = ''; try { sessionStorage.setItem('keel.lens', ''); } catch (e2) { /* ignore */ } }

@@ -19,6 +19,7 @@ const ACTIONS = {
   'loan-detail': el => loanModal(el.dataset.id),
   'tx-filters': () => { UI.txFilters = !$('.filters')?.classList.contains('open'); render(); },
   'holdings-all': () => holdingsAll(),
+  'advisory-help': () => toast('If an account pays an advisory or wrap fee, add it in that account (Edit account › Advisory fee) and it’s counted here.'),
   'tx-clear': () => {   // everything: all months, no account/category/person/flag/tag filter, no search, everyone's spending
     UI.txFilters = undefined;
     if (UI.lens) { UI.lens = ''; try { sessionStorage.setItem('keel.lens', ''); } catch (e2) { /* ignore */ } }

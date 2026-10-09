@@ -169,6 +169,7 @@ function acctModal(id, presetType) {
            <label class="field"><span>As of</span><input type="date" name="balanceDate" value="${(a && a.ledger ? a.anchorDate : v.balanceDate) || today()}"></label>`}
       <div class="when-ledger wide"><label class="check"><input type="checkbox" name="ledger" ${(v.ledger ?? ACCOUNT_TYPES[v.type].ledger) ? 'checked' : ''}> Keep the balance up to date from transactions</label><small class="muted">The balance above is the starting point; imported transactions after that date move it. Lets you reconcile against statements.</small></div>
       <div class="when-cash wide"><label class="check"><input type="checkbox" name="forecast" ${(v.forecast ?? ACCOUNT_TYPES[v.type].forecast) ? 'checked' : ''}> Include in the cash-flow forecast</label></div>
+      <label class="field when-invest"><span>Advisory fee (% a year)</span><input name="advisoryFee" inputmode="decimal" value="${v.advisoryFee ?? ''}" placeholder="Optional, like 0.8" autocomplete="off"></label>
       <label class="field when-invest"><span>Treat as (when no holdings)</span><select name="assetClass">${ASSET_CLASSES.map(c => `<option ${c === (v.assetClass || 'US stocks') ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
       <label class="field when-debt"><span>Interest rate (%)</span><input name="rate" inputmode="decimal" value="${v.rate ?? ''}"></label>
       <label class="field when-debt"><span id="minpay-label">${LOAN_TYPES.has(v.type) ? 'Principal and interest per month' : 'Minimum payment'}</span><input name="minPayment" inputmode="decimal" value="${v.minPayment ?? ''}"></label>
@@ -217,7 +218,7 @@ function acctModal(id, presetType) {
     }
     const rec = { name: d.name.trim(), type: d.type, institution: d.institution.trim(), last4: d.last4.trim(), notes: d.notes, forecast: d.forecast, ledger: d.ledger && !hasHoldings };
     if ('owner' in d) rec.owner = d.owner;
-    if (ACCOUNT_TYPES[d.type].bucket === 'invest') rec.assetClass = d.assetClass;
+    if (ACCOUNT_TYPES[d.type].bucket === 'invest') { rec.assetClass = d.assetClass; const af = parseFloat(String(d.advisoryFee || '').replace(/[%\s]/g, '')); rec.advisoryFee = isFinite(af) && af > 0 && af < 5 ? af : null; }
     if (ACCOUNT_TYPES[d.type].bucket === 'debt') { rec.rate = d.rate === '' ? null : parseFloat(d.rate); rec.minPayment = d.minPayment === '' ? null : parseAmount(d.minPayment); }
     if (d.type === 'realestate') Object.assign(rec, { mortgageId: d.mortgageId || null, rental: d.rental, rentalGroup: d.rentalGroup, cashInvested: parseAmount(d.cashInvested) || null, units: parseInt(d.units) || null, buildingBasis: parseAmount(d.buildingBasis) || null, placedInService: d.placedInService || null });
     if ('cash' in d) rec.cash = round2(parseAmount(d.cash || '0') || 0);
@@ -331,9 +332,10 @@ function holdingModal(id, presetAcct) {
       <label class="field">${lbl('Shares or units', 'Amount (coins)')}<input name="shares" inputmode="decimal" value="${v.shares}" autocomplete="off"></label>
       <label class="field">${lbl('Price per share', 'Price per coin')}<input name="price" id="h-price" inputmode="decimal" value="${v.price}" autocomplete="off"></label>
       <label class="field"><span>Total cost basis</span><input name="costBasis" inputmode="decimal" value="${v.costBasis ?? ''}" placeholder="Optional"></label>
-      <label class="field not-crypto"><span>Expense ratio (%)</span><input name="er" inputmode="decimal" value="${v.er ?? ''}" placeholder="${known != null ? known + ' (on file)' : 'e.g. 0.03'}"></label>
+      <label class="field not-crypto"><span>Expense ratio (%)</span><input name="er" inputmode="decimal" value="${v.er ?? ''}" placeholder="${known != null ? known + ' (on file, approximate)' : 'e.g. 0.03'}"></label>
       <label class="field"><span>Asset class</span><select name="assetClass" id="h-class">${ASSET_CLASSES.map(c => `<option ${c === v.assetClass ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
       <label class="field"><span>Price as of</span><input type="date" name="priceDate" id="h-date" value="${v.priceDate || today()}"></label>
+      <label class="check wide not-crypto"><input type="checkbox" name="notFund" ${v.fund === false ? 'checked' : ''}> Not a fund: an individual stock, bond or CD (no fund fee)</label>
       <label class="check wide not-crypto"><input type="checkbox" name="private" ${v.private ? 'checked' : ''}> Private or illiquid (valued by your own marks)</label>
       <p class="muted small wide only-crypto">A coin has one price: a new price here is used in every crypto account that holds this coin. Ọrọ̀ doesn’t look prices up online.</p>
     </form>`,
@@ -364,7 +366,7 @@ function holdingModal(id, presetAcct) {
     let symbol = d.symbol.trim();
     if (crypto) { const c = coinFind(symbol); if (c) symbol = c[0]; }
     if (!symbol || !isFinite(shares) || !isFinite(price)) return toast(crypto ? 'Fill in a coin, the amount and the price.' : 'Fill in a symbol, shares and price.');
-    const rec = { accountId: d.accountId, symbol: symbol.toUpperCase(), name: d.name.trim() || (crypto ? coinBySymbol(symbol)?.[1] || '' : ''), shares, price, costBasis: isFinite(cb) ? cb : null, er: crypto ? undefined : isFinite(er) ? er : undefined, assetClass: crypto ? 'Crypto' : d.assetClass, priceDate: d.priceDate || today(), private: crypto ? false : d.private };
+    const rec = { accountId: d.accountId, symbol: symbol.toUpperCase(), name: d.name.trim() || (crypto ? coinBySymbol(symbol)?.[1] || '' : ''), shares, price, costBasis: isFinite(cb) ? cb : null, er: crypto || d.notFund ? undefined : isFinite(er) ? er : undefined, fund: crypto ? undefined : d.notFund ? false : isFinite(er) ? true : h?.fund === false ? undefined : h?.fund, assetClass: crypto ? 'Crypto' : d.assetClass, priceDate: d.priceDate || today(), private: crypto ? false : d.private };
     if (h && (h.price !== price || h.shares !== shares) && rec.priceDate === h.priceDate) rec.priceDate = today();
     let saved = h;
     if (h) Object.assign(h, rec); else { saved = { id: uid(), ...rec }; state.holdings.push(saved); }

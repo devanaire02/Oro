@@ -39,13 +39,7 @@ VIEWS.investments = () => {
     const months = Object.keys(state.snapshots).sort().slice(-24);
     const histAccts = accts.filter(a => months.some(m => state.snapshots[m][a.id]));
     return `<div class="cols">
-    <section class="panel">
-      <header class="panel-head"><h2>What you pay in fund fees</h2><span class="muted small">${fa.coverage < 0.999 ? `Covers ${pct(fa.coverage, 0)} of holdings` : ''}</span></header>
-      ${fa.value ? `<dl class="kpis three"><div><dt>Weighted expense ratio</dt><dd class="num">${fa.weighted.toFixed(2)}%</dd></div><div><dt>Per year</dt><dd class="num">${money(fa.fees, { cents: false })}</dd></div><div><dt>Over 20 years</dt><dd class="num">${money(fa.drag, { cents: false })}</dd><span class="muted small">Growth lost at 6% a year</span></div></dl>
-      <table class="ledger compact" data-sort-id="fees"><thead><tr><th>Fund</th><th class="num">Expense ratio</th><th class="num">Per year</th></tr></thead><tbody>${fa.top.slice(0, 5).map(x => `<tr><th scope="row"><button class="linklike" data-edit-holding="${x.h.id}">${esc(x.h.symbol)}</button> <span class="muted small">${esc(x.h.name || '')}</span></th><td class="num ${x.er >= 0.5 ? 'neg' : ''}">${x.er.toFixed(2)}%</td><td class="num">${money(x.fee, { cents: false })}</td></tr>`).join('')}</tbody></table>
-      ${fa.unknown.length ? `<p class="muted small">No expense ratio on file for ${fa.unknown.slice(0, 4).map(h => esc(h.symbol)).join(', ')}${fa.unknown.length > 4 ? '…' : ''}. Add it in each holding.</p>` : ''}`
-      : '<p class="muted">Add holdings to see the fees inside your funds.</p>'}
-    </section>
+    ${feesPanel(fa)}
     <section class="panel">
       <header class="panel-head"><h2>Value over time</h2></header>
       ${chartHost({ type: 'stack', h: 230, labels: months.map(m => monthLabel(m, true)), series: histAccts.map((a, i) => ({ name: a.name, color: `var(--c${(i % 8) + 1})`, values: months.map(m => state.snapshots[m][a.id] || 0) })), empty: 'History builds as months pass.',
@@ -354,3 +348,64 @@ function holdingsAll() {   // Collapse all / Expand all (ACTIONS['holdings-all']
   for (const id of ids) { if (fold) map[id] = true; else delete map[id]; }
   setHoldingsCollapsed(map); render();
 }
+
+/* ---------- What you pay in fees ----------
+   Fund expense ratios (on file for ~270 common funds, or typed in), plus any advisory fee on the account. Individual
+   stocks and bonds, coins and cash carry no fund fee, so they're never "missing"; only real funds without a figure are
+   asked about, biggest first, and one answer covers that fund in every account. */
+function feesPanel(fa) {
+  if (!fa.invested && !fa.cashValue) return `<section class="panel"><header class="panel-head"><h2>What you pay in fees</h2></header><p class="muted">Add holdings to see the fees inside your funds.</p></section>`;
+  const notes = [];
+  if (fa.stockValue) notes.push(`individual stocks and bonds (${money(fa.stockValue, { cents: false })}) have no fund fee`);
+  if (fa.coinValue) notes.push(`neither does crypto (${money(fa.coinValue, { cents: false })})`);
+  if (fa.cashValue) notes.push(`money market funds (${money(fa.cashValue, { cents: false })}) are left out: their yield is already after their fee`);
+  return `<section class="panel fees-panel" id="fees">
+    <header class="panel-head"><h2>What you pay in fees</h2><span class="muted small">${fa.missing.length ? `Expense ratios known for ${pct(fa.coverage, 0)} of your funds` : fa.value ? 'Every fund has an expense ratio' : ''}</span></header>
+    <dl class="kpis three">
+      <div><dt>Fund fees a year</dt><dd class="num">${money(fa.fees, { cents: false })}</dd><span class="muted small">${fa.value ? `${fa.weighted.toFixed(2)}% on your funds` : 'No funds with a known fee'}</span></div>
+      ${fa.advisory ? `<div><dt>Advisory fees a year</dt><dd class="num">${money(fa.advisory, { cents: false })}</dd><span class="muted small">On ${fa.advisoryAccts} account${fa.advisoryAccts === 1 ? '' : 's'}</span></div>`
+        : `<div><dt>All in</dt><dd class="num">${fa.allIn.toFixed(2)}%</dd><span class="muted small">Of what you have invested. <button class="linklike" data-act="advisory-help">Advisory fee?</button></span></div>`}
+      <div><dt>Over 20 years</dt><dd class="num">${money(fa.drag, { cents: false })}</dd><span class="muted small">Growth lost at 6% a year${fa.advisory ? `, ${fa.allIn.toFixed(2)}% all in` : ''}</span></div>
+    </dl>
+    ${fa.top.length ? `<table class="ledger compact" data-sort-id="fees"><thead><tr><th>Fund</th><th class="num">Expense ratio</th><th class="num">Per year</th></tr></thead><tbody>${fa.top.slice(0, 5).map(x => `<tr><th scope="row"><button class="linklike" data-edit-holding="${x.h.id}">${esc(x.h.symbol)}</button> <span class="muted small">${esc(x.h.name || '')}</span></th><td class="num ${x.er >= 0.5 ? 'neg' : ''}">${x.er.toFixed(Math.abs(x.er * 100 - Math.round(x.er * 100)) < 1e-9 ? 2 : 3)}%</td><td class="num">${money(x.fee, { cents: false })}</td></tr>`).join('')}</tbody></table>` : ''}
+    ${notes.length ? `<p class="muted small">${esc(notes.join('; ').replace(/^./, c => c.toUpperCase()))}.</p>` : ''}
+    ${fa.missing.length ? `<form class="fee-form" data-fee-form>
+      <h3 class="fee-head">${fa.missing.length === 1 ? 'One fund needs' : `${fa.missing.length} funds need`} an expense ratio</h3>
+      <p class="muted small">From the fund’s page or your brokerage. Biggest first; one entry covers that fund in every account. If one isn’t a fund (a stock, bond or CD), say so.</p>
+      <table class="ledger compact"><tbody>${fa.missing.slice(0, 8).map(m => `<tr><th scope="row"><strong>${esc(m.symbol)}</strong> <span class="muted small">${esc(m.name || '')}</span></th><td class="num hide-sm">${money(m.value, { cents: false })}</td>
+        <td class="num fee-er-cell"><input class="fee-er" data-sym="${esc(m.symbol)}" inputmode="decimal" placeholder="0.00" aria-label="Expense ratio for ${esc(m.symbol)}" autocomplete="off"><span class="cur">%</span></td>
+        <td class="acts"><button type="button" class="btn small ghost" data-notfund="${esc(m.symbol)}">Not a fund</button></td></tr>`).join('')}</tbody></table>
+      ${fa.missing.length > 8 ? `<p class="muted small">…and ${fa.missing.length - 8} smaller one${fa.missing.length - 8 === 1 ? '' : 's'}; they’ll move up as you fill these in.</p>` : ''}
+      <div class="actions"><button class="btn primary" type="submit">Save expense ratios</button></div>
+    </form>` : ''}
+  </section>`;
+}
+function setFundFee(sym, patch) {
+  const hs = state.holdings.filter(h => String(h.symbol).toUpperCase() === sym && !h.private);
+  for (const h of hs) Object.assign(h, patch);
+  return hs.length;
+}
+document.addEventListener('submit', e => {
+  const f = e.target;
+  if (!f.matches?.('[data-fee-form]')) return;
+  e.preventDefault();
+  const got = [];
+  for (const inp of f.querySelectorAll('.fee-er')) {
+    if (!inp.value.trim()) continue;
+    const er = parseFloat(inp.value.replace(/[%\s]/g, ''));
+    if (!isFinite(er) || er < 0 || er > 5) { inp.focus(); return toast(`That doesn’t look like an expense ratio for ${inp.dataset.sym}. Type it as a percent, like 0.03.`); }
+    got.push([inp.dataset.sym, er]);
+  }
+  if (!got.length) return toast('Type an expense ratio for at least one fund.');
+  for (const [sym, er] of got) setFundFee(sym, { er, fund: true });
+  commit();
+  toast(`Saved ${got.length === 1 ? `${got[0][0]}’s expense ratio` : `${got.length} expense ratios`}.`, { label: 'Undo', fn: undo });
+});
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-notfund]'); if (!b) return;
+  e.preventDefault();
+  const sym = b.dataset.notfund;
+  setFundFee(sym, { fund: false });
+  commit();
+  toast(`${sym} counts as a stock or bond: no fund fee.`, { label: 'Undo', fn: undo });
+});
