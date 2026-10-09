@@ -520,12 +520,41 @@ async function connectNewFile() {
   try { await IDB.set('fileHandle', handle); await IDB.del('dirHandle'); } catch (e) { /* not persisted */ }
   await persistNow();
 }
-async function reconnect() {
+/* Reconnecting after Chrome lets the folder permission lapse (it does that when the window sits in the background a
+   while, and when the app restarts). Chrome only shows its permission window for a request made right inside your click,
+   and once its window has been dismissed a few times it can answer "no" without showing anything. So the request goes
+   out first thing in the click (askPermissionNow), and when it doesn't come back granted, Ọrọ̀ offers the folder window
+   opened at the same folder (reconnectByPicking), which Chrome always shows. */
+function askPermissionNow(h) {   // call synchronously inside the click, before any await
+  try {
+    if (!h?.requestPermission) return Promise.resolve(h ? 'granted' : 'none');   // origin-private handles (tests) have no permission API
+    return h.requestPermission({ mode: 'readwrite' }).catch(e => { console.warn('requestPermission:', e?.name, e?.message); return 'prompt'; });
+  } catch (e) { console.warn('requestPermission:', e?.name, e?.message); return Promise.resolve('prompt'); }
+}
+async function afterReconnect() { const changed = await syncFromDiskIfNewer(); if (changed) resetHistory(); await persistNow(); if (changed) render(); }
+async function reconnect(asked) {
   const h = Store.dir || Store.handle; if (!h) return false;
-  Store.perm = await queryPerm(h, true);
-  if (Store.perm === 'granted') { const changed = await syncFromDiskIfNewer(); if (changed) resetHistory(); await persistNow(); if (changed) render(); }
+  Store.perm = await (asked || askPermissionNow(h));
+  if (Store.perm === 'granted') await afterReconnect();
   paintStatus();
   return Store.perm === 'granted';
+}
+/* Pick the same folder again. Only the folder Ọrọ̀ was already saving to is accepted; switching folders stays in Settings. */
+async function reconnectByPicking() {
+  const old = Store.dir; if (!old) return 'failed';
+  let dir;
+  try { dir = await window.showDirectoryPicker({ id: 'oro', mode: 'readwrite', startIn: old }); }   // opens right at the Ọrọ̀ folder
+  catch (e) { if (e.name === 'AbortError') return 'cancelled'; console.warn('showDirectoryPicker:', e?.name, e?.message); return 'failed'; }
+  let same = false;
+  try { same = await dir.isSameEntry(old); } catch (e) { same = false; }
+  if (!same) return 'different';
+  const p = await queryPerm(dir);
+  if (p !== 'granted') return 'failed';
+  Store.dir = dir; Store.handle = null; Store.fileName = dir.name; Store.perm = 'granted';
+  try { await IDB.set('dirHandle', dir); } catch (e) { /* the old handle still works until the next restart */ }
+  await afterReconnect();
+  paintStatus();
+  return 'ok';
 }
 async function disconnectStorage() {
   Store.handle = null; Store.dir = null; Store.perm = 'none'; Store.fileName = '';
@@ -3308,7 +3337,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = 'cdb4fea';
+const ORO_BUILD = '0da3594';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -5417,7 +5446,22 @@ const ACTIONS = {
     catch (e) { if (e.name !== 'AbortError') toast('Couldn’t open that folder: ' + e.message); return; }
     await connectFolder(dir);
   },
-  'reconnect': async () => { const ok = await reconnect(); render(); toast(ok ? `Saving to ${Store.fileName} again.` : 'Ọrọ̀ still doesn’t have permission to write there.'); if (ok) syncCheckInbox(); },
+  'reconnect': () => {   // the request goes out first thing in the click; anything awaited before it can stop Chrome from asking
+    const h = Store.dir || Store.handle; if (!h) return;
+    const asked = askPermissionNow(h);
+    const again = !!$('#modal [data-id="reconnect-help"]');
+    if (again) closeModal(true);
+    reconnect(asked).then(ok => { render(); if (ok) reconnected(); else reconnectHelp(again ? 'Chrome still didn’t ask. Choosing the folder works every time.' : ''); });
+  },
+  'reconnect-pick': () => {
+    const picking = reconnectByPicking();   // the folder window opens inside this click
+    if ($('#modal [data-id="reconnect-help"]')) closeModal(true);
+    picking.then(r => {
+      if (r === 'ok') { render(); reconnected(); }
+      else if (r === 'different') reconnectHelp(`That’s a different folder. Choose the “${esc(Store.fileName)}” folder Ọrọ̀ was saving to. (To switch folders, use Settings › Where your data lives.)`);
+      else if (r === 'failed') reconnectHelp('Chrome didn’t allow saving to that folder. Try once more, and choose Allow or Edit files if Chrome asks.');
+    });
+  },
   'disconnect-file': async () => { await disconnectStorage(); render(); toast('Disconnected. Your data is still saved in this browser.'); },
   'open-file': async () => {
     const ask = () => promptPass('Unlock data file', 'This file is encrypted. Enter its passphrase.');
@@ -5474,6 +5518,18 @@ const ACTIONS = {
   'add-member': () => { const id = 'm' + uid().slice(0, 5); state.settings.members.push({ id, name: 'New person' }); commit(); setTimeout(() => { const el = $(`[data-member="${id}"]`); if (el) { el.focus(); el.select(); } }, 30); },
 };
 
+function reconnected() { toast(`Saving to ${Store.fileName} again.`); syncCheckInbox(); }
+/* Shown when Chrome doesn't grant permission from the Reconnect click (often without showing anything) */
+function reconnectHelp(note) {
+  const folder = !!Store.dir, name = esc(Store.fileName);
+  openModal({
+    title: `Reconnect ${folder ? 'your Ọrọ̀ folder' : Store.fileName}`, id: 'reconnect-help',
+    body: `${note ? `<p class="notice small">${note}</p>` : ''}
+      <p>Chrome didn’t give Ọrọ̀ permission to save this time. ${folder ? `Choose the <strong>${name}</strong> folder to reconnect: the folder window opens right at it, so you only need to click its blue button.` : 'Try asking again, or choose the file in Settings › Where your data lives.'}</p>
+      <p class="muted small">Your changes since it stopped saving are kept on this Mac and go into the folder as soon as it reconnects. If Chrome offers “Allow on every visit”, choose that and it should stop asking.</p>`,
+    actions: `<button class="btn ghost" data-close>Not now</button><button class="btn" data-act="reconnect">Ask Chrome again</button>${folder ? `<button class="btn primary" data-act="reconnect-pick">Choose the ${name} folder…</button>` : ''}`,
+  });
+}
 async function connectFolder(dir) {
   const ok = await useFolder(dir);
   if (!ok) return toast('Ọrọ̀ needs permission to save in that folder.');
@@ -6123,7 +6179,12 @@ async function syncFileAway(inbox, f) {
 }
 function syncWatch() {
   if (isCompanion()) return;
-  const check = () => { if (document.visibilityState !== 'hidden') syncCheckInbox(); };
+  const check = () => {
+    if (document.visibilityState === 'hidden') return;
+    // Chrome takes the folder permission back when the window has sat in the background a while; show Reconnect right away
+    if (Store.dir && Store.perm === 'granted') queryPerm(Store.dir).then(p => { if (p !== 'granted') { Store.perm = p; paintStatus(); } else syncCheckInbox(); });
+    else syncCheckInbox();
+  };
   window.addEventListener('focus', check);
   document.addEventListener('visibilitychange', check);
   setInterval(check, 60000);

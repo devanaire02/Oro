@@ -119,7 +119,22 @@ const ACTIONS = {
     catch (e) { if (e.name !== 'AbortError') toast('Couldn’t open that folder: ' + e.message); return; }
     await connectFolder(dir);
   },
-  'reconnect': async () => { const ok = await reconnect(); render(); toast(ok ? `Saving to ${Store.fileName} again.` : 'Ọrọ̀ still doesn’t have permission to write there.'); if (ok) syncCheckInbox(); },
+  'reconnect': () => {   // the request goes out first thing in the click; anything awaited before it can stop Chrome from asking
+    const h = Store.dir || Store.handle; if (!h) return;
+    const asked = askPermissionNow(h);
+    const again = !!$('#modal [data-id="reconnect-help"]');
+    if (again) closeModal(true);
+    reconnect(asked).then(ok => { render(); if (ok) reconnected(); else reconnectHelp(again ? 'Chrome still didn’t ask. Choosing the folder works every time.' : ''); });
+  },
+  'reconnect-pick': () => {
+    const picking = reconnectByPicking();   // the folder window opens inside this click
+    if ($('#modal [data-id="reconnect-help"]')) closeModal(true);
+    picking.then(r => {
+      if (r === 'ok') { render(); reconnected(); }
+      else if (r === 'different') reconnectHelp(`That’s a different folder. Choose the “${esc(Store.fileName)}” folder Ọrọ̀ was saving to. (To switch folders, use Settings › Where your data lives.)`);
+      else if (r === 'failed') reconnectHelp('Chrome didn’t allow saving to that folder. Try once more, and choose Allow or Edit files if Chrome asks.');
+    });
+  },
   'disconnect-file': async () => { await disconnectStorage(); render(); toast('Disconnected. Your data is still saved in this browser.'); },
   'open-file': async () => {
     const ask = () => promptPass('Unlock data file', 'This file is encrypted. Enter its passphrase.');
@@ -176,6 +191,18 @@ const ACTIONS = {
   'add-member': () => { const id = 'm' + uid().slice(0, 5); state.settings.members.push({ id, name: 'New person' }); commit(); setTimeout(() => { const el = $(`[data-member="${id}"]`); if (el) { el.focus(); el.select(); } }, 30); },
 };
 
+function reconnected() { toast(`Saving to ${Store.fileName} again.`); syncCheckInbox(); }
+/* Shown when Chrome doesn't grant permission from the Reconnect click (often without showing anything) */
+function reconnectHelp(note) {
+  const folder = !!Store.dir, name = esc(Store.fileName);
+  openModal({
+    title: `Reconnect ${folder ? 'your Ọrọ̀ folder' : Store.fileName}`, id: 'reconnect-help',
+    body: `${note ? `<p class="notice small">${note}</p>` : ''}
+      <p>Chrome didn’t give Ọrọ̀ permission to save this time. ${folder ? `Choose the <strong>${name}</strong> folder to reconnect: the folder window opens right at it, so you only need to click its blue button.` : 'Try asking again, or choose the file in Settings › Where your data lives.'}</p>
+      <p class="muted small">Your changes since it stopped saving are kept on this Mac and go into the folder as soon as it reconnects. If Chrome offers “Allow on every visit”, choose that and it should stop asking.</p>`,
+    actions: `<button class="btn ghost" data-close>Not now</button><button class="btn" data-act="reconnect">Ask Chrome again</button>${folder ? `<button class="btn primary" data-act="reconnect-pick">Choose the ${name} folder…</button>` : ''}`,
+  });
+}
 async function connectFolder(dir) {
   const ok = await useFolder(dir);
   if (!ok) return toast('Ọrọ̀ needs permission to save in that folder.');

@@ -374,12 +374,41 @@ async function connectNewFile() {
   try { await IDB.set('fileHandle', handle); await IDB.del('dirHandle'); } catch (e) { /* not persisted */ }
   await persistNow();
 }
-async function reconnect() {
+/* Reconnecting after Chrome lets the folder permission lapse (it does that when the window sits in the background a
+   while, and when the app restarts). Chrome only shows its permission window for a request made right inside your click,
+   and once its window has been dismissed a few times it can answer "no" without showing anything. So the request goes
+   out first thing in the click (askPermissionNow), and when it doesn't come back granted, Ọrọ̀ offers the folder window
+   opened at the same folder (reconnectByPicking), which Chrome always shows. */
+function askPermissionNow(h) {   // call synchronously inside the click, before any await
+  try {
+    if (!h?.requestPermission) return Promise.resolve(h ? 'granted' : 'none');   // origin-private handles (tests) have no permission API
+    return h.requestPermission({ mode: 'readwrite' }).catch(e => { console.warn('requestPermission:', e?.name, e?.message); return 'prompt'; });
+  } catch (e) { console.warn('requestPermission:', e?.name, e?.message); return Promise.resolve('prompt'); }
+}
+async function afterReconnect() { const changed = await syncFromDiskIfNewer(); if (changed) resetHistory(); await persistNow(); if (changed) render(); }
+async function reconnect(asked) {
   const h = Store.dir || Store.handle; if (!h) return false;
-  Store.perm = await queryPerm(h, true);
-  if (Store.perm === 'granted') { const changed = await syncFromDiskIfNewer(); if (changed) resetHistory(); await persistNow(); if (changed) render(); }
+  Store.perm = await (asked || askPermissionNow(h));
+  if (Store.perm === 'granted') await afterReconnect();
   paintStatus();
   return Store.perm === 'granted';
+}
+/* Pick the same folder again. Only the folder Ọrọ̀ was already saving to is accepted; switching folders stays in Settings. */
+async function reconnectByPicking() {
+  const old = Store.dir; if (!old) return 'failed';
+  let dir;
+  try { dir = await window.showDirectoryPicker({ id: 'oro', mode: 'readwrite', startIn: old }); }   // opens right at the Ọrọ̀ folder
+  catch (e) { if (e.name === 'AbortError') return 'cancelled'; console.warn('showDirectoryPicker:', e?.name, e?.message); return 'failed'; }
+  let same = false;
+  try { same = await dir.isSameEntry(old); } catch (e) { same = false; }
+  if (!same) return 'different';
+  const p = await queryPerm(dir);
+  if (p !== 'granted') return 'failed';
+  Store.dir = dir; Store.handle = null; Store.fileName = dir.name; Store.perm = 'granted';
+  try { await IDB.set('dirHandle', dir); } catch (e) { /* the old handle still works until the next restart */ }
+  await afterReconnect();
+  paintStatus();
+  return 'ok';
 }
 async function disconnectStorage() {
   Store.handle = null; Store.dir = null; Store.perm = 'none'; Store.fileName = '';

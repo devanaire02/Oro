@@ -437,7 +437,12 @@ async function syncFileAway(inbox, f) {
 }
 function syncWatch() {
   if (isCompanion()) return;
-  const check = () => { if (document.visibilityState !== 'hidden') syncCheckInbox(); };
+  const check = () => {
+    if (document.visibilityState === 'hidden') return;
+    // Chrome takes the folder permission back when the window has sat in the background a while; show Reconnect right away
+    if (Store.dir && Store.perm === 'granted') queryPerm(Store.dir).then(p => { if (p !== 'granted') { Store.perm = p; paintStatus(); } else syncCheckInbox(); });
+    else syncCheckInbox();
+  };
   window.addEventListener('focus', check);
   document.addEventListener('visibilitychange', check);
   setInterval(check, 60000);
