@@ -133,7 +133,7 @@ function txnModal(id) {
     if (splits) { rec.splits = splits.filter(s => +s.amount || s.categoryId).map(s => ({ categoryId: s.categoryId || null, amount: round2(+s.amount || 0), memo: s.memo || '' })); rec.categoryId = '__split'; }
     else { rec.splits = undefined; rec.categoryId = d.categoryId || null; }
     let target;
-    if (t) target = Object.assign(t, rec); else state.transactions.push(target = { id: uid(), ...rec });
+    if (t) target = Object.assign(t, rec); else state.transactions.push(target = { id: uid(), added: today(), ...rec });
     if (!target.tags.length) delete target.tags;
     if (!target.attachments.length) delete target.attachments;
     if (!target.splits) delete target.splits;

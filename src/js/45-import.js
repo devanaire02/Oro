@@ -440,7 +440,7 @@ function applyTxItem(it) {
       if (ids.has(r.importId)) { skipped++; continue; }   // e.g. two overlapping downloads in one batch
       ids.add(r.importId);
     }
-    const t = { id: uid(), date: r.date, accountId: acct.id, payee: r.rename || prettyPayee(r.payee), rawPayee: r.payee, amount: r.amount, categoryId: r.categoryId || null, memo: r.memo || '', importId: r.importId };
+    const t = { id: uid(), date: r.date, accountId: acct.id, payee: r.rename || prettyPayee(r.payee), rawPayee: r.payee, amount: r.amount, categoryId: r.categoryId || null, memo: r.memo || '', importId: r.importId, added: today() };
     if (r.tags?.length) t.tags = r.tags;
     if (r.person) t.person = r.person;
     if (r.mcc) t.mcc = String(r.mcc).slice(0, 6);

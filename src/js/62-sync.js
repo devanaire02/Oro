@@ -70,6 +70,7 @@ function diffInto(ops, b, c, path) {
 }
 
 function opLabel(o, target) {
+  if (o.path[0] === 'settings' && (o.path[1] === 'checkinQuiet' || o.k === 'checkinQuiet')) return 'check-in: a bill or charge you set aside';
   const v = o.v || (o.op === 'del' ? null : undefined);
   const where = { transactions: 'transaction', accounts: 'account', categories: 'category', goals: 'goal', holdings: 'holding', recurring: 'recurring item', rules: 'rule' }[o.path[0]] || o.path.join(' › ');
   if (o.op === 'put' || o.op === 'del') {

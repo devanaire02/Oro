@@ -90,7 +90,7 @@ function overviewDetailed(sub) {
   for (const tx of lensed(txInRange(addDays(today(), -53 * 7), today()))) for (const l of txLines(tx)) { const c = catById(l.categoryId); if ((c && c.kind === 'expense' && !c.rental && !/Mortgage|Auto payment|Childcare/.test(c.name)) || (!c && l.amount < 0)) days[tx.date] = (days[tx.date] || 0) - l.amount; }
   const goals = state.goals.slice(0, 4);
 
-  return pageHead('Overview', sub, `<button class="btn" data-act="import">Import</button><button class="btn primary" data-act="add-txn">Add transaction</button>`) + lensNote() + `
+  return pageHead('Overview', sub, `${ciButton()}<button class="btn" data-act="import">Import</button><button class="btn primary" data-act="add-txn">Add transaction</button>`) + lensNote() + `
   <section class="hero">
     <div class="hero-figure">
       <span class="hero-label">Net worth</span>
@@ -141,7 +141,7 @@ function overviewDetailed(sub) {
         : `<p class="muted">Nothing scheduled in the next two weeks. Add paychecks and bills on the <a href="#/cashflow">Cash flow</a> page.</p>`}
     </section>
     <section class="panel">
-      <header class="panel-head"><h2>Needs attention</h2></header>
+      <header class="panel-head"><h2>Needs attention</h2>${checkinOn() && att.length ? '<a href="#/checkin">Go through it</a>' : ''}</header>
       ${att.length ? `<ul class="attention">${att.map(a => `<li class="${a.tone}">${a.act ? `<button class="linklike" data-act="${a.act}">${esc(a.text)}</button>` : `<a href="${a.go}">${esc(a.text)}</a>`}</li>`).join('')}</ul>` : '<p class="muted">Everything is categorized, current and on budget.</p>'}
     </section>
   </div>
@@ -164,7 +164,7 @@ function overviewSimple(sub) {
   const notes = insights(mk, { limit: 4 });
   const up = upcoming(21).filter(u => Math.abs(u.amount) >= 100).slice(0, 5);
   const series = netWorthSeries().slice(-13);
-  return `<header class="page-head simple-head"><div><p class="sub">${sub}</p><h1 class="big-sentence">${who} spent <span class="num">${money(f.spending, { cents: false })}</span>${!UI.lens && planned ? ` of the <span class="num">${money(planned, { cents: false })}</span> we planned` : ''} this month.</h1></div></header>
+  return `<header class="page-head simple-head"><div><p class="sub">${sub}</p><h1 class="big-sentence">${who} spent <span class="num">${money(f.spending, { cents: false })}</span>${!UI.lens && planned ? ` of the <span class="num">${money(planned, { cents: false })}</span> we planned` : ''} this month.</h1></div>${checkinOn() ? `<div class="actions">${ciButton()}</div>` : ''}</header>
   <section class="simple-cards">
     <div class="s-card"><span class="s-label">Came in</span><span class="s-value num">${money(f.income, { cents: false })}</span><span class="s-sub">${MONTHS[+mk.slice(5) - 1]} so far</span></div>
     <div class="s-card"><span class="s-label">Went out</span><span class="s-value num">${money(f.spending, { cents: false })}</span><span class="s-sub">${planned ? `${pct(Math.min(9.99, f.spending / planned), 0)} of the plan` : '&nbsp;'}</span></div>

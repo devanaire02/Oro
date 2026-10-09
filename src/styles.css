@@ -977,6 +977,64 @@ a, button, select, label, summary { touch-action: manipulation; }
   }
 }
 
+/* ---------- Check-in: one card at a time ---------- */
+.ci-lead, .ci-progress, .ci-last, .ci-card, .ci-done, .ci-say, .ci-hint, .ci-heard { max-width: 680px; }
+.ci-lead { margin: 0 0 16px; }
+.ci-sentence { font: 500 21px/1.4 var(--serif); margin: 0 0 10px; color: var(--ink); }
+.ci-lead .actions, .ci-done .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ci-progress { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; }
+.ci-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--rule); overflow: hidden; }
+.ci-bar i { display: block; height: 100%; background: var(--ink-accent); border-radius: 3px; transition: width .25s ease; }
+.ci-last { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; background: var(--ok-bg); font-size: 14px; }
+.ci-card { padding: 18px 22px 14px; }
+.ci-top { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.ci-kicker { font: 600 11.5px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--gold-ink); }
+.ci-count { margin-left: auto; font-size: 12.5px; color: var(--muted); }
+.ci-speak { color: var(--muted); }
+.ci-title { font: 600 26px/1.2 var(--serif); margin: 2px 0 4px; overflow-wrap: anywhere; }
+.ci-amount { font-size: 26px; font-weight: 600; margin: 0 0 2px; text-align: left; }
+.ci-meta { color: var(--muted); margin: 0 0 10px; }
+.ci-memo { margin: -4px 0 10px; font-style: italic; color: var(--muted); }
+.ci-guess { font-size: 16px; margin: 0 0 14px; }
+.ci-choose { margin: 0 0 6px; font-weight: 500; }
+.ci-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 10px; }
+.ci-actions .btn { padding: 9px 15px; font-size: 14.5px; }
+.ci-pick { min-width: 200px; max-width: 100%; padding: 8px 10px; }
+.ci-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.ci-chip { font: 500 13.5px var(--sans); padding: 6px 12px; border-radius: 16px; border: 1px solid var(--rule-strong); background: var(--sheet); color: var(--ink); cursor: pointer; }
+.ci-chip:hover { border-color: var(--ink-accent); }
+.ci-chip.on { border-color: var(--ink-accent); background: var(--gold-bg); }
+.ci-row { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin: 0 0 6px; }
+.ci-who { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
+.ci-always { color: var(--muted); }
+.ci-foot { display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--rule); margin-top: 12px; padding-top: 10px; }
+.ci-foot [data-ci="skip"] { margin-left: auto; }
+.ci-foot .btn[disabled] { opacity: .45; cursor: default; }
+.ci-list { margin: 4px 0 12px; }
+.ci-bal { display: flex; gap: 8px; margin: 0 0 6px; }
+.ci-bal input { width: 180px; }
+.ci-say { display: flex; gap: 8px; margin: 0 0 10px; }
+.ci-say input { flex: 1; min-height: 44px; font-size: 16px; border-radius: 10px; padding: 9px 12px; }
+.ci-heard { margin: -4px 0 10px; font-size: 14px; color: var(--ink); }
+.ci-hint { margin: -8px 0 20px; }
+.ci-done h2 { font: 600 22px/1.3 var(--serif); margin: 0 0 6px; }
+.ci-badge { display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 10px; background: var(--ink-accent); color: var(--on-accent); font: 600 12px/20px var(--sans); text-align: center; }
+.btn.primary .ci-badge { background: var(--on-accent); color: var(--ink-accent); }
+@media (max-width: 640px) {
+  .ci-seg { width: 100%; display: flex; }
+  .ci-seg button { flex: 1; padding: 8px 6px; font-size: 13.5px; }
+  .ci-sentence { font-size: 18.5px; }
+  .ci-card { padding: 14px 14px 10px; }
+  .ci-title { font-size: 23px; }
+  .ci-amount { font-size: 23px; }
+  .ci-actions .btn { flex: 1 1 auto; justify-content: center; min-height: 44px; }
+  .ci-pick { flex: 1 1 100%; min-height: 44px; }
+  .ci-chip { padding: 8px 13px; font-size: 14.5px; }
+  .ci-foot .btn { min-height: 40px; }
+  .ci-bal input { flex: 1; width: auto; }
+}
+@media print { .ci-say, .ci-hint, .ci-foot { display: none; } }
+
 @media print {
   body { background: #fff; color: #000; font-size: 11.5px; }
   .side, .topbar, #toasts, .page-head .actions, .btn, .seg, .tabs, textarea:placeholder-shown { display: none !important; }

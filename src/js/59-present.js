@@ -110,7 +110,7 @@ const PAL = { items: [], sel: 0 };
 function paletteItems(q) {
   q = q.trim().toLowerCase();
   const out = [];
-  for (const [id, label] of PAGES) out.push({ group: 'Go to', label, run: () => go(`#/${id}`) });
+  for (const [id, label] of shownPages()) out.push({ group: 'Go to', label, run: () => go(`#/${id}`) });
   const acts = [['Add a transaction', () => txnModal()], ['Import a file', () => startImport()], ['Add an account', () => acctModal()], ['Add a goal', () => goalModal()], ['Start a Money date', () => startMoneyDate()],
     [state.settings.privacy ? 'Show amounts' : 'Hide amounts', () => ACTIONS.privacy()], [UI.mode === 'simple' ? 'Switch to Detailed view' : 'Switch to Simple view', () => { setMode(UI.mode === 'simple' ? 'detailed' : 'simple'); }],
     ['Undo', undo], ['Redo', redo], ['Download a backup', () => ACTIONS.backup()], ['Update balances', () => go('#/accounts?update=1')], ['Monthly review', () => go('#/review')]];
@@ -167,6 +167,7 @@ function armAutoLock() {
 function lockNow() {
   if (!Store.key || $('.lock-screen')) return;
   UI.sticky = {};   // filters start fresh after a lock
+  ciReset();        // and so does a check-in
   if ($('#present')) { $('#present').remove(); document.body.classList.remove('presenting'); }
   closeModal(true);
   const wrap = document.createElement('div');

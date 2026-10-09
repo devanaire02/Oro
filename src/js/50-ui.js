@@ -3,7 +3,7 @@ const UI = { nwRange: '12', lens: '', mode: 'detailed' };
 try { UI.mode = localStorage.getItem('keel.mode') || 'detailed'; UI.lens = sessionStorage.getItem('keel.lens') || ''; } catch (e) { /* storage blocked */ }
 
 const PAGES = [
-  ['overview', 'Overview', ''], ['transactions', 'Transactions', ''], ['budget', 'Budget', ''], ['cashflow', 'Cash flow', ''],
+  ['overview', 'Overview', ''], ['checkin', 'Check-in', ''], ['transactions', 'Transactions', ''], ['budget', 'Budget', ''], ['cashflow', 'Cash flow', ''],
   ['accounts', 'Accounts', 'Wealth'], ['investments', 'Investments', 'Wealth'], ['property', 'Property', 'Wealth'],
   ['reports', 'Reports', 'Plan'], ['planning', 'Planning', 'Plan'], ['taxes', 'Taxes', 'Plan'], ['review', 'Monthly review', 'Plan'],
   ['data', 'Settings', 'end'],
@@ -76,6 +76,7 @@ function render() {
     if (t.parentElement.classList.contains('scroll-table')) continue;
     const w = document.createElement('div'); w.className = 'scroll-table'; t.replaceWith(w); w.appendChild(t);
   }
+  if (UI.navCheckin !== (state.settings.checkin !== false)) buildShell();   // Check-in was turned on or off
   $$('.nav a').forEach(a => a.classList.toggle('active', a.dataset.page === page));
   $$('#tabbar [data-tab-page]').forEach(a => { const on = a.dataset.tabPage === page || (a.dataset.tabPage === 'more' && !TAB_PAGES.includes(page)); a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   document.title = `${PAGES.find(p => p[0] === page)[1]} · Ọrọ̀`;
@@ -90,9 +91,12 @@ function render() {
   if (page === 'data') paintBackups();
 }
 
+/* Pages in the menu: Check-in only while it's turned on */
+const shownPages = () => PAGES.filter(([id]) => id !== 'checkin' || state.settings?.checkin !== false);
 function buildShell() {
+  UI.navCheckin = state.settings?.checkin !== false;
   let html = '', group = null;
-  for (const [id, label, g] of PAGES) {
+  for (const [id, label, g] of shownPages()) {
     if (g !== group) { if (g && g !== 'end') html += `<span class="nav-group">${esc(g)}</span>`; if (g === 'end') html += '<span class="nav-spacer"></span>'; group = g; }
     html += `<a href="#/${id}" data-page="${id}">${label}</a>`;
   }
@@ -104,8 +108,8 @@ function buildShell() {
 /* The More sheet on iPhone: the pages that aren't in the tab bar, plus Money date */
 function morePagesSheet() {
   const { page } = route();
-  const desc = { cashflow: 'Bills, paychecks and the next 90 days', investments: 'Holdings, allocation and fees', property: 'Home, rental and other assets', reports: 'Cash flow, spending, income statement', planning: 'Retirement, goals, debt payoff', taxes: 'Schedule E and deductions for your CPA', review: 'Close out the month together', data: 'Sync, security, household, rules' };
-  const links = PAGES.filter(([id]) => !TAB_PAGES.includes(id)).map(([id, label]) => `<a class="more-link ${id === page ? 'on' : ''}" href="#/${id}" data-close><strong>${label}</strong><span>${desc[id] || ''}</span></a>`).join('');
+  const desc = { checkin: 'What needs you today, this week or this month', cashflow: 'Bills, paychecks and the next 90 days', investments: 'Holdings, allocation and fees', property: 'Home, rental and other assets', reports: 'Cash flow, spending, income statement', planning: 'Retirement, goals, debt payoff', taxes: 'Schedule E and deductions for your CPA', review: 'Close out the month together', data: 'Sync, security, household, rules' };
+  const links = shownPages().filter(([id]) => !TAB_PAGES.includes(id)).map(([id, label]) => `<a class="more-link ${id === page ? 'on' : ''}" href="#/${id}" data-close><strong>${label}</strong><span>${desc[id] || ''}</span></a>`).join('');
   openModal({ title: 'More', body: `<div class="more-list">${links}</div>
     <div class="more-row"><button class="btn money-date-btn" data-act="more-money-date">Money date</button>
     <div class="seg mode" role="group" aria-label="Detail level"><button class="${UI.mode === 'simple' ? 'on' : ''}" data-mode="simple">Simple</button><button class="${UI.mode === 'detailed' ? 'on' : ''}" data-mode="detailed">Detailed</button></div></div>` });
