@@ -86,7 +86,7 @@ const ruleWeight = r => (r.amt?.op ? 2 : 0) + (r.dir ? 1 : 0) + (r.acct ? 1 : 0)
 function ruleMatches(r, payee, t) {
   const text = String(r.text || '').toUpperCase().trim(), conds = ruleHasConds(r);
   if (!text && !conds) return false;
-  if (text && !(normPayee(payee).includes(normPayee(text) || text) || String(payee || '').toUpperCase().includes(text))) return false;
+  if (text && !(normPayee(payee).includes(normPayee(text) || text) || String(payee || '').toUpperCase().includes(text) || ruleWordsInOrder(text, payee))) return false;
   if (!conds) return true;
   if (!t) return false;
   const amt = Number(t.amount) || 0, v = Math.abs(amt);
@@ -101,6 +101,15 @@ function ruleMatches(r, payee, t) {
     if (r.amt.op === 'lt' && !(v < a - 0.005)) return false;
   }
   return true;
+}
+/* A rule of several words also matches when they appear in that order with other words between, so "ZELLE PAYMENT LESTER
+   WASIL" catches "Zelle payment to Lester Wasil JPM99…" and "COSTCO GAS" catches "COSTCO WHSE GAS #123". */
+function ruleWordsInOrder(text, payee) {
+  const want = normPayee(text).split(' ').filter(Boolean);
+  if (want.length < 2) return false;
+  let i = 0;
+  for (const w of normPayee(payee).split(' ')) if (i < want.length && (w === want[i] || (want[i].length >= 3 && w.startsWith(want[i])))) i++;
+  return i === want.length;
 }
 /* The most specific matching rule wins (amount beats direction or account beats text only); ties go to the one listed first. */
 function matchRule(payee, t) {

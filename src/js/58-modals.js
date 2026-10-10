@@ -12,9 +12,17 @@ function ruleWords(payee) {
   if (run.length > 1 && US_STATES.has(run[run.length - 1])) run.pop();
   return run;
 }
+/* A payment to or from a person (Zelle, Venmo…): the rule is for that person, so it keeps the name and leaves out the
+   bank's reference code and any note in brackets: "Zelle payment to Lester Wasil JPM99b5x3ybq" → ZELLE PAYMENT TO LESTER WASIL */
+function p2pRuleKey(payee) {
+  const raw = String(payee || '').replace(/\(.*$/, ' ').replace(/[A-Za-z0-9]{6,}/g, w => /\d/.test(w) && !/[A-Za-z]{5,}/.test(w) ? ' ' : w);
+  const words = normPayee(raw).replace(/\b(CONF|CONFIRMATION|REF|ID|TRANS|TRN|MEMO)\b.*$/, '').split(' ').filter(w => w.length >= 2);
+  return words.slice(0, 6).join(' ');
+}
 /* Default text for a new rule: the merchant name. When other transactions share the start of it
    (other visits or other locations), keep just the shared part so they all match. */
 function ruleKeyFor(payee, selfId) {
+  if (PERSON_TO_PERSON.test(String(payee || ''))) return p2pRuleKey(payee);
   const mine = ruleWords(payee);
   if (!mine.length) return '';
   let shared = Infinity;

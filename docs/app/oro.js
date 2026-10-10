@@ -940,7 +940,7 @@ const ruleWeight = r => (r.amt?.op ? 2 : 0) + (r.dir ? 1 : 0) + (r.acct ? 1 : 0)
 function ruleMatches(r, payee, t) {
   const text = String(r.text || '').toUpperCase().trim(), conds = ruleHasConds(r);
   if (!text && !conds) return false;
-  if (text && !(normPayee(payee).includes(normPayee(text) || text) || String(payee || '').toUpperCase().includes(text))) return false;
+  if (text && !(normPayee(payee).includes(normPayee(text) || text) || String(payee || '').toUpperCase().includes(text) || ruleWordsInOrder(text, payee))) return false;
   if (!conds) return true;
   if (!t) return false;
   const amt = Number(t.amount) || 0, v = Math.abs(amt);
@@ -955,6 +955,15 @@ function ruleMatches(r, payee, t) {
     if (r.amt.op === 'lt' && !(v < a - 0.005)) return false;
   }
   return true;
+}
+/* A rule of several words also matches when they appear in that order with other words between, so "ZELLE PAYMENT LESTER
+   WASIL" catches "Zelle payment to Lester Wasil JPM99…" and "COSTCO GAS" catches "COSTCO WHSE GAS #123". */
+function ruleWordsInOrder(text, payee) {
+  const want = normPayee(text).split(' ').filter(Boolean);
+  if (want.length < 2) return false;
+  let i = 0;
+  for (const w of normPayee(payee).split(' ')) if (i < want.length && (w === want[i] || (want[i].length >= 3 && w.startsWith(want[i])))) i++;
+  return i === want.length;
 }
 /* The most specific matching rule wins (amount beats direction or account beats text only); ties go to the one listed first. */
 function matchRule(payee, t) {
@@ -3395,6 +3404,11 @@ function render() {
     else { const k = Object.keys(ae.dataset)[0]; if (k) focusSel = `[data-${k.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}="${CSS.escape(ae.dataset[k])}"]`; }
   }
   const { page, params } = route();
+  // iPhone and iPad: the same page drawn again because of a dropdown or text box: stay where you were (keepScroll, below)
+  const changed = Date.now() - (UI.lastChange?.at || 0) < 1500;
+  const fromField = isTouch() && (changed || (ae && ae.matches?.('input, select, textarea') && $('#main')?.contains(ae)));
+  const keepY = fromField && UI.renderedPage === page && !document.body.classList.contains('page-held') ? Math.max(window.scrollY, changed ? UI.lastChange.y : 0) : 0;
+  UI.renderedPage = page;
   for (const k in ChartSpecs) delete ChartSpecs[k];
   document.body.classList.toggle('simple', UI.mode === 'simple');
   document.body.classList.toggle('privacy', !!state.settings.privacy);
@@ -3421,7 +3435,23 @@ function render() {
   paintStatus();
   if (page === 'data') { paintBackups(); voiceMenuSoon(); }
   paintTalk();
+  if (keepY) keepScroll(keepY);
 }
+/* On the iPhone and iPad, Safari can jump to the top of the page when the field you just used (a dropdown, a name box) is
+   replaced as the page is redrawn. Put the page back where it was, unless you've started scrolling or typing since. */
+let _keepScroll = null;
+function keepScroll(y) {
+  const mark = _keepScroll = { y };
+  const fix = () => {
+    if (_keepScroll !== mark || document.body.classList.contains('page-held')) return;
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    if (window.scrollY < 40 && y > 120 && y <= max + 30) window.scrollTo(0, y);   // only Safari's jump to the top, never a deliberate scroll
+  };
+  fix(); requestAnimationFrame(fix); setTimeout(fix, 120); setTimeout(fix, 400);
+  setTimeout(() => { if (_keepScroll === mark) _keepScroll = null; }, 450);
+}
+['touchstart', 'wheel', 'keydown', 'mousedown'].forEach(ev => window.addEventListener(ev, () => { _keepScroll = null; }, { passive: true, capture: true }));
+window.addEventListener('change', () => { UI.lastChange = { at: Date.now(), y: window.scrollY }; }, { capture: true });   // where you were when the field changed
 
 /* Pages in the menu: Check-in only while it's turned on */
 const shownPages = () => PAGES.filter(([id]) => id !== 'checkin' || state.settings?.checkin !== false);
@@ -3579,7 +3609,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '3b94bd7';
+const ORO_BUILD = '8a52f40';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -5231,9 +5261,17 @@ function ruleWords(payee) {
   if (run.length > 1 && US_STATES.has(run[run.length - 1])) run.pop();
   return run;
 }
+/* A payment to or from a person (Zelle, Venmo…): the rule is for that person, so it keeps the name and leaves out the
+   bank's reference code and any note in brackets: "Zelle payment to Lester Wasil JPM99b5x3ybq" → ZELLE PAYMENT TO LESTER WASIL */
+function p2pRuleKey(payee) {
+  const raw = String(payee || '').replace(/\(.*$/, ' ').replace(/[A-Za-z0-9]{6,}/g, w => /\d/.test(w) && !/[A-Za-z]{5,}/.test(w) ? ' ' : w);
+  const words = normPayee(raw).replace(/\b(CONF|CONFIRMATION|REF|ID|TRANS|TRN|MEMO)\b.*$/, '').split(' ').filter(w => w.length >= 2);
+  return words.slice(0, 6).join(' ');
+}
 /* Default text for a new rule: the merchant name. When other transactions share the start of it
    (other visits or other locations), keep just the shared part so they all match. */
 function ruleKeyFor(payee, selfId) {
+  if (PERSON_TO_PERSON.test(String(payee || ''))) return p2pRuleKey(payee);
   const mine = ruleWords(payee);
   if (!mine.length) return '';
   let shared = Infinity;
@@ -6347,7 +6385,8 @@ document.addEventListener('change', e => {
   }
   if (d.taxint) { const v = parseAmount(el.value || ''); ((state.tax[d.taxint] = state.tax[d.taxint] || {})[d.year] = state.tax[d.taxint][d.year] || {}).interest = isFinite(v) ? round2(v) : null; commit({ silent: true }); setTimeout(render, 0); return; }
   if (d.schede) { const c = catById(d.schede); if (c) { c.schedE = el.value; commit({ silent: true }); setTimeout(render, 0); } return; }
-  if (d.memberRole) { const m = state.settings.members.find(x => x.id === d.memberRole); if (m) { if (el.value === 'adult') delete m.role; else m.role = el.value; commit(); } return; }
+  // Household: let the dropdown or name box finish (and lose focus) before the page is redrawn, so it isn't pulled out from under it
+  if (d.memberRole) { const m = state.settings.members.find(x => x.id === d.memberRole); if (m) { if (el.value === 'adult') delete m.role; else m.role = el.value; if (isTouch()) el.blur(); commit({ silent: true }); setTimeout(render, 0); } return; }
   if (d.member) { const m = state.settings.members.find(x => x.id === d.member); if (m && el.value.trim()) { m.name = el.value.trim(); commit({ silent: true }); setTimeout(render, 0); } return; }
   if (el.classList.contains('tx-cb')) return updateBulk();
   if (el.id === 'tx-all') { $$('.tx-cb').forEach(c => c.checked = el.checked); return updateBulk(); }

@@ -93,6 +93,11 @@ function render() {
     else { const k = Object.keys(ae.dataset)[0]; if (k) focusSel = `[data-${k.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}="${CSS.escape(ae.dataset[k])}"]`; }
   }
   const { page, params } = route();
+  // iPhone and iPad: the same page drawn again because of a dropdown or text box: stay where you were (keepScroll, below)
+  const changed = Date.now() - (UI.lastChange?.at || 0) < 1500;
+  const fromField = isTouch() && (changed || (ae && ae.matches?.('input, select, textarea') && $('#main')?.contains(ae)));
+  const keepY = fromField && UI.renderedPage === page && !document.body.classList.contains('page-held') ? Math.max(window.scrollY, changed ? UI.lastChange.y : 0) : 0;
+  UI.renderedPage = page;
   for (const k in ChartSpecs) delete ChartSpecs[k];
   document.body.classList.toggle('simple', UI.mode === 'simple');
   document.body.classList.toggle('privacy', !!state.settings.privacy);
@@ -119,7 +124,23 @@ function render() {
   paintStatus();
   if (page === 'data') { paintBackups(); voiceMenuSoon(); }
   paintTalk();
+  if (keepY) keepScroll(keepY);
 }
+/* On the iPhone and iPad, Safari can jump to the top of the page when the field you just used (a dropdown, a name box) is
+   replaced as the page is redrawn. Put the page back where it was, unless you've started scrolling or typing since. */
+let _keepScroll = null;
+function keepScroll(y) {
+  const mark = _keepScroll = { y };
+  const fix = () => {
+    if (_keepScroll !== mark || document.body.classList.contains('page-held')) return;
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    if (window.scrollY < 40 && y > 120 && y <= max + 30) window.scrollTo(0, y);   // only Safari's jump to the top, never a deliberate scroll
+  };
+  fix(); requestAnimationFrame(fix); setTimeout(fix, 120); setTimeout(fix, 400);
+  setTimeout(() => { if (_keepScroll === mark) _keepScroll = null; }, 450);
+}
+['touchstart', 'wheel', 'keydown', 'mousedown'].forEach(ev => window.addEventListener(ev, () => { _keepScroll = null; }, { passive: true, capture: true }));
+window.addEventListener('change', () => { UI.lastChange = { at: Date.now(), y: window.scrollY }; }, { capture: true });   // where you were when the field changed
 
 /* Pages in the menu: Check-in only while it's turned on */
 const shownPages = () => PAGES.filter(([id]) => id !== 'checkin' || state.settings?.checkin !== false);
