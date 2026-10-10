@@ -96,7 +96,16 @@ function txnModal(id) {
   const paintCat = () => {
     $('#cat-field').innerHTML = splits
       ? `<span class="field-label">Category</span><button type="button" class="btn small" id="unsplit">Remove split</button>`
-      : `<span class="field-label">Category</span><div class="cat-row"><select name="categoryId" id="tx-cat">${catOptions(v.categoryId === '__split' ? '' : v.categoryId)}</select><button type="button" class="btn small ghost" id="do-split">Split</button></div>`;
+      : `<span class="field-label">Category</span><div class="cat-row"><select name="categoryId" id="tx-cat">${catOptions(v.categoryId === '__split' ? '' : v.categoryId)}${newCatOption()}</select><button type="button" class="btn small ghost" id="do-split">Split</button></div>
+         <div class="nc-inline" id="nc-inline" hidden></div>`;
+    $('#cat-field').classList.remove('wide');
+    if ($('#tx-cat')) $('#tx-cat').addEventListener('change', e => {   // "New category…": its fields open right here
+      const box = $('#nc-inline'), on = e.target.value === NEWCAT;
+      $('#cat-field').classList.toggle('wide', on); box.hidden = !on;
+      if (on && !box.innerHTML) { box.innerHTML = newCatFields(newCatDefaults(t ? [t] : [{ amount: parseAmount($('#tx-amount')?.value) || -1, payee: $('#f [name=payee]')?.value || '' }])); wireNewCatFields(box); }
+      if (on) box.querySelector('[name=nc-name]').focus();
+      fitModal();
+    });
     if ($('#do-split')) $('#do-split').onclick = () => { const a = total(); splits = [{ categoryId: $('#tx-cat').value, amount: isFinite(a) ? round2(a) : 0, memo: '' }, { categoryId: '', amount: 0, memo: '' }]; paintCat(); paintSplits(); };
     if ($('#unsplit')) $('#unsplit').onclick = () => { v.categoryId = splits[0]?.categoryId || ''; splits = null; paintCat(); paintSplits(); };
   };
@@ -138,6 +147,11 @@ function txnModal(id) {
       if (Math.abs(rem) > 0.004) return toast(`The split lines are ${money(rem)} short of the total.`);
     }
     const prevCat = t?.categoryId;
+    if (!splits && d.categoryId === NEWCAT) {   // a category named right here in the window
+      const r = newCatFrom(d);
+      if (r.error) { toast(r.error); return $('#nc-inline [name=nc-name]')?.focus(); }
+      d.categoryId = r.cat.id;
+    }
     const rec = { date: d.date, payee: d.payee.trim(), amount: round2(amount), accountId: d.accountId, memo: d.memo, tags: parseTags(d.tags), attachments: atts, flag: d.flag || undefined };
     if (multi) rec.person = d.person || undefined;
     if (splits) { rec.splits = splits.filter(s => +s.amount || s.categoryId).map(s => ({ categoryId: s.categoryId || null, amount: round2(+s.amount || 0), memo: s.memo || '' })); rec.categoryId = '__split'; }

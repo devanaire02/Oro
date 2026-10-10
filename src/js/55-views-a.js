@@ -247,7 +247,7 @@ VIEWS.transactions = p => {
     if (isTransferCat(l.categoryId)) { moved += l.amount; nMoved++; } else if (l.amount > 0) inflow += l.amount; else outflow += l.amount;
   }
   inflow = round2(inflow); outflow = round2(outflow); moved = round2(moved);
-  const opts = catOptions(null, true);
+  const opts = catOptions(null, true) + newCatOption();
   const unc = state.transactions.filter(isUncat).length, nFlag = state.transactions.filter(t => t.flag).length;
   const tags = allTags();
   const multi = members().length > 1;
@@ -274,7 +274,7 @@ VIEWS.transactions = p => {
   ${p.flag && shown.length ? `<p class="lens-note flag-note">${FLAG_ICON} Showing flagged transactions. Pick the right category and each one drops off this list. <button class="linklike" data-act="tx-clear">Show all</button></p>` : ''}
   <div class="bulk" id="bulk" hidden>
     <span id="bulk-count"></span>
-    <select id="bulk-cat" aria-label="Category">${catOptions(null, true)}</select><button class="btn small" data-act="bulk-cat">Set category</button>
+    <select id="bulk-cat" aria-label="Category">${catOptions(null, true)}${newCatOption()}</select><button class="btn small" data-act="bulk-cat">Set category</button>
     ${multi ? `<select id="bulk-who" aria-label="Person">${memberOptions('', 'Account owner', true)}</select><button class="btn small" data-act="bulk-who">Set person</button>` : ''}
     <input id="bulk-tag" placeholder="tag" list="tag-list" style="width:8em"><datalist id="tag-list">${tags.map(t => `<option value="${esc(t)}">`).join('')}</datalist><button class="btn small" data-act="bulk-tag">Add tag</button>
     <button class="btn small" data-act="bulk-flag">Flag</button><button class="btn small ghost" data-act="bulk-unflag">Clear flag</button>

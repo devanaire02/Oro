@@ -1309,3 +1309,9 @@ body.talk-open .main-wrap { margin-right: 390px; }
 /* Claude's answers: transactions it mentions open on a tap */
 .ai-tx { color: var(--ink-accent); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
 .ai-cont { margin: 6px 0 0; }
+
+/* "New category…" in the transaction window */
+.nc-inline { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr)); gap: 8px 14px; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--sheet); }
+.nc-inline[hidden] { display: none; }
+.nc-inline .field.wide { grid-column: 1 / -1; }
+.nc-for { margin: 0 0 10px; }

@@ -343,8 +343,10 @@ document.addEventListener('change', e => {
   if (el.id === 'lens-select') { UI.lens = el.value; try { sessionStorage.setItem('keel.lens', el.value); } catch (e2) { /* ignore */ } return render(); }
   if (d.filter && el.tagName === 'SELECT') return setParam(d.filter, el.value === thisMonth() && d.filter === 'm' && route().page !== 'review' ? '' : el.value);
   if (d.date) return setParam(d.date, el.value);
+  if (el.id === 'bulk-cat' && el.value === NEWCAT) { el.value = ''; return newCatModal({ ids: txSelIds(), bulk: true }); }
   if (d.txcat) {
     const t = state.transactions.find(x => x.id === d.txcat); if (!t) return;
+    if (el.value === NEWCAT) { el.value = t.categoryId || ''; return newCatModal({ ids: [t.id] }); }   // put the menu back; the window files it
     t.categoryId = el.value || null;
     el.closest('tr')?.classList.toggle('needs', !t.categoryId);
     const pill = el.parentElement?.querySelector('.cat-pill-text'); if (pill) pill.textContent = catName(t.categoryId);
