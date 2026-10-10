@@ -1263,3 +1263,10 @@ body.talk-open .main-wrap { margin-right: 390px; }
   .ai-key-row .btn { flex: 1 1 auto; min-height: 44px; }
   .ai-offer .btn { min-height: 40px; }
 }
+/* ---------- Ọrọ̀ as a Chrome app on the Mac (60-app.js) ---------- */
+.mac-app { margin: 12px 0 0; }
+.mac-app p { margin: 0; }
+.mac-app .actions { margin: 10px 0 0; }
+.linklike.link { color: var(--ink-accent); text-decoration: underline; text-underline-offset: 2px; }
+.mac-steps li { line-height: 1.5; }
+.mac-steps a { overflow-wrap: anywhere; }

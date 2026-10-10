@@ -116,6 +116,8 @@ const ACTIONS = {
     if (!await confirmBox('Delete transactions', `Delete ${ids.size} transaction${ids.size === 1 ? '' : 's'}?`, 'Delete', true)) return;
     state.transactions = state.transactions.filter(t => !ids.has(t.id)); commit(); toast('Deleted.', { label: 'Undo', fn: undo });
   },
+  'install-app': () => installApp(),
+  'mac-app': () => macAppSteps(),
   'connect-folder': async () => {
     let dir;
     try { dir = await window.showDirectoryPicker({ id: 'oro', mode: 'readwrite', startIn: 'documents' }); }
@@ -196,6 +198,48 @@ const ACTIONS = {
 };
 
 function reconnected() { toast(`Saving to ${Store.fileName} again.`); syncCheckInbox(); }
+
+/* ---------- Ọrọ̀ as a Chrome app on the Mac ----------
+   Chrome gives installed apps lasting permission to edit a folder. Other pages have to ask again after a restart or a
+   while in the background; Chrome offers them "Allow on every visit" only on some asks, and stops offering it once it
+   has been dismissed a few times, and the original Mac setup (a page opened from a file in the Ọrọ̀ folder) never got
+   it. Installed from devanaire02.github.io/Oro as a Chrome app, the same Ọrọ̀ keeps the folder connected. Same code, same folder, same
+   data file; only where the app's own code is loaded from changes. */
+const ORO_WEB = 'https://devanaire02.github.io/Oro/';
+let INSTALL_EVT = null;
+const isFileApp = () => location.protocol === 'file:';
+const isInstalledApp = () => { try { return ['standalone', 'window-controls-overlay', 'minimal-ui'].some(m => matchMedia(`(display-mode: ${m})`).matches); } catch (e) { return false; } };
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); INSTALL_EVT = e; if (['data', 'overview'].includes(route().page)) render(); });
+window.addEventListener('appinstalled', () => { INSTALL_EVT = null; render(); toast('Ọrọ̀ is installed as an app. Use its icon from now on (it’s in Launchpad and Applications › Chrome Apps; keep it in the Dock).'); });
+async function installApp() {
+  if (!INSTALL_EVT) return toast('In Chrome: the ⋮ menu › Cast, save and share › Install page as app…');
+  const e = INSTALL_EVT; INSTALL_EVT = null;
+  try { await e.prompt(); await e.userChoice; } catch (err) { /* dismissed */ }
+  render();
+}
+/* Settings › Where your data lives, on the Mac */
+function macAppNote() {
+  if (isCompanion()) return '';
+  if (isFileApp()) return `<div class="notice small mac-app"><p><strong>Tired of Reconnect?</strong> This copy of Ọrọ̀ opens from a file in the Ọrọ̀ folder, and Chrome makes pages like that ask for the folder again after a restart or a while in the background. Chrome gives installed apps lasting access, so the same Ọrọ̀ installed as a Chrome app keeps the folder connected. Your data stays in this folder either way.</p><div class="actions"><button class="btn primary" data-act="mac-app">Set up the Ọrọ̀ app…</button></div></div>`;
+  if (isInstalledApp()) return `<p class="muted small">Installed as a Chrome app, so Chrome keeps your Ọrọ̀ folder connected between visits.</p>`;
+  return `<div class="notice small mac-app"><p><strong>Install Ọrọ̀ as an app</strong> so Chrome keeps your Ọrọ̀ folder connected between visits (in a browser tab it can ask again).</p><div class="actions">${INSTALL_EVT ? '<button class="btn primary" data-act="install-app">Install Ọrọ̀</button>' : '<span>In Chrome: the ⋮ menu › Cast, save and share › Install page as app…</span>'}</div></div>`;
+}
+function macAppSteps() {
+  const saved = hasFolder() && Store.status !== 'error';
+  openModal({
+    title: 'Set up the Ọrọ̀ app', id: 'mac-app',
+    body: `<p>Same Ọrọ̀ and the same folder, as an app Chrome remembers. About a minute:</p>
+      <ol class="steps mac-steps">
+        <li>${saved ? 'This window is saving to your Ọrọ̀ folder, so everything is in the folder. ✓' : '<strong>Reconnect this window first</strong> (bottom of the sidebar), so your latest changes are in the folder.'}</li>
+        <li><strong>Open Ọrọ̀’s web address</strong> in Chrome: <a href="${ORO_WEB}" target="_blank" rel="noopener">${ORO_WEB.replace('https://', '')}</a></li>
+        <li>On that page, click <strong>Install Ọrọ̀</strong> (or the install icon at the right end of the address bar), then <strong>Install</strong>.</li>
+        <li>In the new Ọrọ̀ window, click <strong>Choose your Ọrọ̀ folder</strong>, pick <strong>iCloud Drive › Ọrọ̀</strong>, allow editing, and enter your passphrase.</li>
+        <li>Use the new icon from then on and keep it in the Dock; close this window and take the old Ọrọ̀ out of the Dock, so only one copy saves to the folder.</li>
+      </ol>
+      <p class="muted small">Things kept per app start fresh there: theme and voice choices, and the Claude help key (paste it again in Settings). Updates arrive the next time you open it, like on the iPhone; it works offline after the first visit.</p>`,
+    actions: `<button class="btn ghost" data-close>Not now</button><a class="btn primary" href="${ORO_WEB}" target="_blank" rel="noopener">Open Ọrọ̀’s web address</a>`,
+  });
+}
 /* Shown when Chrome doesn't grant permission from the Reconnect click (often without showing anything) */
 function reconnectHelp(note) {
   const folder = !!Store.dir, name = esc(Store.fileName);
@@ -203,7 +247,8 @@ function reconnectHelp(note) {
     title: `Reconnect ${folder ? 'your Ọrọ̀ folder' : Store.fileName}`, id: 'reconnect-help',
     body: `${note ? `<p class="notice small">${note}</p>` : ''}
       <p>Chrome didn’t give Ọrọ̀ permission to save this time. ${folder ? `Choose the <strong>${name}</strong> folder to reconnect: the folder window opens right at it, so you only need to click its blue button.` : 'Try asking again, or choose the file in Settings › Where your data lives.'}</p>
-      <p class="muted small">Your changes since it stopped saving are kept on this Mac and go into the folder as soon as it reconnects. If Chrome offers “Allow on every visit”, choose that and it should stop asking.</p>`,
+      <p class="muted small">Your changes since it stopped saving are kept on this Mac and go into the folder as soon as it reconnects.</p>
+      ${isFileApp() ? '<p class="small">To stop these asks for good, use Ọrọ̀ as a Chrome app: Chrome gives installed apps lasting access. <button class="linklike link" data-act="mac-app">How</button></p>' : ''}`,
     actions: `<button class="btn ghost" data-close>Not now</button><button class="btn" data-act="reconnect">Ask Chrome again</button>${folder ? `<button class="btn primary" data-act="reconnect-pick">Choose the ${name} folder…</button>` : ''}`,
   });
 }
