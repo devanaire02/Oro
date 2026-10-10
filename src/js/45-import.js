@@ -35,8 +35,8 @@ async function handleImportFile(file, opts = {}) {
   const box = $('#imp'); if (box && !opts.silent) box.innerHTML = `<p class="muted pad">Reading ${esc(file.name)}…</p>`;
   IMP.fileName = file.name;
   const ext = (file.name.split('.').pop() || '').toLowerCase();
-  const fours = [...file.name.matchAll(/(?<!\d)(\d{4})(?!\d)/g)].map(m => m[1]);
-  const last4 = fours.find(f => activeAccounts().some(a => a.last4 === f)) || fours.filter(f => !isYearLike(f)).pop() || '';
+  const fours = fileNumbers(file.name);
+  const last4 = fours.find(f => activeAccounts().some(a => a.last4 === f)) || fours[0] || '';
   IMP.fileLast4 = last4;
   try {
     if (ext === 'pdf') {
@@ -112,7 +112,13 @@ async function handleImportFile(file, opts = {}) {
   if (!opts.silent) renderImport();
 }
 function guessAccount(last4, inv) {
-  if (last4) { const a = activeAccounts().find(a => a.last4 === last4); if (a) return a.id; }
+  if (last4) {
+    const a = activeAccounts().find(a => a.last4 === last4);
+    if (a) return a.id;
+    // no last 4 saved, but the account's name has them ("Fidelity CMA 5244", "Joint …5244")
+    const named = (inv ? activeAccounts() : txnAccounts()).filter(a => !a.last4 && new RegExp(`(?<!\\d)${last4}(?!\\d)`).test(a.name || ''));
+    if (named.length === 1) return named[0].id;
+  }
   return inv ? '__new' : '';
 }
 function matchInvAccount(src) {
@@ -405,6 +411,10 @@ function importAction(act) {
     const list = csvMappedRows();
     if (!list.length) return toast('No rows could be read with this column mapping.');
     if (IMP.useAcctCol) setupAccountMap(list, IMP.last4); else IMP.multi = false;
+    if (!IMP.multi && !IMP.accountId) {   // as in a batch: the same kind of file as before, or overlapping what's there
+      const o = matchByOverlap(list);
+      IMP.accountId = matchByStem(IMP.fileName) || (o && !o.flipped ? o.id : '');
+    }
     IMP.step = 'review'; buildTxRows(list); return renderImport();
   }
   if (act === 'all' || act === 'none') { IMP.txRows.forEach(r => r.include = act === 'all'); return renderImport(); }

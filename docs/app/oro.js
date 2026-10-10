@@ -2609,8 +2609,8 @@ async function handleImportFile(file, opts = {}) {
   const box = $('#imp'); if (box && !opts.silent) box.innerHTML = `<p class="muted pad">Reading ${esc(file.name)}…</p>`;
   IMP.fileName = file.name;
   const ext = (file.name.split('.').pop() || '').toLowerCase();
-  const fours = [...file.name.matchAll(/(?<!\d)(\d{4})(?!\d)/g)].map(m => m[1]);
-  const last4 = fours.find(f => activeAccounts().some(a => a.last4 === f)) || fours.filter(f => !isYearLike(f)).pop() || '';
+  const fours = fileNumbers(file.name);
+  const last4 = fours.find(f => activeAccounts().some(a => a.last4 === f)) || fours[0] || '';
   IMP.fileLast4 = last4;
   try {
     if (ext === 'pdf') {
@@ -2686,7 +2686,13 @@ async function handleImportFile(file, opts = {}) {
   if (!opts.silent) renderImport();
 }
 function guessAccount(last4, inv) {
-  if (last4) { const a = activeAccounts().find(a => a.last4 === last4); if (a) return a.id; }
+  if (last4) {
+    const a = activeAccounts().find(a => a.last4 === last4);
+    if (a) return a.id;
+    // no last 4 saved, but the account's name has them ("Fidelity CMA 5244", "Joint …5244")
+    const named = (inv ? activeAccounts() : txnAccounts()).filter(a => !a.last4 && new RegExp(`(?<!\\d)${last4}(?!\\d)`).test(a.name || ''));
+    if (named.length === 1) return named[0].id;
+  }
   return inv ? '__new' : '';
 }
 function matchInvAccount(src) {
@@ -2979,6 +2985,10 @@ function importAction(act) {
     const list = csvMappedRows();
     if (!list.length) return toast('No rows could be read with this column mapping.');
     if (IMP.useAcctCol) setupAccountMap(list, IMP.last4); else IMP.multi = false;
+    if (!IMP.multi && !IMP.accountId) {   // as in a batch: the same kind of file as before, or overlapping what's there
+      const o = matchByOverlap(list);
+      IMP.accountId = matchByStem(IMP.fileName) || (o && !o.flipped ? o.id : '');
+    }
     IMP.step = 'review'; buildTxRows(list); return renderImport();
   }
   if (act === 'all' || act === 'none') { IMP.txRows.forEach(r => r.include = act === 'all'); return renderImport(); }
@@ -3124,8 +3134,26 @@ function commitPositions() {
 const isYearLike = s => /^(19|20)\d\d$/.test(s);
 const MONTH_WORDS = /(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec)/g;
 /* A file name with dates and copy numbers removed: "Chase9876_Activity20261005.CSV" → "chase9876-activity". */
+/* 8 digits that read as a date (20261010, 10102026) rather than an account number */
+function dateDigits(d) {
+  if (d.length === 8) {
+    const ok = (y, m, dd) => y >= 1990 && y <= 2100 && m >= 1 && m <= 12 && dd >= 1 && dd <= 31;
+    return ok(+d.slice(0, 4), +d.slice(4, 6), +d.slice(6)) || ok(+d.slice(4), +d.slice(0, 2), +d.slice(2, 4));
+  }
+  return d.length === 6 && +d.slice(0, 2) >= 1 && +d.slice(0, 2) <= 12 && +d.slice(2, 4) >= 1 && +d.slice(2, 4) <= 31;   // MMDDYY
+}
+/* Account numbers in a file name: "History_for_Account_X93615244.csv" → ['5244'] (last 4 only), then any 4-digit group */
+const ACCT_IN_NAME = /(?<![a-z0-9])([a-z]{0,3})(\d{6,12})(?!\d)/gi;
+function fileNumbers(name) {
+  const s = String(name || '').replace(/\.[a-z0-9]{2,4}$/i, '');
+  const longs = [...s.matchAll(ACCT_IN_NAME)].filter(m => m[1] || !dateDigits(m[2])).map(m => m[2].slice(-4));
+  const fours = [...s.matchAll(/(?<!\d)(\d{4})(?!\d)/g)].map(m => m[1]).filter(f => !isYearLike(f));
+  return [...new Set([...longs, ...fours])];
+}
 function fileStem(name) {
   let s = String(name || '').toLowerCase().replace(/\.[a-z0-9]{2,4}$/, '');
+  // an account number stays (as its last 4) so each account's downloads are told apart; dates and other long numbers go
+  s = s.replace(ACCT_IN_NAME, (m, pre, d) => pre || !dateDigits(d) ? ` n${d.slice(-4)} ` : ' ');
   s = s.replace(/\(\d+\)/g, ' ').replace(/\d{5,}/g, ' ').replace(/(?<!\d)\d{1,2}[-_.]\d{1,2}(?:[-_.]\d{2,4})?(?!\d)/g, ' ')
        .replace(/(?<!\d)(?:19|20)\d\d(?!\d)/g, ' ').replace(MONTH_WORDS, ' ');
   s = s.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -3134,8 +3162,8 @@ function fileStem(name) {
 }
 function matchByStem(name) {
   const st = fileStem(name); if (!st) return '';
-  const a = txnAccounts().find(a => (a.importStems || []).includes(st));
-  return a ? a.id : '';
+  const hits = txnAccounts().filter(a => (a.importStems || []).includes(st));
+  return hits.length === 1 ? hits[0].id : '';   // the same kind of file going to several accounts tells nothing
 }
 /* The account whose existing transactions this file clearly overlaps (downloads usually overlap last month's). */
 function matchByOverlap(list) {
@@ -3204,9 +3232,11 @@ async function analyzeBatchFile(file) {
     // which account?
     if (it.source === 'csv') { csvPreamble(it); if (!it.accountId) it.accountId = guessAccount(it.fileLast4); }
     const sameNumber = accountsWithLast4(it.fileLast4), stemId = matchByStem(it.fileName);
+    const byName = !sameNumber.length && it.fileLast4 ? guessAccount(it.fileLast4) : '';
     if (it.source === 'ofx' && sameNumber.length === 1) { it.accountId = sameNumber[0].id; it.matchedBy = `number ending ${it.fileLast4}`; }
     else if (stemId) { it.accountId = stemId; it.matchedBy = 'same kind of file as last time'; }
     else if (sameNumber.length === 1) { it.accountId = sameNumber[0].id; it.matchedBy = `number ending ${it.fileLast4}`; }
+    else if (byName) { it.accountId = byName; it.matchedBy = `${it.fileLast4} in the account’s name`; }
     else {
       it.accountId = '';
       const m = matchByOverlap(it.source === 'pdf' ? withItem(it, () => (buildTxRowsFromPdf(), it.rawList)) : it.rawList);
@@ -3312,7 +3342,7 @@ function renderBatchStep(box) {
   if (nPosFiles) parts.push(`${nPosFiles} holdings file${nPosFiles === 1 ? '' : 's'}`);
   if (nMark) parts.push(`${parts.length ? 'mark' : 'Mark'} whose card on ${nMark.toLocaleString()}`);
   if (nPP) parts.push('PayPal details');
-  setModalActions(`<button class="btn ghost" data-imp="back">Start over</button><button class="btn primary" data-imp="bcommit" ${nFiles ? '' : 'disabled'}>${parts.length ? `Import ${parts.join(' and ')}` : 'Nothing to import'}</button>`);
+  setModalActions(`<button class="btn ghost" data-imp="back">Start over</button><button class="btn primary" data-imp="bcommit" ${nFiles ? '' : 'disabled'}>${parts.length ? `Import ${parts.join(' and ')}` : nFiles ? 'Nothing new · remember the accounts' : 'Nothing to import'}</button>`);
 }
 
 function batchAction(act) {
@@ -3349,7 +3379,9 @@ function commitBatch() {
   commit();
   if (pp.length) ppReviewOpen(pp.flatMap(it => it.ppRows), pp[0].fileName);   // now that the card statements are in
   const bits = [];
-  if (added || accts.size) bits.push(`Imported ${added.toLocaleString()} transaction${added === 1 ? '' : 's'} into ${accts.size} account${accts.size === 1 ? '' : 's'}`);
+  if (added) bits.push(`Imported ${added.toLocaleString()} transaction${added === 1 ? '' : 's'} into ${accts.size} account${accts.size === 1 ? '' : 's'}`);
+  else if (accts.size && !posAccts.size && !marked) bits.push(`Nothing new. Next time these files go to the same account${accts.size === 1 ? '' : 's'} by themselves`);
+  else if (accts.size && !posAccts.size) bits.push('Nothing new');
   if (posAccts.size) bits.push(`${bits.length ? 'updated' : 'Updated'} ${holdings} holding${holdings === 1 ? '' : 's'} in ${posAccts.size} account${posAccts.size === 1 ? '' : 's'}`);
   toast(`${bits.join(' and ')}.${skipped ? ` Skipped ${skipped} already there.` : ''}${marked ? ` Marked whose card it was on ${marked.toLocaleString()} already there.` : ''}${unc ? ` ${unc} need a category.` : ''}`,
     unc ? { label: 'Categorize', fn: () => go('#/transactions?cat=_none&m=all') } : { label: 'Undo', fn: undo });
@@ -4002,7 +4034,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '31c4b29';
+const ORO_BUILD = '58e1865';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -6394,7 +6426,7 @@ function lockNow() {
   if (!Store.key || $('.lock-screen')) return;
   UI.sticky = {}; UI.sorts = {};   // filters and column sorts start fresh after a lock
   ciReset();        // and so does a check-in
-  closeTalk(); Object.assign(TALK, { draft: null, heard: '', last: null, ai: null, queue: [] }); UI.talkCtx = null; aiCancel();
+  closeTalk(); Object.assign(TALK, { draft: null, heard: '', last: null, ai: null, queue: [], aiThread: null }); UI.talkCtx = null; aiCancel();
   if ($('#present')) { $('#present').remove(); document.body.classList.remove('presenting'); }
   closeModal(true);
   const wrap = document.createElement('div');
@@ -7798,7 +7830,7 @@ function checkinSettings() {
   const p = voicePrefs(), dev = isCompanion() ? deviceLabel() : 'Mac', on = checkinOn();
   const rates = [[0.85, 'Slower'], [1, 'Normal'], [1.15, 'Faster'], [1.3, 'Fastest']];
   return `<section class="panel" id="checkin-settings">
-    <header class="panel-head"><h2>Check-in and Talk</h2><span class="muted small">Runs on this ${dev}. ${aiReady() ? 'Only “Ask Claude” sends anything.' : 'Nothing is sent anywhere.'}</span></header>
+    <header class="panel-head"><h2>Check-in and Talk</h2><span class="muted small">Runs on this ${dev}. ${aiReady() ? 'Only “Ask Claude”, or a reply to Claude’s answer, sends anything.' : 'Nothing is sent anywhere.'}</span></header>
     <p class="muted">Goes through what needs you today, this week or this month, one item at a time: transactions to sort, flagged ones, bills that haven’t shown up, accounts to import and balances to update.</p>
     <div class="form-grid">
       <label class="check"><input type="checkbox" data-setting-bool="checkin" ${on ? 'checked' : ''}> Show Check-in</label>
@@ -9068,9 +9100,18 @@ function talkUnderstand(text, { split = true } = {}) {
   if (/^(cancel|never ?mind|stop|close)$/.test(low) && !CI.draft) { closeTalk(); return ''; }
   if (/^undo( that)?$/.test(low)) { if (CI.draft) { CI.draft = null; TALK.queue = []; CI.heard = 'OK, nothing was changed.'; return CI.heard; } return talkUndo(); }
   if (CI.draft) return CI.draft.step === 'tx' ? txAnswer(text) : tellAnswer(text);
+  // "ask Claude …", "Claude, …", "ask Claude again": straight to Claude, carrying on from its last answer
+  const askC = /^(?:(?:please\s+)?(?:ask|tell|have)\s+claude\b[,:]?|claude[,:])\s*(?:again\b[,.]?\s*)?(?:to\s+|about\s+|if\s+)?(.*)$/i.exec(text.trim());
+  if (askC) {
+    if (!aiReady()) { CI.heard = 'Claude help is off. It’s in Settings › Claude help.'; return CI.heard; }
+    const rest = askC[1].trim(), th = aiThreadLive();
+    const said = rest || th?.turns.at(-1)?.text || TALK.lastAiText || '';
+    if (!said) { CI.heard = 'What should I ask Claude?'; return CI.heard; }
+    aiTalkOffer(rest ? rest : `${said} (again, please)`, aiModeFor(said, th)); TALK.ai.go = true; CI.heard = ''; return 'Asking Claude…';
+  }
   // a question about spending ("how much did we spend…") is for Claude, when Claude help is on
   if (AI_Q_STRONG.test(low.replace(/^(?:and|so)\s+/, ''))) {
-    if (aiReady()) { aiTalkOffer(text, 'ask'); CI.heard = ''; return 'Asking Claude…'; }
+    if (aiReady()) { aiTalkOffer(text, AI_DUP_WORDS.test(text) ? 'change' : 'ask'); TALK.ai.go = true; CI.heard = ''; return 'Asking Claude…'; }
     CI.heard = 'I can make changes, but answering questions about your spending needs Claude help, which is off. It’s in Settings › Claude help.'; return CI.heard;
   }
   if (TELL_ADD.test(low) && !/^add (a )?note\b/.test(low) && (tellFindType(low) || /\b(account|property)\b/.test(low))) return tellStart(text);
@@ -9093,7 +9134,14 @@ function talkUnderstand(text, { split = true } = {}) {
   const up = up0 || updParse(text, { ctxAcct });
   if (up) return updStart(up);
   const q = aiLooksLikeQuestion(low);
-  if (aiReady() && !TALK.noOffer) { aiTalkOffer(text, q ? 'ask' : 'change'); CI.heard = ''; return aiPrefs().auto || q ? 'Asking Claude…' : 'I didn’t catch that. Claude can try.'; }
+  if (aiReady() && !TALK.noOffer) {
+    // a reply to Claude's last answer ("yes", "flag them", "and the other one?") goes back to Claude, with what came before
+    const th = aiThreadLive();
+    aiTalkOffer(text, aiModeFor(text, th, q));
+    const go = (TALK.afterAi && !!th) || q || AI_DUP_WORDS.test(low);   // a question, or a reply to Claude's answer, goes straight to Claude (as questions always have)
+    if (go) TALK.ai.go = true;
+    CI.heard = ''; return aiPrefs().auto || go ? 'Asking Claude…' : th ? 'I didn’t catch that. Claude can try, carrying on from before.' : 'I didn’t catch that. Claude can try.';
+  }
   CI.heard = q ? 'I can make changes, but answering questions about your spending needs Claude help, which is off. It’s in Settings › Claude help.'
     : ctx.t ? 'I didn’t catch that. Try “it’s groceries”, “for Julissa”, “flag it” or “make a rule”.'
     : 'I didn’t catch that. Try naming the transaction or account: “the Jewel Osco one is groceries”, “Chase savings is 12,400”.';
@@ -9109,8 +9157,10 @@ function talkNext(reply) {
 function talkSubmit(text) {
   if (!text.trim()) return;
   if (!TALK.draft) TALK.queue = [];
-  if (TALK.ai) { if (TALK.ai.status === 'busy') { AI.seq++; aiCancel(); } TALK.ai = null; }
-  const reply = talkNext(withTalk(() => { CI.heard = ''; return talkUnderstand(text); }));
+  TALK.afterAi = TALK.ai?.status === 'answer';   // typed right under Claude's answer: a reply to it
+  if (TALK.ai) { TALK.lastAiText = TALK.ai.text || TALK.lastAiText; if (TALK.ai.status === 'busy') { AI.seq++; aiCancel(); } TALK.ai = null; }
+  let reply;
+  try { reply = talkNext(withTalk(() => { CI.heard = ''; return talkUnderstand(text); })); } finally { TALK.afterAi = false; }
   render();   // the page under the panel shows the change too
   if (TALK.speak && reply && !TALK.ai?.go) ciSpeak(reply);
   const inp = $('#talk-say'); if (inp) { inp.value = ''; if (TALK.open) inp.focus(); }
@@ -9454,7 +9504,7 @@ function txCardHtml() {
   const act = pend ? 'tx-pick' : 'tx-cat';
   const ready = !pend && !d.choose?.length && !d.needCat && !txOverSplit(d);
   return `<section class="panel ci-card tell-card"><div class="ci-top"><span class="ci-kicker">${d.ids.length || pend ? 'Transactions' : d.rules.length === 1 ? 'Rule' : 'Rules'}${d.fromAi ? ` · ${AI_SPARK} suggested by Claude` : ''}</span></div>
-    ${d.ai ? `<p class="ai-said">${esc(d.ai)}</p>` : ''}
+    ${d.ai ? `<p class="ai-said">${aiTxLinks(esc(d.ai), d.aiT)}</p>` : ''}
     ${list ? `<ul class="upd-list tx-targets">${list}</ul>` : ''}
     ${changes ? `<ul class="upd-list">${changes}${preview}</ul>` : ''}
     <p class="ci-guess tell-q">${esc(ready ? (changes ? 'Save this?' : 'Nothing to change.') : txPrompt())}</p>
@@ -9792,10 +9842,50 @@ function aiTxLine(t, code, cb) {
 const AI_TX_HEAD = 'code | date | amount (- is money out) | payee | account | category | for | flag';
 const byDateDesc = (a, b) => b.date.localeCompare(a.date);
 
+/* ---------- Talk: a conversation with Claude ----------
+   Each request carries the last few things said to Claude and its replies, and keeps the transactions it was shown in
+   the same order, so "T43" in its answer still means the same one when you say "yes, flag them". Forgotten after 20
+   minutes, or when Ọrọ̀ locks. */
+const AI_THREAD_MS = 20 * 60 * 1000;
+function aiThreadLive() {
+  const th = TALK.aiThread;
+  return th && Date.now() - th.at < AI_THREAD_MS && th.turns.length ? th : null;
+}
+function aiThreadAdd(text, said, reply, T, mode) {
+  const th = aiThreadLive() || { turns: [], T: null, at: 0 };
+  th.turns = [...th.turns, { text, said, reply: String(reply || '').slice(0, 1500), mode }].slice(-4);
+  if (T) th.T = T;
+  th.at = Date.now();
+  TALK.aiThread = th;
+}
+function aiThreadLines(th) {
+  if (!th) return '';
+  return `Earlier in this conversation (most recent last):
+${th.turns.map(t => `They said: "${t.said}"\nYou replied: ${t.reply || '(changes for them to confirm)'}`).join('\n')}
+
+`;
+}
+/* "T43" in Claude's words → a link that opens that transaction, labelled with its payee and date */
+function aiTxLinks(html, T) {
+  if (!T) return html;
+  return String(html).replace(/\bT(\d{1,3})\b/g, (m, n) => {
+    const t = state.transactions.find(x => x.id === T[`T${n}`]); if (!t) return m;
+    return `<a href="#" class="ai-tx" data-edit-txn="${t.id}">${esc(prettyPayee(t.payee) || t.payee)}, ${dateLabel(t.date)}</a>`;
+  });
+}
+/* A question about totals goes with your totals; one about particular transactions (duplicates, or carrying on from
+   transactions Claude was just shown) goes with the transactions, so Claude can point at them and offer to flag them */
+function aiModeFor(text, th, q = aiLooksLikeQuestion(String(text).toLowerCase())) {
+  if (AI_DUP_WORDS.test(text) || th?.T) return 'change';
+  return q ? 'ask' : 'change';
+}
+const AI_DUP_WORDS = /\b(duplicat\w*|double[ds]?|twice|charged (?:two|2) times|same charge|charged again|repeat(?:ed)? charges?)\b/i;
+
 /* ---------- Talk: what Ọrọ̀ didn't understand ---------- */
 /* The transactions Claude might need: the one open, the ones selected, any your words point at, then recent ones */
-function aiCandidates(text, ctx, limit = 60) {
+function aiCandidates(text, ctx, limit = 60, keep = []) {
   const out = new Map(), add = t => { if (t && !out.has(t.id) && out.size < limit) out.set(t.id, t); };
+  for (const id of keep) add(state.transactions.find(t => t.id === id));   // the ones Claude saw before, in the same order
   if (ctx.t) add(ctx.t);
   for (const id of ctx.sel) add(state.transactions.find(t => t.id === id));
   const low = String(text).toLowerCase();
@@ -9804,6 +9894,11 @@ function aiCandidates(text, ctx, limit = 60) {
   const visible = ctx.page === 'transactions' && UI.txVisible?.length ? new Set(UI.txVisible) : null;
   const since = addDays(today(), -120);
   const pool = state.transactions.filter(t => visible ? visible.has(t.id) : t.date >= since);
+  if (AI_DUP_WORDS.test(low)) {   // "any duplicate charges?": same account and amount within a few days, closest first
+    const pairs = [], by = groupBy(pool.filter(t => t.amount < 0 && !isTransferCat(t.categoryId)), t => `${t.accountId}|${Math.abs(t.amount).toFixed(2)}`);
+    for (const g of Object.values(by)) { g.sort(byDateDesc); for (let i = 0; i + 1 < g.length; i++) { const d = Math.abs(daysBetween(g[i + 1].date, g[i].date)); if (d <= 3) pairs.push([d, g[i], g[i + 1]]); } }
+    pairs.sort((a, b) => a[0] - b[0] || byDateDesc(a[1], b[1])).slice(0, 15).forEach(([, x, y]) => { add(x); add(y); });
+  }
   pool.map(t => {
     const toks = ciTokens(`${t.payee || ''} ${t.rawPayee || ''}`);
     let s = 2 * words.filter(w => toks.some(p => tokSame(w, p))).length;
@@ -9850,9 +9945,11 @@ You can propose: a category for transactions, or a split of one transaction acro
 For account balances, values, renames, interest rates or new accounts, don't use changes: put a short command in "say" in Ọrọ̀'s phrasing, using account codes.
 Use transaction codes, category names, person codes and account codes exactly as listed. Never invent codes. If they name a category that doesn't exist, use the closest one and say so in the reply.
 If it's unclear which transaction they mean, ask in the reply and propose nothing. If they ask a question instead, answer briefly in the reply.
+If they ask you to look for something (possible duplicates, odd or unusual charges, things to check), answer in the reply and propose flag: true on the ones worth checking, so one "yes" flags them. You can mention transaction codes like T3 in the reply; Ọrọ̀ shows them as links. If earlier messages are included and they say "yes" or "do it", do what you offered.
 People and accounts are codes on purpose; use the codes. Amounts below 0 are money out. Nothing changes until the person confirms, so be precise rather than cautious. Keep the reply to one or two short plain sentences.`;
-function aiProposeRequest(text, ctx) {
-  const cb = aiCodebook(), txs = aiCandidates(text, ctx), T = {};
+function aiProposeRequest(text, ctx, th = null) {
+  const keep = th?.T ? Object.keys(th.T).sort((a, b) => a.slice(1) - b.slice(1)).map(k => th.T[k]) : [];
+  const cb = aiCodebook(), txs = aiCandidates(text, ctx, Math.max(60, keep.length + 20), keep), T = {};
   const lines = txs.map((t, i) => { T[`T${i + 1}`] = t.id; return aiTxLine(t, `T${i + 1}`, cb); });
   const pageName = PAGES.find(p => p[0] === ctx.page)?.[1] || ctx.page;
   const where = ctx.t ? `They have T1 open.` : ctx.sel.length ? `They selected ${ctx.sel.length === 1 ? 'T1' : `T1 to T${Math.min(ctx.sel.length, txs.length)}`}.` : `They're on the ${pageName} page.`;
@@ -9868,7 +9965,7 @@ ${aiCategoryList()}
 Transactions (${AI_TX_HEAD}):
 ${lines.join('\n') || '(none)'}
 
-What they said: "${aiMask(text, cb)}"`;
+${aiThreadLines(th)}What they said: "${aiMask(text, cb)}"`;
   return { user, T, cb, said: aiMask(text, cb) };
 }
 /* Claude's proposal → Talk's own change cards, checked against your data */
@@ -9899,7 +9996,7 @@ function aiDrafts(out, T, cb, reply) {
     const who = targets.length === 1 ? prettyPayee(t0.payee) || t0.payee : targets.length ? `${targets.length} transactions` : 'a rule';
     drafts.push({ ids: targets.map(t => t.id), pending: null, set, rules, choose: null, needCat: false, label: who, fromAi: true });
   }
-  if (drafts[0]) drafts[0].ai = [reply, ...notes].filter(Boolean).join(' ');
+  if (drafts[0]) { drafts[0].ai = [reply, ...notes].filter(Boolean).join(' '); drafts[0].aiT = T; }
   return { drafts, notes, say: (Array.isArray(out?.say) ? out.say : []).map(s => aiUnmask(String(s), cb).trim()).filter(Boolean).slice(0, 4) };
 }
 
@@ -9913,7 +10010,7 @@ function aiSay(cmd) {
 
 /* ---------- questions about your spending ---------- */
 const AI_Q_STRONG = /^(?:how (?:much|many|often)|what (?:did|have|do) (?:we|i)|did (?:we|i) spend|have (?:we|i) spent|where (?:did|does|do) (?:we|i|our|my|the money)|who (?:spent|spends)|when did (?:we|i)|compare|summari[sz]e|break ?down|what(?:'s| is| was) (?:our|my|the) (?:biggest|largest|top|total|average|spending|income)|which (?:category|categories|month|months|payee|store|merchant))\b/;
-const AI_QUESTION = /^(?:how (?:much|many|often|is|are|did|does|do|was|were|has|have|can|come)|how's|what(?:'s| is| are| was| were| did| do| does|\b)|which|when (?:did|was|were|do|does)|where (?:did|do|does|is|are)|who (?:spent|spends|paid|is|was)|why|did (?:we|i|you)|do (?:we|i)|does (?:it|that)|have (?:we|i)|has (?:our|my)|are (?:we|our|my)|am i|is (?:our|my|that|it)|was (?:our|my|it)|were (?:we|our)|can (?:we|i) afford|compare|summari[sz]e|break ?down|show me (?:how|what|where|our|my)|tell me (?:how|what|where|about|our|my)|give me (?:a |an )?(?:summary|breakdown|rundown|sense|overview)|explain)\b/;
+const AI_QUESTION = /^(?:how (?:much|many|often|is|are|did|does|do|was|were|has|have|can|come)|how's|(?:are|were|is|was) there\b|what(?:'s| is| are| was| were| did| do| does|\b)|which|when (?:did|was|were|do|does)|where (?:did|do|does|is|are)|who (?:spent|spends|paid|is|was)|why|did (?:we|i|you)|do (?:we|i)|does (?:it|that)|have (?:we|i)|has (?:our|my)|are (?:we|our|my)|am i|is (?:our|my|that|it)|was (?:our|my|it)|were (?:we|our)|can (?:we|i) afford|compare|summari[sz]e|break ?down|show me (?:how|what|where|our|my)|tell me (?:how|what|where|about|our|my)|give me (?:a |an )?(?:summary|breakdown|rundown|sense|overview)|explain)\b/;
 function aiLooksLikeQuestion(low) {
   const s = low.replace(/^(?:hey|hi|ok(?:ay)?|so|um+|uh+|and|oro|ọrọ̀)[,!.]?\s+/g, '').trim();
   if (/\b(make|create|add) (?:a )?rules?\b|\b(rename|split|flag|categori[sz]e|file|mark)\b/.test(s)) return false;
@@ -9960,12 +10057,12 @@ ${budgets.length ? `Budgets: ${budgets.join('; ')}\n` : ''}Top payees, last 12 m
 ${top.join('\n')}`;
 }
 const AI_ANSWER_SYSTEM = `You answer questions about a household's spending inside Ọrọ̀, a private finance app, using only the data given. Be brief and direct: one to four short sentences, or a short list with "- " bullets. Use whole dollars. Do the arithmetic carefully. If the data can't answer it (for example balances or net worth, which aren't included), say what's missing and where in Ọrọ̀ to look (Overview, Accounts, Reports, Budget). People are codes (P1, P2…; Joint is shared): use the codes, Ọrọ̀ shows the names. Don't give investment, tax or legal advice beyond explaining the numbers.`;
-function aiAnswerRequest(text) {
+function aiAnswerRequest(text, th = null) {
   const cb = aiCodebook();
   const user = `${aiSpendingData(cb)}
 
 People: ${aiPeopleLine(cb)}
-Their question: "${aiMask(text, cb)}"`;
+${aiThreadLines(th)}Their question: "${aiMask(text, cb)}"`;
   return { user, cb, said: aiMask(text, cb) };
 }
 /* Claude's words on screen: plain paragraphs and "- " lists, nothing else */
@@ -9994,26 +10091,30 @@ async function aiTalkRun() {
   TALK.ai = { ...a, status: 'busy', seq, go: false }; paintTalk();
   try {
     const ctx = talkCtx();
+    const th = aiThreadLive();
     if (a.mode === 'ask') {
-      const { user, cb, said } = aiAnswerRequest(a.text);
+      const { user, cb, said } = aiAnswerRequest(a.text, th);
       const r = await aiCall({ system: AI_ANSWER_SYSTEM, user, maxTokens: 1500, effort: null, what: { kind: 'question', label: 'Talk: question', codes: cb, said, intro: 'Ọrọ̀ will send your question, your totals by category and month, and your top payees' } });
       if (AI.seq !== seq) return;
-      TALK.ai = { status: 'answer', text: a.text, answer: aiUnmask(aiText(r.data), cb) || 'Claude didn’t answer that.', cost: r.cost, model: r.model };
+      const raw = aiText(r.data);
+      TALK.ai = { status: 'answer', text: a.text, answer: aiUnmask(raw, cb) || 'Claude didn’t answer that.', cost: r.cost, model: r.model };
+      aiThreadAdd(a.text, said, raw, null, 'ask');
       if (TALK.speak) ciSpeak(TALK.ai.answer);
     } else {
-      const { user, T, cb, said } = aiProposeRequest(a.text, ctx);
+      const { user, T, cb, said } = aiProposeRequest(a.text, ctx, th);
       const r = await aiCall({ system: AI_PROPOSE_SYSTEM, user, tools: [AI_PROPOSE_TOOL], maxTokens: 2000, what: { kind: 'talk', label: 'Talk', codes: cb, said, intro: 'Ọrọ̀ will send what you said and the transactions it might be about' } });
       if (AI.seq !== seq) return;
       const out = aiTool(r.data, 'propose') || {};
       const reply = aiUnmask(out.reply || '', cb).trim();
       const { drafts, say, notes } = aiDrafts(out, T, cb, reply);
+      aiThreadAdd(a.text, said, `${out.reply || ''}${drafts.length ? ` [proposed ${drafts.length} change${drafts.length === 1 ? '' : 's'} for them to confirm: ${(out.changes || []).map(c => `${(c.transactions || []).join(', ')}${c.flag === true ? ' flag' : c.flag === false ? ' unflag' : ''}${c.category ? ' → ' + c.category : ''}`).join('; ')}]` : ''}`, T, 'change');
       TALK.ai = null;
-      if (!drafts.length && !say.length) TALK.ai = { status: 'answer', text: a.text, answer: [reply, ...notes].filter(Boolean).join(' ') || 'Claude didn’t find anything to change.', cost: r.cost, model: r.model };
+      if (!drafts.length && !say.length) TALK.ai = { status: 'answer', text: a.text, answer: [reply, ...notes].filter(Boolean).join(' ') || 'Claude didn’t find anything to change.', cost: r.cost, model: r.model, T };
       else {
         TALK.queue = [...drafts.slice(1), ...say.map(x => ({ say: x }))];
         const first = drafts[0] || null;
         const said = withTalk(() => first ? txStart(first) : aiSay(TALK.queue.shift().say));
-        if (!first && reply) TALK.ai = { status: 'answer', text: a.text, answer: reply, cost: r.cost, model: r.model };
+        if (!first && reply) TALK.ai = { status: 'answer', text: a.text, answer: reply, cost: r.cost, model: r.model, T };
         if (TALK.speak) ciSpeak(first ? `${reply} ${said}`.trim() : said);
       }
     }
@@ -10028,12 +10129,12 @@ async function aiTalkRun() {
 function aiTalkCardHtml() {
   const a = TALK.ai; if (!a) return '';
   const cost = a.cost != null ? `<span class="muted small ai-cost">${esc(AI_MODELS[a.model]?.label || 'Claude')} · ${aiCostLabel(a.cost)}</span>` : '';
-  if (a.status === 'offer') return `<section class="panel ci-card ai-card"><p class="ai-offer-line">Ọrọ̀ didn’t understand that${a.mode === 'ask' ? ' question' : ''}. Claude can try.</p>
+  if (a.status === 'offer') return `<section class="panel ci-card ai-card"><p class="ai-offer-line">Ọrọ̀ didn’t understand that${a.mode === 'ask' ? ' question' : ''}. Claude can try${aiThreadLive() ? ', carrying on from before' : ''}.</p>
     <div class="ci-actions"><button class="btn primary" data-talk="ai-ask">${AI_SPARK} Ask Claude</button><button class="btn ghost" data-talk="ai-dismiss">No thanks</button></div>
     <p class="muted small">Sends your words and the transactions they might be about, without account names, balances or notes.</p></section>`;
   if (a.status === 'busy') return `<section class="panel ci-card ai-card ai-busy" aria-live="polite"><p><span class="ai-dots" aria-hidden="true"><i></i><i></i><i></i></span> Asking Claude…</p><div class="ci-actions"><button class="btn ghost" data-talk="ai-cancel">Cancel</button></div></section>`;
   if (a.status === 'error') return `<section class="panel ci-card ai-card"><p class="ai-err">${esc(a.error)}</p><div class="ci-actions"><button class="btn" data-talk="ai-retry">Try again</button><a class="btn ghost" href="#/data" data-talk="ai-settings">Claude help settings</a></div></section>`;
-  return `<section class="panel ci-card ai-card ai-answer"><div class="ci-top"><span class="ci-kicker">${AI_SPARK} Claude</span></div>${aiFormat(a.answer)}${cost}</section>`;
+  return `<section class="panel ci-card ai-card ai-answer"><div class="ci-top"><span class="ci-kicker">${AI_SPARK} Claude</span></div>${aiTxLinks(aiFormat(a.answer), a.T)}${cost}${aiThreadLive() ? '<p class="muted small ai-cont">Reply here to carry on with Claude, like “yes, flag them”.</p>' : ''}</section>`;
 }
 const AI_SPARK = '<svg class="ai-spark" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="currentColor"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9z"/><path d="M18.5 15l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z" opacity=".7"/></svg>';
 document.addEventListener('click', e => {

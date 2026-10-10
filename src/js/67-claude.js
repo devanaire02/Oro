@@ -289,10 +289,50 @@ function aiTxLine(t, code, cb) {
 const AI_TX_HEAD = 'code | date | amount (- is money out) | payee | account | category | for | flag';
 const byDateDesc = (a, b) => b.date.localeCompare(a.date);
 
+/* ---------- Talk: a conversation with Claude ----------
+   Each request carries the last few things said to Claude and its replies, and keeps the transactions it was shown in
+   the same order, so "T43" in its answer still means the same one when you say "yes, flag them". Forgotten after 20
+   minutes, or when Ọrọ̀ locks. */
+const AI_THREAD_MS = 20 * 60 * 1000;
+function aiThreadLive() {
+  const th = TALK.aiThread;
+  return th && Date.now() - th.at < AI_THREAD_MS && th.turns.length ? th : null;
+}
+function aiThreadAdd(text, said, reply, T, mode) {
+  const th = aiThreadLive() || { turns: [], T: null, at: 0 };
+  th.turns = [...th.turns, { text, said, reply: String(reply || '').slice(0, 1500), mode }].slice(-4);
+  if (T) th.T = T;
+  th.at = Date.now();
+  TALK.aiThread = th;
+}
+function aiThreadLines(th) {
+  if (!th) return '';
+  return `Earlier in this conversation (most recent last):
+${th.turns.map(t => `They said: "${t.said}"\nYou replied: ${t.reply || '(changes for them to confirm)'}`).join('\n')}
+
+`;
+}
+/* "T43" in Claude's words → a link that opens that transaction, labelled with its payee and date */
+function aiTxLinks(html, T) {
+  if (!T) return html;
+  return String(html).replace(/\bT(\d{1,3})\b/g, (m, n) => {
+    const t = state.transactions.find(x => x.id === T[`T${n}`]); if (!t) return m;
+    return `<a href="#" class="ai-tx" data-edit-txn="${t.id}">${esc(prettyPayee(t.payee) || t.payee)}, ${dateLabel(t.date)}</a>`;
+  });
+}
+/* A question about totals goes with your totals; one about particular transactions (duplicates, or carrying on from
+   transactions Claude was just shown) goes with the transactions, so Claude can point at them and offer to flag them */
+function aiModeFor(text, th, q = aiLooksLikeQuestion(String(text).toLowerCase())) {
+  if (AI_DUP_WORDS.test(text) || th?.T) return 'change';
+  return q ? 'ask' : 'change';
+}
+const AI_DUP_WORDS = /\b(duplicat\w*|double[ds]?|twice|charged (?:two|2) times|same charge|charged again|repeat(?:ed)? charges?)\b/i;
+
 /* ---------- Talk: what Ọrọ̀ didn't understand ---------- */
 /* The transactions Claude might need: the one open, the ones selected, any your words point at, then recent ones */
-function aiCandidates(text, ctx, limit = 60) {
+function aiCandidates(text, ctx, limit = 60, keep = []) {
   const out = new Map(), add = t => { if (t && !out.has(t.id) && out.size < limit) out.set(t.id, t); };
+  for (const id of keep) add(state.transactions.find(t => t.id === id));   // the ones Claude saw before, in the same order
   if (ctx.t) add(ctx.t);
   for (const id of ctx.sel) add(state.transactions.find(t => t.id === id));
   const low = String(text).toLowerCase();
@@ -301,6 +341,11 @@ function aiCandidates(text, ctx, limit = 60) {
   const visible = ctx.page === 'transactions' && UI.txVisible?.length ? new Set(UI.txVisible) : null;
   const since = addDays(today(), -120);
   const pool = state.transactions.filter(t => visible ? visible.has(t.id) : t.date >= since);
+  if (AI_DUP_WORDS.test(low)) {   // "any duplicate charges?": same account and amount within a few days, closest first
+    const pairs = [], by = groupBy(pool.filter(t => t.amount < 0 && !isTransferCat(t.categoryId)), t => `${t.accountId}|${Math.abs(t.amount).toFixed(2)}`);
+    for (const g of Object.values(by)) { g.sort(byDateDesc); for (let i = 0; i + 1 < g.length; i++) { const d = Math.abs(daysBetween(g[i + 1].date, g[i].date)); if (d <= 3) pairs.push([d, g[i], g[i + 1]]); } }
+    pairs.sort((a, b) => a[0] - b[0] || byDateDesc(a[1], b[1])).slice(0, 15).forEach(([, x, y]) => { add(x); add(y); });
+  }
   pool.map(t => {
     const toks = ciTokens(`${t.payee || ''} ${t.rawPayee || ''}`);
     let s = 2 * words.filter(w => toks.some(p => tokSame(w, p))).length;
@@ -347,9 +392,11 @@ You can propose: a category for transactions, or a split of one transaction acro
 For account balances, values, renames, interest rates or new accounts, don't use changes: put a short command in "say" in Ọrọ̀'s phrasing, using account codes.
 Use transaction codes, category names, person codes and account codes exactly as listed. Never invent codes. If they name a category that doesn't exist, use the closest one and say so in the reply.
 If it's unclear which transaction they mean, ask in the reply and propose nothing. If they ask a question instead, answer briefly in the reply.
+If they ask you to look for something (possible duplicates, odd or unusual charges, things to check), answer in the reply and propose flag: true on the ones worth checking, so one "yes" flags them. You can mention transaction codes like T3 in the reply; Ọrọ̀ shows them as links. If earlier messages are included and they say "yes" or "do it", do what you offered.
 People and accounts are codes on purpose; use the codes. Amounts below 0 are money out. Nothing changes until the person confirms, so be precise rather than cautious. Keep the reply to one or two short plain sentences.`;
-function aiProposeRequest(text, ctx) {
-  const cb = aiCodebook(), txs = aiCandidates(text, ctx), T = {};
+function aiProposeRequest(text, ctx, th = null) {
+  const keep = th?.T ? Object.keys(th.T).sort((a, b) => a.slice(1) - b.slice(1)).map(k => th.T[k]) : [];
+  const cb = aiCodebook(), txs = aiCandidates(text, ctx, Math.max(60, keep.length + 20), keep), T = {};
   const lines = txs.map((t, i) => { T[`T${i + 1}`] = t.id; return aiTxLine(t, `T${i + 1}`, cb); });
   const pageName = PAGES.find(p => p[0] === ctx.page)?.[1] || ctx.page;
   const where = ctx.t ? `They have T1 open.` : ctx.sel.length ? `They selected ${ctx.sel.length === 1 ? 'T1' : `T1 to T${Math.min(ctx.sel.length, txs.length)}`}.` : `They're on the ${pageName} page.`;
@@ -365,7 +412,7 @@ ${aiCategoryList()}
 Transactions (${AI_TX_HEAD}):
 ${lines.join('\n') || '(none)'}
 
-What they said: "${aiMask(text, cb)}"`;
+${aiThreadLines(th)}What they said: "${aiMask(text, cb)}"`;
   return { user, T, cb, said: aiMask(text, cb) };
 }
 /* Claude's proposal → Talk's own change cards, checked against your data */
@@ -396,7 +443,7 @@ function aiDrafts(out, T, cb, reply) {
     const who = targets.length === 1 ? prettyPayee(t0.payee) || t0.payee : targets.length ? `${targets.length} transactions` : 'a rule';
     drafts.push({ ids: targets.map(t => t.id), pending: null, set, rules, choose: null, needCat: false, label: who, fromAi: true });
   }
-  if (drafts[0]) drafts[0].ai = [reply, ...notes].filter(Boolean).join(' ');
+  if (drafts[0]) { drafts[0].ai = [reply, ...notes].filter(Boolean).join(' '); drafts[0].aiT = T; }
   return { drafts, notes, say: (Array.isArray(out?.say) ? out.say : []).map(s => aiUnmask(String(s), cb).trim()).filter(Boolean).slice(0, 4) };
 }
 
@@ -410,7 +457,7 @@ function aiSay(cmd) {
 
 /* ---------- questions about your spending ---------- */
 const AI_Q_STRONG = /^(?:how (?:much|many|often)|what (?:did|have|do) (?:we|i)|did (?:we|i) spend|have (?:we|i) spent|where (?:did|does|do) (?:we|i|our|my|the money)|who (?:spent|spends)|when did (?:we|i)|compare|summari[sz]e|break ?down|what(?:'s| is| was) (?:our|my|the) (?:biggest|largest|top|total|average|spending|income)|which (?:category|categories|month|months|payee|store|merchant))\b/;
-const AI_QUESTION = /^(?:how (?:much|many|often|is|are|did|does|do|was|were|has|have|can|come)|how's|what(?:'s| is| are| was| were| did| do| does|\b)|which|when (?:did|was|were|do|does)|where (?:did|do|does|is|are)|who (?:spent|spends|paid|is|was)|why|did (?:we|i|you)|do (?:we|i)|does (?:it|that)|have (?:we|i)|has (?:our|my)|are (?:we|our|my)|am i|is (?:our|my|that|it)|was (?:our|my|it)|were (?:we|our)|can (?:we|i) afford|compare|summari[sz]e|break ?down|show me (?:how|what|where|our|my)|tell me (?:how|what|where|about|our|my)|give me (?:a |an )?(?:summary|breakdown|rundown|sense|overview)|explain)\b/;
+const AI_QUESTION = /^(?:how (?:much|many|often|is|are|did|does|do|was|were|has|have|can|come)|how's|(?:are|were|is|was) there\b|what(?:'s| is| are| was| were| did| do| does|\b)|which|when (?:did|was|were|do|does)|where (?:did|do|does|is|are)|who (?:spent|spends|paid|is|was)|why|did (?:we|i|you)|do (?:we|i)|does (?:it|that)|have (?:we|i)|has (?:our|my)|are (?:we|our|my)|am i|is (?:our|my|that|it)|was (?:our|my|it)|were (?:we|our)|can (?:we|i) afford|compare|summari[sz]e|break ?down|show me (?:how|what|where|our|my)|tell me (?:how|what|where|about|our|my)|give me (?:a |an )?(?:summary|breakdown|rundown|sense|overview)|explain)\b/;
 function aiLooksLikeQuestion(low) {
   const s = low.replace(/^(?:hey|hi|ok(?:ay)?|so|um+|uh+|and|oro|ọrọ̀)[,!.]?\s+/g, '').trim();
   if (/\b(make|create|add) (?:a )?rules?\b|\b(rename|split|flag|categori[sz]e|file|mark)\b/.test(s)) return false;
@@ -457,12 +504,12 @@ ${budgets.length ? `Budgets: ${budgets.join('; ')}\n` : ''}Top payees, last 12 m
 ${top.join('\n')}`;
 }
 const AI_ANSWER_SYSTEM = `You answer questions about a household's spending inside Ọrọ̀, a private finance app, using only the data given. Be brief and direct: one to four short sentences, or a short list with "- " bullets. Use whole dollars. Do the arithmetic carefully. If the data can't answer it (for example balances or net worth, which aren't included), say what's missing and where in Ọrọ̀ to look (Overview, Accounts, Reports, Budget). People are codes (P1, P2…; Joint is shared): use the codes, Ọrọ̀ shows the names. Don't give investment, tax or legal advice beyond explaining the numbers.`;
-function aiAnswerRequest(text) {
+function aiAnswerRequest(text, th = null) {
   const cb = aiCodebook();
   const user = `${aiSpendingData(cb)}
 
 People: ${aiPeopleLine(cb)}
-Their question: "${aiMask(text, cb)}"`;
+${aiThreadLines(th)}Their question: "${aiMask(text, cb)}"`;
   return { user, cb, said: aiMask(text, cb) };
 }
 /* Claude's words on screen: plain paragraphs and "- " lists, nothing else */
@@ -491,26 +538,30 @@ async function aiTalkRun() {
   TALK.ai = { ...a, status: 'busy', seq, go: false }; paintTalk();
   try {
     const ctx = talkCtx();
+    const th = aiThreadLive();
     if (a.mode === 'ask') {
-      const { user, cb, said } = aiAnswerRequest(a.text);
+      const { user, cb, said } = aiAnswerRequest(a.text, th);
       const r = await aiCall({ system: AI_ANSWER_SYSTEM, user, maxTokens: 1500, effort: null, what: { kind: 'question', label: 'Talk: question', codes: cb, said, intro: 'Ọrọ̀ will send your question, your totals by category and month, and your top payees' } });
       if (AI.seq !== seq) return;
-      TALK.ai = { status: 'answer', text: a.text, answer: aiUnmask(aiText(r.data), cb) || 'Claude didn’t answer that.', cost: r.cost, model: r.model };
+      const raw = aiText(r.data);
+      TALK.ai = { status: 'answer', text: a.text, answer: aiUnmask(raw, cb) || 'Claude didn’t answer that.', cost: r.cost, model: r.model };
+      aiThreadAdd(a.text, said, raw, null, 'ask');
       if (TALK.speak) ciSpeak(TALK.ai.answer);
     } else {
-      const { user, T, cb, said } = aiProposeRequest(a.text, ctx);
+      const { user, T, cb, said } = aiProposeRequest(a.text, ctx, th);
       const r = await aiCall({ system: AI_PROPOSE_SYSTEM, user, tools: [AI_PROPOSE_TOOL], maxTokens: 2000, what: { kind: 'talk', label: 'Talk', codes: cb, said, intro: 'Ọrọ̀ will send what you said and the transactions it might be about' } });
       if (AI.seq !== seq) return;
       const out = aiTool(r.data, 'propose') || {};
       const reply = aiUnmask(out.reply || '', cb).trim();
       const { drafts, say, notes } = aiDrafts(out, T, cb, reply);
+      aiThreadAdd(a.text, said, `${out.reply || ''}${drafts.length ? ` [proposed ${drafts.length} change${drafts.length === 1 ? '' : 's'} for them to confirm: ${(out.changes || []).map(c => `${(c.transactions || []).join(', ')}${c.flag === true ? ' flag' : c.flag === false ? ' unflag' : ''}${c.category ? ' → ' + c.category : ''}`).join('; ')}]` : ''}`, T, 'change');
       TALK.ai = null;
-      if (!drafts.length && !say.length) TALK.ai = { status: 'answer', text: a.text, answer: [reply, ...notes].filter(Boolean).join(' ') || 'Claude didn’t find anything to change.', cost: r.cost, model: r.model };
+      if (!drafts.length && !say.length) TALK.ai = { status: 'answer', text: a.text, answer: [reply, ...notes].filter(Boolean).join(' ') || 'Claude didn’t find anything to change.', cost: r.cost, model: r.model, T };
       else {
         TALK.queue = [...drafts.slice(1), ...say.map(x => ({ say: x }))];
         const first = drafts[0] || null;
         const said = withTalk(() => first ? txStart(first) : aiSay(TALK.queue.shift().say));
-        if (!first && reply) TALK.ai = { status: 'answer', text: a.text, answer: reply, cost: r.cost, model: r.model };
+        if (!first && reply) TALK.ai = { status: 'answer', text: a.text, answer: reply, cost: r.cost, model: r.model, T };
         if (TALK.speak) ciSpeak(first ? `${reply} ${said}`.trim() : said);
       }
     }
@@ -525,12 +576,12 @@ async function aiTalkRun() {
 function aiTalkCardHtml() {
   const a = TALK.ai; if (!a) return '';
   const cost = a.cost != null ? `<span class="muted small ai-cost">${esc(AI_MODELS[a.model]?.label || 'Claude')} · ${aiCostLabel(a.cost)}</span>` : '';
-  if (a.status === 'offer') return `<section class="panel ci-card ai-card"><p class="ai-offer-line">Ọrọ̀ didn’t understand that${a.mode === 'ask' ? ' question' : ''}. Claude can try.</p>
+  if (a.status === 'offer') return `<section class="panel ci-card ai-card"><p class="ai-offer-line">Ọrọ̀ didn’t understand that${a.mode === 'ask' ? ' question' : ''}. Claude can try${aiThreadLive() ? ', carrying on from before' : ''}.</p>
     <div class="ci-actions"><button class="btn primary" data-talk="ai-ask">${AI_SPARK} Ask Claude</button><button class="btn ghost" data-talk="ai-dismiss">No thanks</button></div>
     <p class="muted small">Sends your words and the transactions they might be about, without account names, balances or notes.</p></section>`;
   if (a.status === 'busy') return `<section class="panel ci-card ai-card ai-busy" aria-live="polite"><p><span class="ai-dots" aria-hidden="true"><i></i><i></i><i></i></span> Asking Claude…</p><div class="ci-actions"><button class="btn ghost" data-talk="ai-cancel">Cancel</button></div></section>`;
   if (a.status === 'error') return `<section class="panel ci-card ai-card"><p class="ai-err">${esc(a.error)}</p><div class="ci-actions"><button class="btn" data-talk="ai-retry">Try again</button><a class="btn ghost" href="#/data" data-talk="ai-settings">Claude help settings</a></div></section>`;
-  return `<section class="panel ci-card ai-card ai-answer"><div class="ci-top"><span class="ci-kicker">${AI_SPARK} Claude</span></div>${aiFormat(a.answer)}${cost}</section>`;
+  return `<section class="panel ci-card ai-card ai-answer"><div class="ci-top"><span class="ci-kicker">${AI_SPARK} Claude</span></div>${aiTxLinks(aiFormat(a.answer), a.T)}${cost}${aiThreadLive() ? '<p class="muted small ai-cont">Reply here to carry on with Claude, like “yes, flag them”.</p>' : ''}</section>`;
 }
 const AI_SPARK = '<svg class="ai-spark" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="currentColor"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9z"/><path d="M18.5 15l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z" opacity=".7"/></svg>';
 document.addEventListener('click', e => {

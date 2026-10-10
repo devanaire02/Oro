@@ -6,8 +6,26 @@
 const isYearLike = s => /^(19|20)\d\d$/.test(s);
 const MONTH_WORDS = /(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec)/g;
 /* A file name with dates and copy numbers removed: "Chase9876_Activity20261005.CSV" → "chase9876-activity". */
+/* 8 digits that read as a date (20261010, 10102026) rather than an account number */
+function dateDigits(d) {
+  if (d.length === 8) {
+    const ok = (y, m, dd) => y >= 1990 && y <= 2100 && m >= 1 && m <= 12 && dd >= 1 && dd <= 31;
+    return ok(+d.slice(0, 4), +d.slice(4, 6), +d.slice(6)) || ok(+d.slice(4), +d.slice(0, 2), +d.slice(2, 4));
+  }
+  return d.length === 6 && +d.slice(0, 2) >= 1 && +d.slice(0, 2) <= 12 && +d.slice(2, 4) >= 1 && +d.slice(2, 4) <= 31;   // MMDDYY
+}
+/* Account numbers in a file name: "History_for_Account_X93615244.csv" → ['5244'] (last 4 only), then any 4-digit group */
+const ACCT_IN_NAME = /(?<![a-z0-9])([a-z]{0,3})(\d{6,12})(?!\d)/gi;
+function fileNumbers(name) {
+  const s = String(name || '').replace(/\.[a-z0-9]{2,4}$/i, '');
+  const longs = [...s.matchAll(ACCT_IN_NAME)].filter(m => m[1] || !dateDigits(m[2])).map(m => m[2].slice(-4));
+  const fours = [...s.matchAll(/(?<!\d)(\d{4})(?!\d)/g)].map(m => m[1]).filter(f => !isYearLike(f));
+  return [...new Set([...longs, ...fours])];
+}
 function fileStem(name) {
   let s = String(name || '').toLowerCase().replace(/\.[a-z0-9]{2,4}$/, '');
+  // an account number stays (as its last 4) so each account's downloads are told apart; dates and other long numbers go
+  s = s.replace(ACCT_IN_NAME, (m, pre, d) => pre || !dateDigits(d) ? ` n${d.slice(-4)} ` : ' ');
   s = s.replace(/\(\d+\)/g, ' ').replace(/\d{5,}/g, ' ').replace(/(?<!\d)\d{1,2}[-_.]\d{1,2}(?:[-_.]\d{2,4})?(?!\d)/g, ' ')
        .replace(/(?<!\d)(?:19|20)\d\d(?!\d)/g, ' ').replace(MONTH_WORDS, ' ');
   s = s.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -16,8 +34,8 @@ function fileStem(name) {
 }
 function matchByStem(name) {
   const st = fileStem(name); if (!st) return '';
-  const a = txnAccounts().find(a => (a.importStems || []).includes(st));
-  return a ? a.id : '';
+  const hits = txnAccounts().filter(a => (a.importStems || []).includes(st));
+  return hits.length === 1 ? hits[0].id : '';   // the same kind of file going to several accounts tells nothing
 }
 /* The account whose existing transactions this file clearly overlaps (downloads usually overlap last month's). */
 function matchByOverlap(list) {
@@ -86,9 +104,11 @@ async function analyzeBatchFile(file) {
     // which account?
     if (it.source === 'csv') { csvPreamble(it); if (!it.accountId) it.accountId = guessAccount(it.fileLast4); }
     const sameNumber = accountsWithLast4(it.fileLast4), stemId = matchByStem(it.fileName);
+    const byName = !sameNumber.length && it.fileLast4 ? guessAccount(it.fileLast4) : '';
     if (it.source === 'ofx' && sameNumber.length === 1) { it.accountId = sameNumber[0].id; it.matchedBy = `number ending ${it.fileLast4}`; }
     else if (stemId) { it.accountId = stemId; it.matchedBy = 'same kind of file as last time'; }
     else if (sameNumber.length === 1) { it.accountId = sameNumber[0].id; it.matchedBy = `number ending ${it.fileLast4}`; }
+    else if (byName) { it.accountId = byName; it.matchedBy = `${it.fileLast4} in the account’s name`; }
     else {
       it.accountId = '';
       const m = matchByOverlap(it.source === 'pdf' ? withItem(it, () => (buildTxRowsFromPdf(), it.rawList)) : it.rawList);
@@ -194,7 +214,7 @@ function renderBatchStep(box) {
   if (nPosFiles) parts.push(`${nPosFiles} holdings file${nPosFiles === 1 ? '' : 's'}`);
   if (nMark) parts.push(`${parts.length ? 'mark' : 'Mark'} whose card on ${nMark.toLocaleString()}`);
   if (nPP) parts.push('PayPal details');
-  setModalActions(`<button class="btn ghost" data-imp="back">Start over</button><button class="btn primary" data-imp="bcommit" ${nFiles ? '' : 'disabled'}>${parts.length ? `Import ${parts.join(' and ')}` : 'Nothing to import'}</button>`);
+  setModalActions(`<button class="btn ghost" data-imp="back">Start over</button><button class="btn primary" data-imp="bcommit" ${nFiles ? '' : 'disabled'}>${parts.length ? `Import ${parts.join(' and ')}` : nFiles ? 'Nothing new · remember the accounts' : 'Nothing to import'}</button>`);
 }
 
 function batchAction(act) {
@@ -231,7 +251,9 @@ function commitBatch() {
   commit();
   if (pp.length) ppReviewOpen(pp.flatMap(it => it.ppRows), pp[0].fileName);   // now that the card statements are in
   const bits = [];
-  if (added || accts.size) bits.push(`Imported ${added.toLocaleString()} transaction${added === 1 ? '' : 's'} into ${accts.size} account${accts.size === 1 ? '' : 's'}`);
+  if (added) bits.push(`Imported ${added.toLocaleString()} transaction${added === 1 ? '' : 's'} into ${accts.size} account${accts.size === 1 ? '' : 's'}`);
+  else if (accts.size && !posAccts.size && !marked) bits.push(`Nothing new. Next time these files go to the same account${accts.size === 1 ? '' : 's'} by themselves`);
+  else if (accts.size && !posAccts.size) bits.push('Nothing new');
   if (posAccts.size) bits.push(`${bits.length ? 'updated' : 'Updated'} ${holdings} holding${holdings === 1 ? '' : 's'} in ${posAccts.size} account${posAccts.size === 1 ? '' : 's'}`);
   toast(`${bits.join(' and ')}.${skipped ? ` Skipped ${skipped} already there.` : ''}${marked ? ` Marked whose card it was on ${marked.toLocaleString()} already there.` : ''}${unc ? ` ${unc} need a category.` : ''}`,
     unc ? { label: 'Categorize', fn: () => go('#/transactions?cat=_none&m=all') } : { label: 'Undo', fn: undo });

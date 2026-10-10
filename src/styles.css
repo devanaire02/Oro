@@ -1305,3 +1305,7 @@ body.talk-open .main-wrap { margin-right: 390px; }
 .cards-rows .field select { width: 100%; }
 .cards-acct .cards-rows { margin-top: 6px; }
 .batch-item .cards-box { margin: 8px 0 4px; }
+
+/* Claude's answers: transactions it mentions open on a tap */
+.ai-tx { color: var(--ink-accent); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+.ai-cont { margin: 6px 0 0; }

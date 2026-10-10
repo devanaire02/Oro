@@ -461,7 +461,7 @@ function checkinSettings() {
   const p = voicePrefs(), dev = isCompanion() ? deviceLabel() : 'Mac', on = checkinOn();
   const rates = [[0.85, 'Slower'], [1, 'Normal'], [1.15, 'Faster'], [1.3, 'Fastest']];
   return `<section class="panel" id="checkin-settings">
-    <header class="panel-head"><h2>Check-in and Talk</h2><span class="muted small">Runs on this ${dev}. ${aiReady() ? 'Only “Ask Claude” sends anything.' : 'Nothing is sent anywhere.'}</span></header>
+    <header class="panel-head"><h2>Check-in and Talk</h2><span class="muted small">Runs on this ${dev}. ${aiReady() ? 'Only “Ask Claude”, or a reply to Claude’s answer, sends anything.' : 'Nothing is sent anywhere.'}</span></header>
     <p class="muted">Goes through what needs you today, this week or this month, one item at a time: transactions to sort, flagged ones, bills that haven’t shown up, accounts to import and balances to update.</p>
     <div class="form-grid">
       <label class="check"><input type="checkbox" data-setting-bool="checkin" ${on ? 'checked' : ''}> Show Check-in</label>

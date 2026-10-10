@@ -104,9 +104,18 @@ function talkUnderstand(text, { split = true } = {}) {
   if (/^(cancel|never ?mind|stop|close)$/.test(low) && !CI.draft) { closeTalk(); return ''; }
   if (/^undo( that)?$/.test(low)) { if (CI.draft) { CI.draft = null; TALK.queue = []; CI.heard = 'OK, nothing was changed.'; return CI.heard; } return talkUndo(); }
   if (CI.draft) return CI.draft.step === 'tx' ? txAnswer(text) : tellAnswer(text);
+  // "ask Claude …", "Claude, …", "ask Claude again": straight to Claude, carrying on from its last answer
+  const askC = /^(?:(?:please\s+)?(?:ask|tell|have)\s+claude\b[,:]?|claude[,:])\s*(?:again\b[,.]?\s*)?(?:to\s+|about\s+|if\s+)?(.*)$/i.exec(text.trim());
+  if (askC) {
+    if (!aiReady()) { CI.heard = 'Claude help is off. It’s in Settings › Claude help.'; return CI.heard; }
+    const rest = askC[1].trim(), th = aiThreadLive();
+    const said = rest || th?.turns.at(-1)?.text || TALK.lastAiText || '';
+    if (!said) { CI.heard = 'What should I ask Claude?'; return CI.heard; }
+    aiTalkOffer(rest ? rest : `${said} (again, please)`, aiModeFor(said, th)); TALK.ai.go = true; CI.heard = ''; return 'Asking Claude…';
+  }
   // a question about spending ("how much did we spend…") is for Claude, when Claude help is on
   if (AI_Q_STRONG.test(low.replace(/^(?:and|so)\s+/, ''))) {
-    if (aiReady()) { aiTalkOffer(text, 'ask'); CI.heard = ''; return 'Asking Claude…'; }
+    if (aiReady()) { aiTalkOffer(text, AI_DUP_WORDS.test(text) ? 'change' : 'ask'); TALK.ai.go = true; CI.heard = ''; return 'Asking Claude…'; }
     CI.heard = 'I can make changes, but answering questions about your spending needs Claude help, which is off. It’s in Settings › Claude help.'; return CI.heard;
   }
   if (TELL_ADD.test(low) && !/^add (a )?note\b/.test(low) && (tellFindType(low) || /\b(account|property)\b/.test(low))) return tellStart(text);
@@ -129,7 +138,14 @@ function talkUnderstand(text, { split = true } = {}) {
   const up = up0 || updParse(text, { ctxAcct });
   if (up) return updStart(up);
   const q = aiLooksLikeQuestion(low);
-  if (aiReady() && !TALK.noOffer) { aiTalkOffer(text, q ? 'ask' : 'change'); CI.heard = ''; return aiPrefs().auto || q ? 'Asking Claude…' : 'I didn’t catch that. Claude can try.'; }
+  if (aiReady() && !TALK.noOffer) {
+    // a reply to Claude's last answer ("yes", "flag them", "and the other one?") goes back to Claude, with what came before
+    const th = aiThreadLive();
+    aiTalkOffer(text, aiModeFor(text, th, q));
+    const go = (TALK.afterAi && !!th) || q || AI_DUP_WORDS.test(low);   // a question, or a reply to Claude's answer, goes straight to Claude (as questions always have)
+    if (go) TALK.ai.go = true;
+    CI.heard = ''; return aiPrefs().auto || go ? 'Asking Claude…' : th ? 'I didn’t catch that. Claude can try, carrying on from before.' : 'I didn’t catch that. Claude can try.';
+  }
   CI.heard = q ? 'I can make changes, but answering questions about your spending needs Claude help, which is off. It’s in Settings › Claude help.'
     : ctx.t ? 'I didn’t catch that. Try “it’s groceries”, “for Julissa”, “flag it” or “make a rule”.'
     : 'I didn’t catch that. Try naming the transaction or account: “the Jewel Osco one is groceries”, “Chase savings is 12,400”.';
@@ -145,8 +161,10 @@ function talkNext(reply) {
 function talkSubmit(text) {
   if (!text.trim()) return;
   if (!TALK.draft) TALK.queue = [];
-  if (TALK.ai) { if (TALK.ai.status === 'busy') { AI.seq++; aiCancel(); } TALK.ai = null; }
-  const reply = talkNext(withTalk(() => { CI.heard = ''; return talkUnderstand(text); }));
+  TALK.afterAi = TALK.ai?.status === 'answer';   // typed right under Claude's answer: a reply to it
+  if (TALK.ai) { TALK.lastAiText = TALK.ai.text || TALK.lastAiText; if (TALK.ai.status === 'busy') { AI.seq++; aiCancel(); } TALK.ai = null; }
+  let reply;
+  try { reply = talkNext(withTalk(() => { CI.heard = ''; return talkUnderstand(text); })); } finally { TALK.afterAi = false; }
   render();   // the page under the panel shows the change too
   if (TALK.speak && reply && !TALK.ai?.go) ciSpeak(reply);
   const inp = $('#talk-say'); if (inp) { inp.value = ''; if (TALK.open) inp.focus(); }
@@ -490,7 +508,7 @@ function txCardHtml() {
   const act = pend ? 'tx-pick' : 'tx-cat';
   const ready = !pend && !d.choose?.length && !d.needCat && !txOverSplit(d);
   return `<section class="panel ci-card tell-card"><div class="ci-top"><span class="ci-kicker">${d.ids.length || pend ? 'Transactions' : d.rules.length === 1 ? 'Rule' : 'Rules'}${d.fromAi ? ` · ${AI_SPARK} suggested by Claude` : ''}</span></div>
-    ${d.ai ? `<p class="ai-said">${esc(d.ai)}</p>` : ''}
+    ${d.ai ? `<p class="ai-said">${aiTxLinks(esc(d.ai), d.aiT)}</p>` : ''}
     ${list ? `<ul class="upd-list tx-targets">${list}</ul>` : ''}
     ${changes ? `<ul class="upd-list">${changes}${preview}</ul>` : ''}
     <p class="ci-guess tell-q">${esc(ready ? (changes ? 'Save this?' : 'Nothing to change.') : txPrompt())}</p>
