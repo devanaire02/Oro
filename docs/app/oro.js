@@ -3579,7 +3579,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '7020c72';
+const ORO_BUILD = '3b94bd7';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -9316,7 +9316,9 @@ function aiPersonId(code, cb) {
 }
 /* Payees and institutions: no card, account, phone or store numbers, no email addresses */
 function aiScrub(s) {
-  return String(s || '').replace(/\S+@\S+\.\S+/g, ' ').replace(/[A-Za-z]*\d[\d-]{3,}[A-Za-z]*/g, '#').replace(/\s+/g, ' ').trim().slice(0, 60);
+  return String(s || '').replace(/\S+@\S+\.\S+/g, ' ')
+    .replace(/[A-Za-z0-9]{6,}/g, w => (w.match(/\d/g) || []).length >= 2 && !/[A-Za-z]{4,}/.test(w) ? '#' : w)   // order and reference codes (Amazon.com*S18KN3WG2), not names like 1800Flowers
+    .replace(/[A-Za-z]*\d[\d-]{3,}[A-Za-z]*/g, '#').replace(/\s+/g, ' ').trim().slice(0, 60);
 }
 /* Your words: account and people names → codes; "ending 1234" → the account's code; long numbers out */
 function aiMask(text, cb, { accounts = true } = {}) {

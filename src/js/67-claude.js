@@ -249,7 +249,9 @@ function aiPersonId(code, cb) {
 }
 /* Payees and institutions: no card, account, phone or store numbers, no email addresses */
 function aiScrub(s) {
-  return String(s || '').replace(/\S+@\S+\.\S+/g, ' ').replace(/[A-Za-z]*\d[\d-]{3,}[A-Za-z]*/g, '#').replace(/\s+/g, ' ').trim().slice(0, 60);
+  return String(s || '').replace(/\S+@\S+\.\S+/g, ' ')
+    .replace(/[A-Za-z0-9]{6,}/g, w => (w.match(/\d/g) || []).length >= 2 && !/[A-Za-z]{4,}/.test(w) ? '#' : w)   // order and reference codes (Amazon.com*S18KN3WG2), not names like 1800Flowers
+    .replace(/[A-Za-z]*\d[\d-]{3,}[A-Za-z]*/g, '#').replace(/\s+/g, ' ').trim().slice(0, 60);
 }
 /* Your words: account and people names → codes; "ending 1234" → the account's code; long numbers out */
 function aiMask(text, cb, { accounts = true } = {}) {
