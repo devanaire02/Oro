@@ -1297,3 +1297,11 @@ body.talk-open .main-wrap { margin-right: 390px; }
   .pp-was { grid-column: 2 / -1; grid-row: 3; }
   .pp-list { max-height: none; }
 }
+
+/* cards on one account (authorized users) */
+.cards-box { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 14px; margin: 6px 0 12px; background: var(--sheet); }
+.cards-box p { margin: 0 0 6px; font-size: 14px; }
+.cards-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 6px 14px; margin: 4px 0 6px; }
+.cards-rows .field select { width: 100%; }
+.cards-acct .cards-rows { margin-top: 6px; }
+.batch-item .cards-box { margin: 8px 0 4px; }

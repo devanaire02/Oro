@@ -2041,6 +2041,7 @@ function guessTxnMappingPlain(h) {
     account: pickCol(h, [/^account( name)?$/i], /number|type|mask|id$/i),
     tags: pickCol(h, [/^tags?$|^labels?$/i]),
     ttype: pickCol(h, [/^transaction type$/i]),
+    card: pickCol(h, [/^card ?(no\.?|num(ber)?|#|last ?4|ending)$/i]),
   };
 }
 
@@ -2092,6 +2093,7 @@ function parseOFX(text) {
     fitid: ofxTag(b, 'FITID'),
     mcc: ofxTag(b, 'SIC') || ofxTag(b, 'MCC'),
     type: ofxTag(b, 'TRNTYPE'),
+    card: cardL4(ofxTag(b, 'ACCTID')),   // Capital One: the card (yours or an authorized user's) that made it
   })).filter(t => t.date && isFinite(t.amount));
   const ledger = ofxBlocks(text, 'LEDGERBAL')[0];
   const balance = ledger ? { amount: parseAmount(ofxTag(ledger, 'BALAMT')), date: parseDateFlexible(ofxTag(ledger, 'DTASOF')) } : null;
@@ -2613,6 +2615,12 @@ async function handleImportFile(file, opts = {}) {
   try {
     if (ext === 'pdf') {
       const lines = await pdfToLines(await readFileAsBuffer(file));
+      if (isPayPalPdf(lines)) {
+        IMP.source = 'paypal'; IMP.kind = 'paypal'; IMP.ppRows = parsePayPalPdf(lines); IMP.step = 'paypal';
+        if (!IMP.ppRows.length) throw new Error('Ọrọ̀ found a PayPal statement but couldn’t read any payments from it.');
+        if (!opts.silent) renderImport();
+        return;
+      }
       const { rows, period, last4: textLast4, isCard } = parseStatementLines(lines);
       if (!rows.length) throw new Error('Ọrọ̀ couldn’t find transaction lines in that PDF. If it’s a scanned image, or an unusual layout, download the OFX/QFX or CSV version from your bank instead.');
       IMP.source = 'pdf'; IMP.period = period; IMP.pdfRows = rows; if (textLast4) IMP.fileLast4 = textLast4;
@@ -2638,6 +2646,11 @@ async function handleImportFile(file, opts = {}) {
       } else if (looksLikeQIF(text) || ext === 'qif') {
         const rows = parseQIF(text);
         if (!rows.length) throw new Error('No transactions were found in that QIF file.');
+        if (isPayPalQif(rows, file.name)) {
+          IMP.source = 'paypal'; IMP.kind = 'paypal'; IMP.ppRows = payPalFromQif(rows); IMP.step = 'paypal';
+          if (!opts.silent) renderImport();
+          return;
+        }
         IMP.source = 'qif'; IMP.qif = rows; IMP.createCats = true;
         setupAccountMap(rows, last4);
         IMP.step = 'review'; buildTxRows(rows);
@@ -2724,7 +2737,7 @@ function csvMappedRows() {
     if (useType) amount = Math.abs(amount) * ((r[m.ttype] || '').toLowerCase() === 'debit' ? -1 : 1);
     if (IMP.flip) amount = -amount;
     const memo = m.memo >= 0 ? String(r[m.memo] || '').trim() : '';
-    out.push({ date, payee: m.brokerage ? cleanBrokerageAction(r[m.payee]) : (r[m.payee] || '').trim(), amount: round2(amount), memo: m.brokerage && /^no description$/i.test(memo) ? '' : memo, bankCategory: m.category >= 0 ? (r[m.category] || '').trim() : '', mcc: m.mcc >= 0 ? (r[m.mcc] || '').trim() : '', tags: m.tags >= 0 ? parseTags(r[m.tags]) : [], srcAccount: IMP.useAcctCol && m.account >= 0 ? acctLabel(r[m.account], m.acctNum >= 0 ? r[m.acctNum] : '') : '', fitid: '' });
+    out.push({ date, payee: m.brokerage ? cleanBrokerageAction(r[m.payee]) : (r[m.payee] || '').trim(), amount: round2(amount), memo: m.brokerage && /^no description$/i.test(memo) ? '' : memo, bankCategory: m.category >= 0 ? (r[m.category] || '').trim() : '', mcc: m.mcc >= 0 ? (r[m.mcc] || '').trim() : '', tags: m.tags >= 0 ? parseTags(r[m.tags]) : [], srcAccount: IMP.useAcctCol && m.account >= 0 ? acctLabel(r[m.account], m.acctNum >= 0 ? r[m.acctNum] : '') : '', fitid: '', card: m.card >= 0 ? cardL4(r[m.card]) : '' });
   }
   return out;
 }
@@ -2750,14 +2763,17 @@ function buildTxRows(list) {
     const acctId = rowAccountId(t);
     const acct = acctId && !acctId.startsWith('__') ? acctById(acctId) : null;
     const existing = acct ? txByAccount(acct.id) : [];
-    const ids = acct ? (seenByAcct[acct.id] = seenByAcct[acct.id] || new Set(existing.map(x => x.importId).filter(Boolean))) : new Set();
+    const ids = acct ? (seenByAcct[acct.id] = seenByAcct[acct.id] || new Map(existing.filter(x => x.importId).map(x => [x.importId, x.id]))) : new Map();
     const seen = (IMP._seen = IMP._seen || {});
     const base = t.fitid ? 'fit:' + t.fitid : 'h:' + hashStr(`${t.date}|${t.amount}|${normPayee(t.payee)}`);
     const k = (acctId || '') + base; seen[k] = (seen[k] || 0) + 1;
     const importId = t.fitid ? base : `${base}:${seen[k]}`;
-    let status = 'new';
-    if (ids.has(importId)) status = 'dup';
-    else if (existing.some(e => Math.abs(e.amount - t.amount) < 0.005 && Math.abs(daysBetween(e.date, t.date)) <= 3 && (normPayee(e.rawPayee || e.payee).split(' ')[0] === normPayee(t.payee).split(' ')[0] || !e.importId))) status = 'maybe';
+    let status = 'new', existingId = '';
+    if (ids.has(importId)) { status = 'dup'; existingId = ids.get(importId); }
+    else {
+      const e = existing.find(e => Math.abs(e.amount - t.amount) < 0.005 && Math.abs(daysBetween(e.date, t.date)) <= 3 && (normPayee(e.rawPayee || e.payee).split(' ')[0] === normPayee(t.payee).split(' ')[0] || !e.importId));
+      if (e) { status = 'maybe'; existingId = e.id; }
+    }
     const rule = matchRule(t.payee, { amount: t.amount, accountId: acctId });
     const named = findCategoryByName(t.bankCategory);
     const auto = rule || named ? null : autoCategory(t.payee, t.amount, { mcc: t.mcc, bankCategory: t.bankCategory }, hist);
@@ -2766,7 +2782,7 @@ function buildTxRows(list) {
     // money coming into a credit card is almost always a payment
     if (type === 'credit' && t.amount > 0 && cardPayId && (!categoryId || categoryId === transferId) && /payment|thank you|autopay|pymt|transfer from|ach deposit/i.test(t.payee)) categoryId = cardPayId;
     const willCreate = !categoryId && IMP.createCats && t.bankCategory && !/^(uncategori[sz]ed|none|transfer.*|.*ready to assign|to be budgeted|split.*)$/i.test(t.bankCategory);
-    return { ...t, importId, status, include: status === 'new' && acctId !== '__skip', skipAcct: acctId === '__skip', categoryId: categoryId || '', guess: auto && categoryId === auto.id ? auto.how : '', newCat: willCreate ? t.bankCategory : '', rename: rule?.rename, person: rule?.person };
+    return { ...t, importId, status, existingId, include: status === 'new' && acctId !== '__skip', skipAcct: acctId === '__skip', categoryId: categoryId || '', guess: auto && categoryId === auto.id ? auto.how : '', newCat: willCreate ? t.bankCategory : '', rename: rule?.rename, person: rule?.person };
   }).sort((a, b) => b.date.localeCompare(a.date));
   IMP._seen = {};
 }
@@ -2880,6 +2896,7 @@ function renderReviewStep(box) {
       ${dup ? `${dup} look${dup === 1 ? 's' : ''} like ${dup === 1 ? 'a duplicate' : 'duplicates'} and ${dup === 1 ? 'is' : 'are'} unchecked.` : 'None of them are already in Ọrọ̀.'}
       ${IMP.source === 'pdf' ? ' Read from a PDF: check the signs. Click any amount to flip it.' : ''}
       ${newCats.length ? ` ${newCats.length} new categor${newCats.length === 1 ? 'y' : 'ies'} will be created: ${newCats.slice(0, 5).map(esc).join(', ')}${newCats.length > 5 ? '…' : ''}.` : ''}</p>
+    ${cardsBlock(IMP)}
     <div class="toolbar">
       <button class="btn small ghost" data-imp="all">Check all</button>
       <button class="btn small ghost" data-imp="none">Uncheck all</button>
@@ -2905,15 +2922,21 @@ function renderReviewStep(box) {
     if (t.dataset.row != null) { rows[+t.dataset.row].include = t.checked; t.closest('tr').classList.toggle('off', !t.checked); updateImportCount(); }
     if (t.dataset.cat != null) { rows[+t.dataset.cat].categoryId = t.value; rows[+t.dataset.cat].guess = ''; }
     if (t.id === 'imp-bal') IMP.setBal = t.checked;
+    if (cardsChange(t)) { const cb = $('#imp .cards-box'); if (cb) cb.outerHTML = cardsBlock(IMP); updateImportCount(); }
   };
   $('#imp-table').onclick = e => {
     const b = e.target.closest('[data-flip]'); if (!b) return;
     const r = rows[+b.dataset.flip]; r.amount = -r.amount;
     b.textContent = money(r.amount); b.closest('td').className = 'num ' + signClass(r.amount);
   };
-  setModalActions(`<button class="btn ghost" data-imp="back">Back</button><button class="btn primary" data-imp="commit" id="imp-go">Import ${inc.length.toLocaleString()} transaction${inc.length === 1 ? '' : 's'}</button>`);
+  setModalActions(`<button class="btn ghost" data-imp="back">Back</button><button class="btn primary" data-imp="commit" id="imp-go">${importLabel(IMP)}</button>`);
 }
-function updateImportCount() { const n = IMP.txRows.filter(r => r.include).length; const b = $('#imp-go'); if (b) b.textContent = `Import ${n.toLocaleString()} transaction${n === 1 ? '' : 's'}`; }
+function importLabel(it) {
+  const n = (it.txRows || []).filter(r => r.include).length, m = itemCardMarks(it);
+  if (!n && m) return `Mark whose card on ${m.toLocaleString()}`;
+  return `Import ${n.toLocaleString()} transaction${n === 1 ? '' : 's'}${m ? ` and mark ${m.toLocaleString()}` : ''}`;
+}
+function updateImportCount() { const b = $('#imp-go'); if (b) b.textContent = importLabel(IMP); }
 
 function renderPositionsStep(box) {
   const P = IMP.positions;
@@ -3019,6 +3042,7 @@ function applyTxItem(it) {
   }
   const have = {};
   let added = 0, skipped = 0, unc = 0;
+  const marked = it.multi ? 0 : applyItemCards(it, dest['']);   // whose each card is, and the ones already there
   for (const r of rows) {
     const acct = it.multi ? dest[r.srcAccount || ''] : dest[''];
     if (!acct) continue;   // an account you chose not to import
@@ -3029,7 +3053,9 @@ function applyTxItem(it) {
     }
     const t = { id: uid(), date: r.date, accountId: acct.id, payee: r.rename || prettyPayee(r.payee), rawPayee: r.payee, amount: r.amount, categoryId: r.categoryId || null, memo: r.memo || '', importId: r.importId, added: today() };
     if (r.tags?.length) t.tags = r.tags;
+    if (r.card) t.card = r.card;
     if (r.person) t.person = r.person;
+    else if (!it.multi) { const p = personFromCard(acct, r.card, t); if (p) t.person = p; }
     if (r.mcc) t.mcc = String(r.mcc).slice(0, 6);
     state.transactions.push(t); added++;
     if (!t.categoryId) unc++;
@@ -3042,7 +3068,7 @@ function applyTxItem(it) {
   if (single && bal && isFinite(bal.amount) && it.setBal !== false) setBalance(single, round2(Math.abs(bal.amount) * (bal.amount < 0 && !isLiability(single) ? -1 : 1)), bal.date || today());
   // accounts created by import start at zero on the earliest date so imported history doesn't move today's balance unexpectedly
   for (const a of Object.values(dest)) if (a.ledger && a.anchorDate === '0000-00-00') { a.anchorDate = today(); a.anchorBalance = 0; a.balanceDate = today(); }
-  return { added, skipped, unc, dest, fresh, created, bal };
+  return { added, skipped, unc, dest, fresh, created, bal, marked };
 }
 function commitTxImport() {
   stashNewAcct();
@@ -3052,7 +3078,7 @@ function commitTxImport() {
   const nAcct = Object.keys(r.dest).length, nCats = Object.keys(r.created).length, single = r.dest[''];
   closeModal(); IMP = null;
   commit();
-  toast(`Imported ${r.added.toLocaleString()} transaction${r.added === 1 ? '' : 's'}${nAcct > 1 ? ` into ${nAcct} accounts` : single ? ` into ${single.name}` : ''}.${nCats ? ` Created ${nCats} categor${nCats === 1 ? 'y' : 'ies'}.` : ''}${r.unc ? ` ${r.unc} need a category.` : ''}`,
+  toast(`${!r.added && r.marked ? `Marked whose card it was on ${r.marked.toLocaleString()} transaction${r.marked === 1 ? '' : 's'}${single ? ` in ${single.name}` : ''}.` : `Imported ${r.added.toLocaleString()} transaction${r.added === 1 ? '' : 's'}${nAcct > 1 ? ` into ${nAcct} accounts` : single ? ` into ${single.name}` : ''}.${r.marked ? ` Marked whose card it was on ${r.marked.toLocaleString()} already there.` : ''}`}${nCats ? ` Created ${nCats} categor${nCats === 1 ? 'y' : 'ies'}.` : ''}${r.unc ? ` ${r.unc} need a category.` : ''}`,
     r.unc ? { label: 'Categorize', fn: () => go(`#/transactions?cat=_none&m=all`) } : { label: 'Undo', fn: undo });
   if (r.fresh.some(a => a.ledger && !a.anchorBalance && !r.bal)) setTimeout(() => toast('Set each new account’s current balance (Accounts › Update balances) so its balance tracks from here.'), 400);
 }
@@ -3219,7 +3245,7 @@ function batchCounts(it) {
 }
 function renderBatchStep(box) {
   const items = IMP.items;
-  let nTx = 0, nPosFiles = 0, nPP = 0;
+  let nTx = 0, nPosFiles = 0, nPP = 0, nMark = 0;
   const cards = items.map((it, k) => {
     const head = `<header class="batch-head"><label class="check"><input type="checkbox" data-binc="${k}" ${it.include ? 'checked' : ''} ${it.problem || it.solo ? 'disabled' : ''}> <strong>${esc(it.fileName)}</strong></label>`;
     if (it.problem || it.solo) return `<section class="batch-item off">${head}<span class="muted small">Not included</span></header>
@@ -3227,7 +3253,7 @@ function renderBatchStep(box) {
     if (it.kind === 'paypal') {
       const pays = it.ppRows.filter(p => ['buy', 'refund'].includes(ppKind(p))).length;
       if (it.include) nPP++;
-      return `<section class="batch-item ${it.include ? '' : 'off'}">${head}<span class="muted small">PayPal activity · ${pays} payment${pays === 1 ? '' : 's'}</span></header>
+      return `<section class="batch-item ${it.include ? '' : 'off'}">${head}<span class="muted small">${/\.pdf$/i.test(it.fileName) ? 'PayPal statement' : 'PayPal activity'} · ${pays} payment${pays === 1 ? '' : 's'}</span></header>
         <p class="muted small">Adds nothing new. After the other files import, Ọrọ̀ shows which card and bank lines it can name from this file.</p></section>`;
     }
     if (it.kind === 'positions') {
@@ -3240,7 +3266,7 @@ function renderBatchStep(box) {
         <p class="muted small">Replaces the current holdings in ${srcs.length === 1 ? 'that account' : 'those accounts'} with this snapshot.</p></section>`;
     }
     const c = batchCounts(it), rows = it.txRows || [], dates = rows.map(r => r.date).sort();
-    if (it.include) nTx += c.add;
+    if (it.include) { nTx += c.add; nMark += itemCardMarks(it); }
     const kind = { ofx: 'QFX/OFX', csv: 'CSV', pdf: 'PDF statement', qif: 'QIF' }[it.source] || 'File';
     const bal = it.ofx?.balance;
     return `<section class="batch-item ${it.include ? '' : 'off'}">${head}
@@ -3250,6 +3276,7 @@ function renderBatchStep(box) {
         <span class="muted small batch-why">${it.accountId === '__new' ? 'No match yet. Ọrọ̀ will remember this file next time.' : it.matchedBy ? `Matched: ${esc(it.matchedBy)}` : ''}</span>
       </div>
       ${it.accountId === '__new' ? `<div class="batch-new">${newAccountFields(`b${k}-new`, it.newDefaults || {})}</div>` : ''}
+      ${cardsBlock(it, k)}
       <p class="batch-counts"><strong>${c.add.toLocaleString()} new</strong>${c.dup ? ` · ${c.dup} already in Ọrọ̀` : ''}${c.unc ? ` · ${c.unc} need a category` : ''}${it.autoFlipped ? ' · <span class="tag soft">signs flipped: this file listed purchases as positive</span>' : ''}</p>
       <div class="toolbar">
         ${c.maybe ? `<label class="check small"><input type="checkbox" data-bmaybe="${k}" ${c.maybeIn ? 'checked' : ''}> Also add ${c.maybe} possible duplicate${c.maybe === 1 ? '' : 's'}</label>` : ''}
@@ -3275,6 +3302,7 @@ function renderBatchStep(box) {
     if (nm) { const it = items[+nm[1]]; it.newDefaults = { ...(it.newDefaults || {}), [nm[2]]: el.value }; if (nm[2] === 'type') { rebuildItem(it); renderImport(); } return; }
     if (d.bmaybe != null) { const it = items[+d.bmaybe]; it.txRows.forEach(r => { if (r.status === 'maybe') r.include = el.checked; }); return renderImport(); }
     if (d.bbal != null) { items[+d.bbal].setBal = el.checked; return; }
+    if (cardsChange(el, items)) return renderImport();
     if (d.bsrc != null) { const [k, j] = at(d.bsrc), it = items[k]; it.srcMap[Object.keys(it.srcMap)[j]] = el.value; return renderImport(); }
     if (d.bsrcname != null) { const [k, j] = at(d.bsrcname), it = items[k]; (it.srcNames = it.srcNames || {})[Object.keys(it.srcMap)[j]] = el.value; return; }
     if (d.bsrcowner != null) { const [k, j] = at(d.bsrcowner), it = items[k]; (it.srcOwners = it.srcOwners || {})[Object.keys(it.srcMap)[j]] = el.value; return; }
@@ -3282,6 +3310,7 @@ function renderBatchStep(box) {
   const parts = [];
   if (nTx) parts.push(`${nTx.toLocaleString()} transaction${nTx === 1 ? '' : 's'}`);
   if (nPosFiles) parts.push(`${nPosFiles} holdings file${nPosFiles === 1 ? '' : 's'}`);
+  if (nMark) parts.push(`${parts.length ? 'mark' : 'Mark'} whose card on ${nMark.toLocaleString()}`);
   if (nPP) parts.push('PayPal details');
   setModalActions(`<button class="btn ghost" data-imp="back">Start over</button><button class="btn primary" data-imp="bcommit" ${nFiles ? '' : 'disabled'}>${parts.length ? `Import ${parts.join(' and ')}` : 'Nothing to import'}</button>`);
 }
@@ -3305,14 +3334,14 @@ function commitBatch() {
     const problem = txItemProblem(it);
     if (problem) return toast(`${it.fileName}: ${problem}`);
   }
-  let added = 0, skipped = 0, unc = 0, holdings = 0, bal = false;
+  let added = 0, skipped = 0, unc = 0, holdings = 0, bal = false, marked = 0;
   const accts = new Set(), posAccts = new Set(), fresh = [];
   const pp = items.filter(it => it.kind === 'paypal');
   for (const it of items) {
     if (it.kind === 'paypal') continue;
     if (it.kind === 'positions') { const r = applyPositionsItem(it); holdings += r.count; r.accounts.forEach(a => posAccts.add(a)); continue; }
     const r = applyTxItem(it);
-    added += r.added; skipped += r.skipped; unc += r.unc; if (r.bal) bal = true;
+    added += r.added; skipped += r.skipped; unc += r.unc; marked += r.marked || 0; if (r.bal) bal = true;
     Object.values(r.dest).forEach(a => accts.add(a.id)); fresh.push(...r.fresh);
   }
   closeModal(); IMP = null;
@@ -3322,7 +3351,7 @@ function commitBatch() {
   const bits = [];
   if (added || accts.size) bits.push(`Imported ${added.toLocaleString()} transaction${added === 1 ? '' : 's'} into ${accts.size} account${accts.size === 1 ? '' : 's'}`);
   if (posAccts.size) bits.push(`${bits.length ? 'updated' : 'Updated'} ${holdings} holding${holdings === 1 ? '' : 's'} in ${posAccts.size} account${posAccts.size === 1 ? '' : 's'}`);
-  toast(`${bits.join(' and ')}.${skipped ? ` Skipped ${skipped} already there.` : ''}${unc ? ` ${unc} need a category.` : ''}`,
+  toast(`${bits.join(' and ')}.${skipped ? ` Skipped ${skipped} already there.` : ''}${marked ? ` Marked whose card it was on ${marked.toLocaleString()} already there.` : ''}${unc ? ` ${unc} need a category.` : ''}`,
     unc ? { label: 'Categorize', fn: () => go('#/transactions?cat=_none&m=all') } : { label: 'Undo', fn: undo });
   if (fresh.some(a => a.ledger && !a.anchorBalance && !bal)) setTimeout(() => toast('Set each new account’s current balance (Accounts › Update balances) so its balance tracks from here.'), 400);
 }
@@ -3370,6 +3399,59 @@ function parsePayPal(rows, hi) {
   }
   return out;
 }
+/* PayPal's monthly PDF statement: the same activity as the CSV, one entry per payment:
+   "04/03/2026   Website Payment: McDonalds #7385 -   USD   -23.06   0.00   -23.06", the rest of the description on the next
+   lines, then "ID: 45H…". A wrapped year ("04/03/202" with "6" on the next line) is put back together. */
+function isPayPalPdf(lines) {
+  const head = lines.slice(0, 20).join(' ');
+  return /PayPal/i.test(head) && lines.some(l => /^DATE\s+DESCRIPTION\s+CURRENCY\s+AMOUNT\s+FEES\s+TOTAL/i.test(l.trim()));
+}
+function parsePayPalPdf(lines) {
+  const START = /^(\d{1,2}\/\d{1,2}\/\d{1,4})\s+(.+?)\s+([A-Z]{3})\s+(-?[\d,]+\.\d{2})\s+(-?[\d,]+\.\d{2})\s+(-?[\d,]+\.\d{2})$/;
+  const out = []; let cur = null;
+  const finish = () => {
+    if (!cur) return;
+    const desc = cur.desc.join(' ').replace(/\s+/g, ' ').trim(), i = desc.indexOf(':');
+    const type = (i > 0 ? desc.slice(0, i) : desc).trim();
+    const name = (i > 0 ? desc.slice(i + 1) : '').replace(/\s+-\s+[A-Za-z .'-]+,\s*[A-Z]{2}$/, '').replace(/\s+-$/, '').replace(/\S+@\S+\.\S+/g, '').trim().slice(0, 60);
+    const date = parseDateFlexible(cur.date), amount = parseAmount(cur.amount);
+    if (date && isFinite(amount) && amount) out.push({ date, name, type, status: '', currency: cur.cur, amount: round2(amount), impact: '', id: cur.id || `d:${date}:${round2(amount)}:${normPayee(name)}`, item: '', funded: cur.funded });
+    cur = null;
+  };
+  for (const raw of lines) {
+    let l = raw.trim();
+    const m = START.exec(l);
+    if (m) { finish(); cur = { date: m[1], desc: [m[2]], cur: m[3], amount: m[4], id: '', funded: '', stop: false }; continue; }
+    if (!cur) continue;
+    const yr = /\/(\d{1,3})$/.exec(cur.date);
+    if (yr) { const w = /^(\d{1,3})(?:\s+(.*))?$/.exec(l); if (w && (yr[1] + w[1]).length === 4) { cur.date += w[1]; l = (w[2] || '').trim(); if (!l) continue; } }
+    if (cur.stop) continue;
+    const id = /^ID:\s*(\S+)/i.exec(l);
+    if (id) { cur.id = id[1]; cur.stop = true; continue; }
+    if (/^Ref ID:/i.test(l) || /^[A-Z]{3}$/.test(l)) continue;
+    if (/\bx-\d{4}\b/i.test(l)) { cur.funded = 'yes'; continue; }   // paid from a bank account or card on file
+    cur.desc.push(l);
+  }
+  finish();
+  return out;
+}
+
+/* PayPal's Quicken (QIF) download: the store in one field and PayPal's type ("Express Checkout Payment") in another.
+   Read the same way, so it can't come in as a second copy of every purchase. */
+const PP_TYPE = /^(general (card |credit card )?(deposit|payment|withdrawal|authori[sz]ation|currency conversion)|express checkout payment|website payment|preapproved payment|mobile payment|subscription payment|payment (refund|reversal|sent|received)|bank deposit to pp|transfer to bank|account hold|reversal of general|void of authori[sz]ation|direct credit card payment|shopping cart payment)/i;
+function isPayPalQif(rows, fileName = '') {
+  const hits = rows.filter(r => [r.memo, r.bankCategory, r.payee].some(v => PP_TYPE.test(String(v || '').trim()))).length;
+  return hits >= Math.max(2, rows.length * 0.3) || (/paypal/i.test(fileName) && hits >= 1);
+}
+function payPalFromQif(rows) {
+  return rows.map(r => {
+    const f = [r.payee, r.memo, r.bankCategory].map(v => String(v || '').trim());
+    const ti = f.findIndex(v => PP_TYPE.test(v)), type = ti >= 0 ? f[ti] : '';
+    const name = (f.find((v, i) => i !== ti && v && !PP_TYPE.test(v) && v !== 'Unknown') || '').replace(/\S+@\S+\.\S+/g, '').trim().slice(0, 60);
+    return { date: r.date, name, type, status: '', currency: '', amount: round2(r.amount), impact: '', id: `d:${r.date}:${round2(r.amount)}:${normPayee(name)}`, item: '' };
+  }).filter(p => p.date && isFinite(p.amount) && p.amount);
+}
+
 function ppKind(p) {
   if (/denied|cancel|fail|void|reversed/i.test(p.status) || p.impact === 'memo') return 'skip';
   if (p.amount > 0 && PP_FUNDING.test(p.type)) return 'funding';
@@ -3387,13 +3469,16 @@ function ppNameHint(t, p) {
 }
 
 function ppMatch(list) {
-  const done = new Set(state.transactions.filter(t => t.pp?.id).map(t => t.pp.id));
+  const done = new Set(state.transactions.filter(t => t.pp?.id).flatMap(t => [t.pp.id, t.pp.k]).filter(Boolean));
   const pays = [], funding = [], R = { matches: [], left: [], done: 0, skipped: 0 };
+  const ids = new Set();
   for (const p of list) {
+    if (ids.has(p.id)) continue;   // the same payment in two files (a statement and a CSV)
+    ids.add(p.id);
     const k = ppKind(p);
     if (k === 'funding') { funding.push(p); R.skipped++; continue; }
     if (k === 'skip') { R.skipped++; continue; }
-    if (done.has(p.id)) { R.done++; continue; }
+    if (done.has(p.id) || done.has(`${p.date}:${p.amount}`)) { R.done++; continue; }
     if (k === 'currency') { R.left.push({ p, why: 'currency' }); continue; }
     pays.push(p);
   }
@@ -3414,7 +3499,7 @@ function ppMatch(list) {
   }
   pays.forEach((p, i) => {
     if (usedP.has(i)) return;
-    const funded = funding.some(f => Math.abs(f.amount + p.amount) < 0.005 && Math.abs(daysBetween(f.date, p.date)) <= 1);
+    const funded = p.funded || funding.some(f => Math.abs(f.amount + p.amount) < 0.005 && Math.abs(daysBetween(f.date, p.date)) <= 1);
     R.left.push({ p, why: p.amount > 0 ? 'refund' : funded ? 'card' : funding.length ? 'balance' : 'unknown' });
   });
   R.matches.sort((a, b) => b.t.date.localeCompare(a.t.date));
@@ -3484,7 +3569,7 @@ function ppApply() {
     if (!m.include) continue;
     const t = state.transactions.find(x => x.id === m.t.id);
     if (!t || t.pp) continue;
-    t.pp = { id: m.p.id, was: t.rawPayee || t.payee };
+    t.pp = { id: m.p.id, k: `${m.p.date}:${m.p.amount}`, was: t.rawPayee || t.payee };
     t.payee = m.payee; t.rawPayee = m.raw;
     if (m.p.item && !t.memo) t.memo = m.p.item;
     if (!isSplit(t) && (m.categoryId || '') !== (t.categoryId || '')) { t.categoryId = m.categoryId || null; if (m.categoryId) filed++; }
@@ -3496,6 +3581,125 @@ function ppApply() {
   commit();
   const unc = state.transactions.filter(t => t.pp && isUncat(t)).length;
   toast(`Named ${named} PayPal transaction${named === 1 ? '' : 's'}${filed ? `, and filed ${filed}` : ''}.${unc ? ` ${unc} still need a category.` : ''}`, { label: 'Undo', fn: undo });
+}
+
+/* ================= cards on one account =================
+   A credit card account with an authorized user has one balance but a card number for each person. Capital One's QFX
+   (and its CSV "Card No." column) says which card made each purchase. Ọrọ̀ keeps only the card's last 4 digits on each
+   transaction (t.card), asks once whose each card is (account.cards: last 4 → person, '' = the account owner), and puts
+   each purchase under that person. Importing a file again adds nothing new but marks whose card it was on the
+   transactions already there, leaving any you assigned to someone yourself as they are. */
+const cardL4 = v => { const d = String(v || '').replace(/\D/g, ''); return d.length >= 4 ? d.slice(-4) : ''; };
+const isTransferTx = t => catById(t.categoryId)?.kind === 'transfer';
+
+/* The cards in an import item, most used first: [{ l4, n }] — only worth asking about when there are two or more */
+function itemCards(it) {
+  if (it.multi) return [];
+  const n = {};
+  for (const r of it.txRows || []) if (r.card) n[r.card] = (n[r.card] || 0) + 1;
+  const acct = acctById(it.accountId);
+  const known = Object.keys(acct?.cards || {});
+  const list = [...new Set([...Object.keys(n), ...known.filter(k => n[k])])].map(l4 => ({ l4, n: n[l4] || 0 }));
+  return list.length >= 2 || (list.length === 1 && known.length >= 2) ? list.sort((a, b) => b.n - a.n) : [];
+}
+function itemCardMap(it) {
+  const acct = acctById(it.accountId), out = {};
+  for (const c of itemCards(it)) out[c.l4] = it.cardMap?.[c.l4] ?? acct?.cards?.[c.l4] ?? '';
+  return out;
+}
+/* What marking an existing transaction would change: { card, person } or null. Only ones still following the card
+   change person (no person yet, or the person this card had before); ones you set yourself stay. */
+function cardMark(t, r, map, before) {
+  const out = {};
+  if (t.card !== r.card) out.card = r.card;
+  const p = map[r.card] || '', cur = t.person || '';
+  if (cur !== p && cur === (before[r.card] || '') && !isSplit(t) && !isTransferTx(t)) out.person = p;
+  return Object.keys(out).length ? out : null;
+}
+/* Rows already in Ọrọ̀ (same transaction) that this file would mark */
+function itemCardOld(it) {
+  const acct = acctById(it.accountId); if (!acct) return 0;
+  const byId = new Map(state.transactions.filter(t => t.accountId === acct.id).map(t => [t.id, t]));
+  const map = itemCardMap(it), before = acct.cards || {};
+  let n = 0;
+  for (const r of it.txRows || []) { const t = !r.include && r.existingId && r.card && byId.get(r.existingId); if (t && cardMark(t, r, map, before)) n++; }
+  return n;
+}
+function ownerLabel(it) {
+  const acct = acctById(it.accountId), owner = acct ? acct.owner : it.newDefaults?.owner;
+  return `Account owner (${memberName(owner || 'joint')})`;
+}
+/* The block on the import review (k = batch item index, or null for a single file) */
+function cardsBlock(it, k = null) {
+  const cards = itemCards(it);
+  if (!cards.length || members().length < 2) return '';
+  const map = itemCardMap(it), old = itemCardOld(it), at = k == null ? '' : `${k}|`;
+  return `<div class="cards-box">
+    <p><strong>${cards.length} cards on this account.</strong> Whose is each? Their purchases go under that person. Only the last 4 digits are kept.</p>
+    <div class="cards-rows">${cards.map(c => `<label class="field"><span>Card ending ${esc(c.l4)}${c.n ? ` · ${c.n.toLocaleString()}` : ''}</span><select data-card="${at}${esc(c.l4)}">${memberOptions(map[c.l4], ownerLabel(it), true)}</select></label>`).join('')}</div>
+    ${old ? `<label class="check small"><input type="checkbox" data-cardsold="${at}" ${it.cardsOld !== false ? 'checked' : ''}> Also mark whose card it was on the ${old.toLocaleString()} already in Ọrọ̀ (any you put under someone yourself stay as they are)</label>` : ''}
+  </div>`;
+}
+/* A change in the block: returns true when handled */
+function cardsChange(el, items) {
+  const d = el.dataset;
+  if (d.card != null) { const [k, l4] = d.card.includes('|') ? d.card.split('|') : [null, d.card]; const it = k == null ? IMP : items[+k]; (it.cardMap ||= {})[l4] = el.value; return true; }
+  if (d.cardsold != null) { const k = d.cardsold.replace('|', ''); const it = k === '' ? IMP : items[+k]; it.cardsOld = el.checked; return true; }
+  return false;
+}
+/* How many existing transactions the import will mark */
+const itemCardMarks = it => itemCards(it).length && it.cardsOld !== false ? itemCardOld(it) : 0;
+
+/* At commit: remember whose each card is, set the person on new rows, and mark the ones already there */
+function applyItemCards(it, acct) {
+  const cards = itemCards(it);
+  if (!acct || !cards.length) return 0;
+  const map = itemCardMap(it), before = { ...(acct.cards || {}) };
+  acct.cards = { ...before, ...map };
+  if (it.cardsOld === false) return 0;
+  let marked = 0;
+  const byId = new Map(state.transactions.filter(t => t.accountId === acct.id).map(t => [t.id, t]));
+  for (const r of it.txRows || []) {
+    const t = !r.include && r.existingId && r.card && byId.get(r.existingId); if (!t) continue;
+    const m = cardMark(t, r, map, before); if (!m) continue;
+    if (m.card) t.card = m.card;
+    if ('person' in m) { if (m.person) t.person = m.person; else delete t.person; }
+    marked++;
+  }
+  return marked;
+}
+/* Whose a new transaction is, from its card */
+function personFromCard(acct, card, t) {
+  const p = card && acct?.cards?.[card];
+  return p && !isTransferTx(t) ? p : '';
+}
+
+/* ---- the account window: change whose a card is later ---- */
+function acctCardsFields(a) {
+  if (!a || members().length < 2) return '';
+  const n = {};
+  for (const t of state.transactions) if (t.accountId === a.id && t.card) n[t.card] = (n[t.card] || 0) + 1;
+  const cards = [...new Set([...Object.keys(a.cards || {}), ...Object.keys(n)])];
+  if (cards.length < 2) return '';
+  return `<div class="wide cards-acct"><span class="field-label">Cards on this account</span>
+    <div class="cards-rows">${cards.map(c => `<label class="field"><span>Card ending ${esc(c)}${n[c] ? ` · ${n[c].toLocaleString()}` : ''}</span><select data-acard="${esc(c)}">${memberOptions(a.cards?.[c] || '', `Account owner (${memberName(a.owner || 'joint')})`, true)}</select></label>`).join('')}</div>
+    <small class="muted">Purchases on each card go under that person. Ones you put under someone yourself stay as they are.</small></div>`;
+}
+/* Saving the account window: move the card's transactions that followed the old choice */
+function saveAcctCards(a) {
+  const sels = $$('#f [data-acard]');
+  if (!sels.length) return 0;
+  const before = { ...(a.cards || {}) }, next = { ...before };
+  for (const s of sels) next[s.dataset.acard] = s.value;
+  let moved = 0;
+  for (const t of state.transactions) {
+    if (t.accountId !== a.id || !t.card || !(t.card in next) || (before[t.card] || '') === (next[t.card] || '')) continue;
+    if ((t.person || '') !== (before[t.card] || '') || isSplit(t) || isTransferTx(t)) continue;
+    if (next[t.card]) t.person = next[t.card]; else delete t.person;
+    moved++;
+  }
+  a.cards = next;
+  return moved;
 }
 
 /* ================= shared UI: router, shell, modal, toast, visual helpers ================= */
@@ -3798,7 +4002,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = 'a58446d';
+const ORO_BUILD = '31c4b29';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -5523,6 +5727,7 @@ function txnModal(id) {
       <div class="wide" id="split-box"></div>
       <div class="wide attach-box"><span class="field-label">Receipts</span><div id="att-list"></div>
         <label class="btn small ${hasFolder() ? '' : 'disabled'}" title="${hasFolder() ? 'Saved into receipts/ in your Ọrọ̀ folder' : isCompanion() ? 'Attach receipts in Ọrọ̀ on your Mac' : 'Choose your Ọrọ̀ folder in Settings first'}">Attach a file<input type="file" id="att-input" accept="image/*,application/pdf" hidden ${hasFolder() ? '' : 'disabled'}></label></div>
+      ${t?.card ? `<p class="muted small wide">Card ending ${esc(t.card)}</p>` : ''}
       ${t?.pp ? `<p class="muted small wide">Paid through PayPal. Bank description: ${esc(t.pp.was)}</p>` : t?.rawPayee && t.rawPayee !== t.payee ? `<p class="muted small wide">Bank description: ${esc(t.rawPayee)}</p>` : ''}
       ${t?.reconciled ? '<p class="muted small wide">✓ Reconciled with a statement</p>' : ''}
     </form>`,
@@ -5637,6 +5842,7 @@ function acctModal(id, presetType) {
         <label class="field"><span>Building basis (excludes land)</span><input name="buildingBasis" inputmode="decimal" value="${v.buildingBasis ?? ''}" placeholder="For depreciation"></label>
         <label class="field"><span>Placed in service</span><input type="date" name="placedInService" value="${v.placedInService || ''}"></label>
       </div>
+      ${acctCardsFields(a)}
       <label class="field wide"><span>Notes</span><input name="notes" value="${esc(v.notes || '')}"></label>
     </form>`,
     actions: `${a ? `<button class="btn ghost danger-text left" id="del">Delete</button><button class="btn ghost" id="arch">${a.archived ? 'Restore' : 'Archive'}</button>` : ''}${a && talkOn() ? `<button class="btn ghost" data-talk-open="acct:${a.id}" title="Say what to change about this account">${MIC_ICON} Talk</button>` : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${a ? 'Save' : 'Add account'}</button>`,
@@ -5670,6 +5876,7 @@ function acctModal(id, presetType) {
     if ('cash' in d) rec.cash = round2(parseAmount(d.cash || '0') || 0);
     const target = a || { id: uid() };
     Object.assign(target, rec);
+    const movedCards = a ? saveAcctCards(a) : 0;
     if ('balance' in d) {
       const b = parseAmount(d.balance || '0'), val = isFinite(b) ? round2(isLiability(target) ? Math.abs(b) : b) : 0;
       const changed = !a || Math.abs(val - curVal) > 0.004 || (a.ledger ? a.anchorDate : a.balanceDate) !== d.balanceDate || !!a.ledger !== !!rec.ledger;
@@ -5681,6 +5888,7 @@ function acctModal(id, presetType) {
     if (newMort) toast(`${a ? 'Saved' : 'Added'} ${rec.name} and added ${newMort.name} under Liabilities.`);
     else if (!a && isCryptoAcct(target)) toast(`Added ${rec.name}. Add the coins it holds and its value will follow their prices.`, { label: 'Add coins', fn: () => holdingModal(null, target.id) });
     else if (!a) toast(`Added ${rec.name}.`);
+    else if (movedCards) toast(`Saved. Moved ${movedCards.toLocaleString()} transaction${movedCards === 1 ? '' : 's'} to the card’s new person.`, { label: 'Undo', fn: undo });
   };
   if (a) {
     $('#arch').onclick = () => { a.archived = !a.archived; closeModal(); commit(); toast(a.archived ? `${a.name} archived. Its history stays in your net worth chart.` : `${a.name} restored.`); };
@@ -7014,7 +7222,7 @@ function mergeNote(lm, dev) {
 }
 
 /* What's waiting to be sent, in words: "Account “Chase checking”: name", "Transaction “Jewel Osco”: category". */
-const FIELD_WORDS = { categoryId: 'category', payee: 'payee', amount: 'amount', memo: 'memo', name: 'name', flag: 'flag', tags: 'tags', person: 'person', date: 'date', balance: 'balance', balanceDate: 'balance date', owner: 'owner', budget: 'budget', mortgageId: 'mortgage', amort: 'payment tracking', rate: 'rate', minPayment: 'payment', splits: 'split', institution: 'institution', last4: 'last 4 digits', pp: 'PayPal details', rawPayee: 'bank description' };
+const FIELD_WORDS = { categoryId: 'category', payee: 'payee', amount: 'amount', memo: 'memo', name: 'name', flag: 'flag', tags: 'tags', person: 'person', date: 'date', balance: 'balance', balanceDate: 'balance date', owner: 'owner', budget: 'budget', mortgageId: 'mortgage', amort: 'payment tracking', rate: 'rate', minPayment: 'payment', splits: 'split', institution: 'institution', last4: 'last 4 digits', pp: 'PayPal details', rawPayee: 'bank description', card: 'card', cards: 'cards' };
 function pendingLabels() {
   const rec = SYNC.rec; if (!rec?.base) return [];
   return syncPending().map(o => {

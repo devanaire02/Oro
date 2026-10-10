@@ -28,8 +28,9 @@ Click **Import** (or press `I`) and drop a file:
 
 - **Bank and card activity:** QFX/OFX (best: carries the balance and prevents duplicates), CSV, or PDF statements as a fallback.
 - **Brokerage holdings:** the Positions CSV from Fidelity, Schwab or Vanguard, or an investment QFX.
+- **Two cards on one account (an authorized user):** Capital One's QFX and CSV say which card made each purchase. Ọrọ̀ keeps the card's last 4 digits, asks once whose each card is, and puts each purchase under that person. Importing a file again marks whose card it was on the ones already there without adding anything; the account window changes it later.
 - **Moving from another app:** YNAB, Monarch, Mint, Copilot or Tiller CSV exports, or Quicken QIF. All accounts come over at once, with categories, tags and notes.
-- **PayPal details:** PayPal's activity CSV (paypal.com › Activity › Download). It adds no transactions. It renames the card and bank lines that only say "PayPal" to the store PayPal recorded (same amount, a few days apart), adds the item as a memo, and files the uncategorized ones. The bank's wording is kept, payments named before are skipped, and no email or shipping addresses are kept.
+- **PayPal details:** PayPal's activity CSV (paypal.com › Activity › Download), its monthly PDF statements, or its QIF. It adds no transactions. It renames the card and bank lines that only say "PayPal" to the store PayPal recorded (same amount, a few days apart), adds the item as a memo, and files the uncategorized ones. The bank's wording is kept, payments named before are skipped, and no email or shipping addresses are kept.
 
 Ọrọ̀ categorizes transactions on your device, in this order:
 

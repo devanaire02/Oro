@@ -71,6 +71,7 @@ function guessTxnMappingPlain(h) {
     account: pickCol(h, [/^account( name)?$/i], /number|type|mask|id$/i),
     tags: pickCol(h, [/^tags?$|^labels?$/i]),
     ttype: pickCol(h, [/^transaction type$/i]),
+    card: pickCol(h, [/^card ?(no\.?|num(ber)?|#|last ?4|ending)$/i]),
   };
 }
 
@@ -122,6 +123,7 @@ function parseOFX(text) {
     fitid: ofxTag(b, 'FITID'),
     mcc: ofxTag(b, 'SIC') || ofxTag(b, 'MCC'),
     type: ofxTag(b, 'TRNTYPE'),
+    card: cardL4(ofxTag(b, 'ACCTID')),   // Capital One: the card (yours or an authorized user's) that made it
   })).filter(t => t.date && isFinite(t.amount));
   const ledger = ofxBlocks(text, 'LEDGERBAL')[0];
   const balance = ledger ? { amount: parseAmount(ofxTag(ledger, 'BALAMT')), date: parseDateFlexible(ofxTag(ledger, 'DTASOF')) } : null;

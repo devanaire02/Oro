@@ -41,6 +41,59 @@ function parsePayPal(rows, hi) {
   }
   return out;
 }
+/* PayPal's monthly PDF statement: the same activity as the CSV, one entry per payment:
+   "04/03/2026   Website Payment: McDonalds #7385 -   USD   -23.06   0.00   -23.06", the rest of the description on the next
+   lines, then "ID: 45H…". A wrapped year ("04/03/202" with "6" on the next line) is put back together. */
+function isPayPalPdf(lines) {
+  const head = lines.slice(0, 20).join(' ');
+  return /PayPal/i.test(head) && lines.some(l => /^DATE\s+DESCRIPTION\s+CURRENCY\s+AMOUNT\s+FEES\s+TOTAL/i.test(l.trim()));
+}
+function parsePayPalPdf(lines) {
+  const START = /^(\d{1,2}\/\d{1,2}\/\d{1,4})\s+(.+?)\s+([A-Z]{3})\s+(-?[\d,]+\.\d{2})\s+(-?[\d,]+\.\d{2})\s+(-?[\d,]+\.\d{2})$/;
+  const out = []; let cur = null;
+  const finish = () => {
+    if (!cur) return;
+    const desc = cur.desc.join(' ').replace(/\s+/g, ' ').trim(), i = desc.indexOf(':');
+    const type = (i > 0 ? desc.slice(0, i) : desc).trim();
+    const name = (i > 0 ? desc.slice(i + 1) : '').replace(/\s+-\s+[A-Za-z .'-]+,\s*[A-Z]{2}$/, '').replace(/\s+-$/, '').replace(/\S+@\S+\.\S+/g, '').trim().slice(0, 60);
+    const date = parseDateFlexible(cur.date), amount = parseAmount(cur.amount);
+    if (date && isFinite(amount) && amount) out.push({ date, name, type, status: '', currency: cur.cur, amount: round2(amount), impact: '', id: cur.id || `d:${date}:${round2(amount)}:${normPayee(name)}`, item: '', funded: cur.funded });
+    cur = null;
+  };
+  for (const raw of lines) {
+    let l = raw.trim();
+    const m = START.exec(l);
+    if (m) { finish(); cur = { date: m[1], desc: [m[2]], cur: m[3], amount: m[4], id: '', funded: '', stop: false }; continue; }
+    if (!cur) continue;
+    const yr = /\/(\d{1,3})$/.exec(cur.date);
+    if (yr) { const w = /^(\d{1,3})(?:\s+(.*))?$/.exec(l); if (w && (yr[1] + w[1]).length === 4) { cur.date += w[1]; l = (w[2] || '').trim(); if (!l) continue; } }
+    if (cur.stop) continue;
+    const id = /^ID:\s*(\S+)/i.exec(l);
+    if (id) { cur.id = id[1]; cur.stop = true; continue; }
+    if (/^Ref ID:/i.test(l) || /^[A-Z]{3}$/.test(l)) continue;
+    if (/\bx-\d{4}\b/i.test(l)) { cur.funded = 'yes'; continue; }   // paid from a bank account or card on file
+    cur.desc.push(l);
+  }
+  finish();
+  return out;
+}
+
+/* PayPal's Quicken (QIF) download: the store in one field and PayPal's type ("Express Checkout Payment") in another.
+   Read the same way, so it can't come in as a second copy of every purchase. */
+const PP_TYPE = /^(general (card |credit card )?(deposit|payment|withdrawal|authori[sz]ation|currency conversion)|express checkout payment|website payment|preapproved payment|mobile payment|subscription payment|payment (refund|reversal|sent|received)|bank deposit to pp|transfer to bank|account hold|reversal of general|void of authori[sz]ation|direct credit card payment|shopping cart payment)/i;
+function isPayPalQif(rows, fileName = '') {
+  const hits = rows.filter(r => [r.memo, r.bankCategory, r.payee].some(v => PP_TYPE.test(String(v || '').trim()))).length;
+  return hits >= Math.max(2, rows.length * 0.3) || (/paypal/i.test(fileName) && hits >= 1);
+}
+function payPalFromQif(rows) {
+  return rows.map(r => {
+    const f = [r.payee, r.memo, r.bankCategory].map(v => String(v || '').trim());
+    const ti = f.findIndex(v => PP_TYPE.test(v)), type = ti >= 0 ? f[ti] : '';
+    const name = (f.find((v, i) => i !== ti && v && !PP_TYPE.test(v) && v !== 'Unknown') || '').replace(/\S+@\S+\.\S+/g, '').trim().slice(0, 60);
+    return { date: r.date, name, type, status: '', currency: '', amount: round2(r.amount), impact: '', id: `d:${r.date}:${round2(r.amount)}:${normPayee(name)}`, item: '' };
+  }).filter(p => p.date && isFinite(p.amount) && p.amount);
+}
+
 function ppKind(p) {
   if (/denied|cancel|fail|void|reversed/i.test(p.status) || p.impact === 'memo') return 'skip';
   if (p.amount > 0 && PP_FUNDING.test(p.type)) return 'funding';
@@ -58,13 +111,16 @@ function ppNameHint(t, p) {
 }
 
 function ppMatch(list) {
-  const done = new Set(state.transactions.filter(t => t.pp?.id).map(t => t.pp.id));
+  const done = new Set(state.transactions.filter(t => t.pp?.id).flatMap(t => [t.pp.id, t.pp.k]).filter(Boolean));
   const pays = [], funding = [], R = { matches: [], left: [], done: 0, skipped: 0 };
+  const ids = new Set();
   for (const p of list) {
+    if (ids.has(p.id)) continue;   // the same payment in two files (a statement and a CSV)
+    ids.add(p.id);
     const k = ppKind(p);
     if (k === 'funding') { funding.push(p); R.skipped++; continue; }
     if (k === 'skip') { R.skipped++; continue; }
-    if (done.has(p.id)) { R.done++; continue; }
+    if (done.has(p.id) || done.has(`${p.date}:${p.amount}`)) { R.done++; continue; }
     if (k === 'currency') { R.left.push({ p, why: 'currency' }); continue; }
     pays.push(p);
   }
@@ -85,7 +141,7 @@ function ppMatch(list) {
   }
   pays.forEach((p, i) => {
     if (usedP.has(i)) return;
-    const funded = funding.some(f => Math.abs(f.amount + p.amount) < 0.005 && Math.abs(daysBetween(f.date, p.date)) <= 1);
+    const funded = p.funded || funding.some(f => Math.abs(f.amount + p.amount) < 0.005 && Math.abs(daysBetween(f.date, p.date)) <= 1);
     R.left.push({ p, why: p.amount > 0 ? 'refund' : funded ? 'card' : funding.length ? 'balance' : 'unknown' });
   });
   R.matches.sort((a, b) => b.t.date.localeCompare(a.t.date));
@@ -155,7 +211,7 @@ function ppApply() {
     if (!m.include) continue;
     const t = state.transactions.find(x => x.id === m.t.id);
     if (!t || t.pp) continue;
-    t.pp = { id: m.p.id, was: t.rawPayee || t.payee };
+    t.pp = { id: m.p.id, k: `${m.p.date}:${m.p.amount}`, was: t.rawPayee || t.payee };
     t.payee = m.payee; t.rawPayee = m.raw;
     if (m.p.item && !t.memo) t.memo = m.p.item;
     if (!isSplit(t) && (m.categoryId || '') !== (t.categoryId || '')) { t.categoryId = m.categoryId || null; if (m.categoryId) filed++; }

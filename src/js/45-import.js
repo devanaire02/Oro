@@ -41,6 +41,12 @@ async function handleImportFile(file, opts = {}) {
   try {
     if (ext === 'pdf') {
       const lines = await pdfToLines(await readFileAsBuffer(file));
+      if (isPayPalPdf(lines)) {
+        IMP.source = 'paypal'; IMP.kind = 'paypal'; IMP.ppRows = parsePayPalPdf(lines); IMP.step = 'paypal';
+        if (!IMP.ppRows.length) throw new Error('Ọrọ̀ found a PayPal statement but couldn’t read any payments from it.');
+        if (!opts.silent) renderImport();
+        return;
+      }
       const { rows, period, last4: textLast4, isCard } = parseStatementLines(lines);
       if (!rows.length) throw new Error('Ọrọ̀ couldn’t find transaction lines in that PDF. If it’s a scanned image, or an unusual layout, download the OFX/QFX or CSV version from your bank instead.');
       IMP.source = 'pdf'; IMP.period = period; IMP.pdfRows = rows; if (textLast4) IMP.fileLast4 = textLast4;
@@ -66,6 +72,11 @@ async function handleImportFile(file, opts = {}) {
       } else if (looksLikeQIF(text) || ext === 'qif') {
         const rows = parseQIF(text);
         if (!rows.length) throw new Error('No transactions were found in that QIF file.');
+        if (isPayPalQif(rows, file.name)) {
+          IMP.source = 'paypal'; IMP.kind = 'paypal'; IMP.ppRows = payPalFromQif(rows); IMP.step = 'paypal';
+          if (!opts.silent) renderImport();
+          return;
+        }
         IMP.source = 'qif'; IMP.qif = rows; IMP.createCats = true;
         setupAccountMap(rows, last4);
         IMP.step = 'review'; buildTxRows(rows);
@@ -152,7 +163,7 @@ function csvMappedRows() {
     if (useType) amount = Math.abs(amount) * ((r[m.ttype] || '').toLowerCase() === 'debit' ? -1 : 1);
     if (IMP.flip) amount = -amount;
     const memo = m.memo >= 0 ? String(r[m.memo] || '').trim() : '';
-    out.push({ date, payee: m.brokerage ? cleanBrokerageAction(r[m.payee]) : (r[m.payee] || '').trim(), amount: round2(amount), memo: m.brokerage && /^no description$/i.test(memo) ? '' : memo, bankCategory: m.category >= 0 ? (r[m.category] || '').trim() : '', mcc: m.mcc >= 0 ? (r[m.mcc] || '').trim() : '', tags: m.tags >= 0 ? parseTags(r[m.tags]) : [], srcAccount: IMP.useAcctCol && m.account >= 0 ? acctLabel(r[m.account], m.acctNum >= 0 ? r[m.acctNum] : '') : '', fitid: '' });
+    out.push({ date, payee: m.brokerage ? cleanBrokerageAction(r[m.payee]) : (r[m.payee] || '').trim(), amount: round2(amount), memo: m.brokerage && /^no description$/i.test(memo) ? '' : memo, bankCategory: m.category >= 0 ? (r[m.category] || '').trim() : '', mcc: m.mcc >= 0 ? (r[m.mcc] || '').trim() : '', tags: m.tags >= 0 ? parseTags(r[m.tags]) : [], srcAccount: IMP.useAcctCol && m.account >= 0 ? acctLabel(r[m.account], m.acctNum >= 0 ? r[m.acctNum] : '') : '', fitid: '', card: m.card >= 0 ? cardL4(r[m.card]) : '' });
   }
   return out;
 }
@@ -178,14 +189,17 @@ function buildTxRows(list) {
     const acctId = rowAccountId(t);
     const acct = acctId && !acctId.startsWith('__') ? acctById(acctId) : null;
     const existing = acct ? txByAccount(acct.id) : [];
-    const ids = acct ? (seenByAcct[acct.id] = seenByAcct[acct.id] || new Set(existing.map(x => x.importId).filter(Boolean))) : new Set();
+    const ids = acct ? (seenByAcct[acct.id] = seenByAcct[acct.id] || new Map(existing.filter(x => x.importId).map(x => [x.importId, x.id]))) : new Map();
     const seen = (IMP._seen = IMP._seen || {});
     const base = t.fitid ? 'fit:' + t.fitid : 'h:' + hashStr(`${t.date}|${t.amount}|${normPayee(t.payee)}`);
     const k = (acctId || '') + base; seen[k] = (seen[k] || 0) + 1;
     const importId = t.fitid ? base : `${base}:${seen[k]}`;
-    let status = 'new';
-    if (ids.has(importId)) status = 'dup';
-    else if (existing.some(e => Math.abs(e.amount - t.amount) < 0.005 && Math.abs(daysBetween(e.date, t.date)) <= 3 && (normPayee(e.rawPayee || e.payee).split(' ')[0] === normPayee(t.payee).split(' ')[0] || !e.importId))) status = 'maybe';
+    let status = 'new', existingId = '';
+    if (ids.has(importId)) { status = 'dup'; existingId = ids.get(importId); }
+    else {
+      const e = existing.find(e => Math.abs(e.amount - t.amount) < 0.005 && Math.abs(daysBetween(e.date, t.date)) <= 3 && (normPayee(e.rawPayee || e.payee).split(' ')[0] === normPayee(t.payee).split(' ')[0] || !e.importId));
+      if (e) { status = 'maybe'; existingId = e.id; }
+    }
     const rule = matchRule(t.payee, { amount: t.amount, accountId: acctId });
     const named = findCategoryByName(t.bankCategory);
     const auto = rule || named ? null : autoCategory(t.payee, t.amount, { mcc: t.mcc, bankCategory: t.bankCategory }, hist);
@@ -194,7 +208,7 @@ function buildTxRows(list) {
     // money coming into a credit card is almost always a payment
     if (type === 'credit' && t.amount > 0 && cardPayId && (!categoryId || categoryId === transferId) && /payment|thank you|autopay|pymt|transfer from|ach deposit/i.test(t.payee)) categoryId = cardPayId;
     const willCreate = !categoryId && IMP.createCats && t.bankCategory && !/^(uncategori[sz]ed|none|transfer.*|.*ready to assign|to be budgeted|split.*)$/i.test(t.bankCategory);
-    return { ...t, importId, status, include: status === 'new' && acctId !== '__skip', skipAcct: acctId === '__skip', categoryId: categoryId || '', guess: auto && categoryId === auto.id ? auto.how : '', newCat: willCreate ? t.bankCategory : '', rename: rule?.rename, person: rule?.person };
+    return { ...t, importId, status, existingId, include: status === 'new' && acctId !== '__skip', skipAcct: acctId === '__skip', categoryId: categoryId || '', guess: auto && categoryId === auto.id ? auto.how : '', newCat: willCreate ? t.bankCategory : '', rename: rule?.rename, person: rule?.person };
   }).sort((a, b) => b.date.localeCompare(a.date));
   IMP._seen = {};
 }
@@ -308,6 +322,7 @@ function renderReviewStep(box) {
       ${dup ? `${dup} look${dup === 1 ? 's' : ''} like ${dup === 1 ? 'a duplicate' : 'duplicates'} and ${dup === 1 ? 'is' : 'are'} unchecked.` : 'None of them are already in Ọrọ̀.'}
       ${IMP.source === 'pdf' ? ' Read from a PDF: check the signs. Click any amount to flip it.' : ''}
       ${newCats.length ? ` ${newCats.length} new categor${newCats.length === 1 ? 'y' : 'ies'} will be created: ${newCats.slice(0, 5).map(esc).join(', ')}${newCats.length > 5 ? '…' : ''}.` : ''}</p>
+    ${cardsBlock(IMP)}
     <div class="toolbar">
       <button class="btn small ghost" data-imp="all">Check all</button>
       <button class="btn small ghost" data-imp="none">Uncheck all</button>
@@ -333,15 +348,21 @@ function renderReviewStep(box) {
     if (t.dataset.row != null) { rows[+t.dataset.row].include = t.checked; t.closest('tr').classList.toggle('off', !t.checked); updateImportCount(); }
     if (t.dataset.cat != null) { rows[+t.dataset.cat].categoryId = t.value; rows[+t.dataset.cat].guess = ''; }
     if (t.id === 'imp-bal') IMP.setBal = t.checked;
+    if (cardsChange(t)) { const cb = $('#imp .cards-box'); if (cb) cb.outerHTML = cardsBlock(IMP); updateImportCount(); }
   };
   $('#imp-table').onclick = e => {
     const b = e.target.closest('[data-flip]'); if (!b) return;
     const r = rows[+b.dataset.flip]; r.amount = -r.amount;
     b.textContent = money(r.amount); b.closest('td').className = 'num ' + signClass(r.amount);
   };
-  setModalActions(`<button class="btn ghost" data-imp="back">Back</button><button class="btn primary" data-imp="commit" id="imp-go">Import ${inc.length.toLocaleString()} transaction${inc.length === 1 ? '' : 's'}</button>`);
+  setModalActions(`<button class="btn ghost" data-imp="back">Back</button><button class="btn primary" data-imp="commit" id="imp-go">${importLabel(IMP)}</button>`);
 }
-function updateImportCount() { const n = IMP.txRows.filter(r => r.include).length; const b = $('#imp-go'); if (b) b.textContent = `Import ${n.toLocaleString()} transaction${n === 1 ? '' : 's'}`; }
+function importLabel(it) {
+  const n = (it.txRows || []).filter(r => r.include).length, m = itemCardMarks(it);
+  if (!n && m) return `Mark whose card on ${m.toLocaleString()}`;
+  return `Import ${n.toLocaleString()} transaction${n === 1 ? '' : 's'}${m ? ` and mark ${m.toLocaleString()}` : ''}`;
+}
+function updateImportCount() { const b = $('#imp-go'); if (b) b.textContent = importLabel(IMP); }
 
 function renderPositionsStep(box) {
   const P = IMP.positions;
@@ -447,6 +468,7 @@ function applyTxItem(it) {
   }
   const have = {};
   let added = 0, skipped = 0, unc = 0;
+  const marked = it.multi ? 0 : applyItemCards(it, dest['']);   // whose each card is, and the ones already there
   for (const r of rows) {
     const acct = it.multi ? dest[r.srcAccount || ''] : dest[''];
     if (!acct) continue;   // an account you chose not to import
@@ -457,7 +479,9 @@ function applyTxItem(it) {
     }
     const t = { id: uid(), date: r.date, accountId: acct.id, payee: r.rename || prettyPayee(r.payee), rawPayee: r.payee, amount: r.amount, categoryId: r.categoryId || null, memo: r.memo || '', importId: r.importId, added: today() };
     if (r.tags?.length) t.tags = r.tags;
+    if (r.card) t.card = r.card;
     if (r.person) t.person = r.person;
+    else if (!it.multi) { const p = personFromCard(acct, r.card, t); if (p) t.person = p; }
     if (r.mcc) t.mcc = String(r.mcc).slice(0, 6);
     state.transactions.push(t); added++;
     if (!t.categoryId) unc++;
@@ -470,7 +494,7 @@ function applyTxItem(it) {
   if (single && bal && isFinite(bal.amount) && it.setBal !== false) setBalance(single, round2(Math.abs(bal.amount) * (bal.amount < 0 && !isLiability(single) ? -1 : 1)), bal.date || today());
   // accounts created by import start at zero on the earliest date so imported history doesn't move today's balance unexpectedly
   for (const a of Object.values(dest)) if (a.ledger && a.anchorDate === '0000-00-00') { a.anchorDate = today(); a.anchorBalance = 0; a.balanceDate = today(); }
-  return { added, skipped, unc, dest, fresh, created, bal };
+  return { added, skipped, unc, dest, fresh, created, bal, marked };
 }
 function commitTxImport() {
   stashNewAcct();
@@ -480,7 +504,7 @@ function commitTxImport() {
   const nAcct = Object.keys(r.dest).length, nCats = Object.keys(r.created).length, single = r.dest[''];
   closeModal(); IMP = null;
   commit();
-  toast(`Imported ${r.added.toLocaleString()} transaction${r.added === 1 ? '' : 's'}${nAcct > 1 ? ` into ${nAcct} accounts` : single ? ` into ${single.name}` : ''}.${nCats ? ` Created ${nCats} categor${nCats === 1 ? 'y' : 'ies'}.` : ''}${r.unc ? ` ${r.unc} need a category.` : ''}`,
+  toast(`${!r.added && r.marked ? `Marked whose card it was on ${r.marked.toLocaleString()} transaction${r.marked === 1 ? '' : 's'}${single ? ` in ${single.name}` : ''}.` : `Imported ${r.added.toLocaleString()} transaction${r.added === 1 ? '' : 's'}${nAcct > 1 ? ` into ${nAcct} accounts` : single ? ` into ${single.name}` : ''}.${r.marked ? ` Marked whose card it was on ${r.marked.toLocaleString()} already there.` : ''}`}${nCats ? ` Created ${nCats} categor${nCats === 1 ? 'y' : 'ies'}.` : ''}${r.unc ? ` ${r.unc} need a category.` : ''}`,
     r.unc ? { label: 'Categorize', fn: () => go(`#/transactions?cat=_none&m=all`) } : { label: 'Undo', fn: undo });
   if (r.fresh.some(a => a.ledger && !a.anchorBalance && !r.bal)) setTimeout(() => toast('Set each new account’s current balance (Accounts › Update balances) so its balance tracks from here.'), 400);
 }

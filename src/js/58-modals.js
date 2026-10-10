@@ -85,6 +85,7 @@ function txnModal(id) {
       <div class="wide" id="split-box"></div>
       <div class="wide attach-box"><span class="field-label">Receipts</span><div id="att-list"></div>
         <label class="btn small ${hasFolder() ? '' : 'disabled'}" title="${hasFolder() ? 'Saved into receipts/ in your Ọrọ̀ folder' : isCompanion() ? 'Attach receipts in Ọrọ̀ on your Mac' : 'Choose your Ọrọ̀ folder in Settings first'}">Attach a file<input type="file" id="att-input" accept="image/*,application/pdf" hidden ${hasFolder() ? '' : 'disabled'}></label></div>
+      ${t?.card ? `<p class="muted small wide">Card ending ${esc(t.card)}</p>` : ''}
       ${t?.pp ? `<p class="muted small wide">Paid through PayPal. Bank description: ${esc(t.pp.was)}</p>` : t?.rawPayee && t.rawPayee !== t.payee ? `<p class="muted small wide">Bank description: ${esc(t.rawPayee)}</p>` : ''}
       ${t?.reconciled ? '<p class="muted small wide">✓ Reconciled with a statement</p>' : ''}
     </form>`,
@@ -199,6 +200,7 @@ function acctModal(id, presetType) {
         <label class="field"><span>Building basis (excludes land)</span><input name="buildingBasis" inputmode="decimal" value="${v.buildingBasis ?? ''}" placeholder="For depreciation"></label>
         <label class="field"><span>Placed in service</span><input type="date" name="placedInService" value="${v.placedInService || ''}"></label>
       </div>
+      ${acctCardsFields(a)}
       <label class="field wide"><span>Notes</span><input name="notes" value="${esc(v.notes || '')}"></label>
     </form>`,
     actions: `${a ? `<button class="btn ghost danger-text left" id="del">Delete</button><button class="btn ghost" id="arch">${a.archived ? 'Restore' : 'Archive'}</button>` : ''}${a && talkOn() ? `<button class="btn ghost" data-talk-open="acct:${a.id}" title="Say what to change about this account">${MIC_ICON} Talk</button>` : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${a ? 'Save' : 'Add account'}</button>`,
@@ -232,6 +234,7 @@ function acctModal(id, presetType) {
     if ('cash' in d) rec.cash = round2(parseAmount(d.cash || '0') || 0);
     const target = a || { id: uid() };
     Object.assign(target, rec);
+    const movedCards = a ? saveAcctCards(a) : 0;
     if ('balance' in d) {
       const b = parseAmount(d.balance || '0'), val = isFinite(b) ? round2(isLiability(target) ? Math.abs(b) : b) : 0;
       const changed = !a || Math.abs(val - curVal) > 0.004 || (a.ledger ? a.anchorDate : a.balanceDate) !== d.balanceDate || !!a.ledger !== !!rec.ledger;
@@ -243,6 +246,7 @@ function acctModal(id, presetType) {
     if (newMort) toast(`${a ? 'Saved' : 'Added'} ${rec.name} and added ${newMort.name} under Liabilities.`);
     else if (!a && isCryptoAcct(target)) toast(`Added ${rec.name}. Add the coins it holds and its value will follow their prices.`, { label: 'Add coins', fn: () => holdingModal(null, target.id) });
     else if (!a) toast(`Added ${rec.name}.`);
+    else if (movedCards) toast(`Saved. Moved ${movedCards.toLocaleString()} transaction${movedCards === 1 ? '' : 's'} to the card’s new person.`, { label: 'Undo', fn: undo });
   };
   if (a) {
     $('#arch').onclick = () => { a.archived = !a.archived; closeModal(); commit(); toast(a.archived ? `${a.name} archived. Its history stays in your net worth chart.` : `${a.name} restored.`); };
