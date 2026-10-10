@@ -73,7 +73,11 @@ async function handleImportFile(file, opts = {}) {
         const rows = parseCSV(text);
         if (rows.length < 2) throw new Error('That file looks empty.');
         const hi = findHeaderRow(rows);
-        if (isPositionsHeader(rows[hi])) {
+        if (isPayPalFile(rows[hi], file.name)) {
+          IMP.source = 'paypal'; IMP.kind = 'paypal'; IMP.ppRows = parsePayPal(rows, hi);
+          if (!IMP.ppRows.length) throw new Error('Ọrọ̀ found a PayPal file but couldn’t read any payments from it.');
+          IMP.step = 'paypal';
+        } else if (isPositionsHeader(rows[hi])) {
           IMP.source = 'csv'; IMP.kind = 'positions'; IMP.step = 'positions';
           IMP.positions = parsePositionsCSV(rows).map(p => ({ ...p, assetClass: guessAssetClass(p.symbol, p.name), include: true }));
           if (!IMP.positions.length) throw new Error('Ọrọ̀ found a positions file but couldn’t read any holdings from it.');
@@ -212,7 +216,8 @@ function renderImport() {
         <div><h4>Bank and credit card activity</h4><p>On your bank’s site, look for “Download transactions.” Pick <strong>Quicken (QFX)</strong> or <strong>OFX</strong> if offered: it carries IDs that prevent duplicates and the current balance. CSV works too.</p></div>
         <div><h4>Brokerage holdings</h4><p>Download the <strong>Positions</strong> page as CSV (Fidelity, Schwab, Vanguard and most others), or an investment QFX. Ọrọ̀ updates shares, prices and cost basis.</p></div>
         <div><h4>Moving from another app</h4><p>Exports from <strong>YNAB, Monarch, Mint, Copilot, Tiller</strong> (CSV) or <strong>Quicken</strong> (QIF) bring every account at once, with categories, tags and notes. PDF statements work as a last resort.</p></div>
-      </div>`;
+      </div>
+      <p class="muted small pp-help"><strong>PayPal:</strong> on paypal.com, Activity › Download (All transactions, CSV). Ọrọ̀ uses it to name the card and bank lines that only say “PayPal”. It adds nothing new.</p>`;
     const inp = $('#imp-file'), drop = $('#imp-drop');
     inp.onchange = () => importFiles([...inp.files]);
     drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
@@ -225,6 +230,7 @@ function renderImport() {
   if (s === 'review') return renderReviewStep(box);
   if (s === 'positions') return renderPositionsStep(box);
   if (s === 'batch') return renderBatchStep(box);
+  if (s === 'paypal') return renderPayPalStep(box);
 }
 function importFiles(files) {
   if (!files.length) return;
@@ -388,6 +394,7 @@ function importAction(act) {
   }
   if (act === 'commit') return commitTxImport();
   if (act === 'commit-pos') return commitPositions();
+  if (act === 'ppapply') return ppApply();
   if (act.startsWith('b')) return batchAction(act);
 }
 function makeAccount(name, type, inst, owner) {

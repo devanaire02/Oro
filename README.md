@@ -29,6 +29,7 @@ Click **Import** (or press `I`) and drop a file:
 - **Bank and card activity:** QFX/OFX (best: carries the balance and prevents duplicates), CSV, or PDF statements as a fallback.
 - **Brokerage holdings:** the Positions CSV from Fidelity, Schwab or Vanguard, or an investment QFX.
 - **Moving from another app:** YNAB, Monarch, Mint, Copilot or Tiller CSV exports, or Quicken QIF. All accounts come over at once, with categories, tags and notes.
+- **PayPal details:** PayPal's activity CSV (paypal.com › Activity › Download). It adds no transactions. It renames the card and bank lines that only say "PayPal" to the store PayPal recorded (same amount, a few days apart), adds the item as a memo, and files the uncategorized ones. The bank's wording is kept, payments named before are skipped, and no email or shipping addresses are kept.
 
 Ọrọ̀ categorizes transactions on your device, in this order:
 

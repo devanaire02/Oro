@@ -1270,3 +1270,30 @@ body.talk-open .main-wrap { margin-right: 390px; }
 .linklike.link { color: var(--ink-accent); text-decoration: underline; text-underline-offset: 2px; }
 .mac-steps li { line-height: 1.5; }
 .mac-steps a { overflow-wrap: anywhere; }
+
+/* PayPal details */
+.pp-help { margin: 14px 0 0; }
+.pp-sum { margin: 4px 0 10px; font-size: 14px; }
+.pp-list { display: flex; flex-direction: column; max-height: 52vh; overflow: auto; border-top: 1px solid var(--rule); margin-top: 6px; }
+.pp-row { display: grid; grid-template-columns: auto minmax(0, 1fr) 13em minmax(6.5em, auto); column-gap: 10px; row-gap: 4px; align-items: center; padding: 8px 2px; border-bottom: 1px solid var(--rule); }
+.pp-row.off { opacity: .5; }
+.pp-row > input { margin: 0; }
+.pp-main { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.pp-main strong { font-weight: 600; overflow-wrap: anywhere; }
+.pp-main .muted { overflow-wrap: anywhere; }
+.pp-row .pp-cat { grid-column: 3; grid-row: 1; min-width: 0; width: 100%; }
+.pp-row > .num { grid-column: 4; grid-row: 1; white-space: nowrap; text-align: right; }
+.pp-was { grid-column: 3; grid-row: 2; }
+.pp-left { margin: 12px 0 4px; }
+.pp-left summary { cursor: pointer; color: var(--muted); }
+.pp-left ul { list-style: none; margin: 6px 0 0; padding: 0; }
+.pp-left li { display: grid; grid-template-columns: 5.5em minmax(0, 1fr) auto; column-gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--rule); align-items: baseline; }
+.pp-left li > span:nth-child(2) { overflow-wrap: anywhere; }
+.pp-left li > .muted { grid-column: 2 / -1; }
+@media (max-width: 640px) {
+  .pp-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .pp-row > .num { grid-column: 3; }
+  .pp-row .pp-cat { grid-column: 2 / -1; grid-row: 2; }
+  .pp-was { grid-column: 2 / -1; grid-row: 3; }
+  .pp-list { max-height: none; }
+}

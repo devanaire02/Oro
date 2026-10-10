@@ -74,7 +74,7 @@ async function analyzeBatchFile(file) {
     const it = IMP;
     Object.assign(it, { file, include: true });
     if (it.error) { it.problem = it.error; it.include = false; return it; }
-    if (it.step === 'positions') return it;
+    if (it.step === 'positions' || it.step === 'paypal') return it;
     if (it.step === 'map') {
       if (it.useAcctCol) { it.solo = 'This file holds several accounts, like an export from another app. Import it on its own.'; it.include = false; return it; }
       const list = csvMappedRows();
@@ -127,11 +127,17 @@ function batchCounts(it) {
 }
 function renderBatchStep(box) {
   const items = IMP.items;
-  let nTx = 0, nPosFiles = 0;
+  let nTx = 0, nPosFiles = 0, nPP = 0;
   const cards = items.map((it, k) => {
     const head = `<header class="batch-head"><label class="check"><input type="checkbox" data-binc="${k}" ${it.include ? 'checked' : ''} ${it.problem || it.solo ? 'disabled' : ''}> <strong>${esc(it.fileName)}</strong></label>`;
     if (it.problem || it.solo) return `<section class="batch-item off">${head}<span class="muted small">Not included</span></header>
       <p class="notice ${it.problem ? 'bad' : ''} small">${esc(it.problem || it.solo)}</p>${it.solo ? `<button class="btn small" data-imp="bsolo-${k}">Import this file on its own</button>` : ''}</section>`;
+    if (it.kind === 'paypal') {
+      const pays = it.ppRows.filter(p => ['buy', 'refund'].includes(ppKind(p))).length;
+      if (it.include) nPP++;
+      return `<section class="batch-item ${it.include ? '' : 'off'}">${head}<span class="muted small">PayPal activity · ${pays} payment${pays === 1 ? '' : 's'}</span></header>
+        <p class="muted small">Adds nothing new. After the other files import, Ọrọ̀ shows which card and bank lines it can name from this file.</p></section>`;
+    }
     if (it.kind === 'positions') {
       const P = it.positions.filter(p => p.include), total = sum(P.map(p => p.value));
       if (it.include) nPosFiles++;
@@ -184,6 +190,7 @@ function renderBatchStep(box) {
   const parts = [];
   if (nTx) parts.push(`${nTx.toLocaleString()} transaction${nTx === 1 ? '' : 's'}`);
   if (nPosFiles) parts.push(`${nPosFiles} holdings file${nPosFiles === 1 ? '' : 's'}`);
+  if (nPP) parts.push('PayPal details');
   setModalActions(`<button class="btn ghost" data-imp="back">Start over</button><button class="btn primary" data-imp="bcommit" ${nFiles ? '' : 'disabled'}>${parts.length ? `Import ${parts.join(' and ')}` : 'Nothing to import'}</button>`);
 }
 
@@ -202,20 +209,24 @@ function batchAction(act) {
 function commitBatch() {
   const items = IMP.items.filter(it => it.include && !it.problem && !it.solo);
   for (const it of items) {
-    if (it.kind === 'positions') continue;
+    if (it.kind === 'positions' || it.kind === 'paypal') continue;
     const problem = txItemProblem(it);
     if (problem) return toast(`${it.fileName}: ${problem}`);
   }
   let added = 0, skipped = 0, unc = 0, holdings = 0, bal = false;
   const accts = new Set(), posAccts = new Set(), fresh = [];
+  const pp = items.filter(it => it.kind === 'paypal');
   for (const it of items) {
+    if (it.kind === 'paypal') continue;
     if (it.kind === 'positions') { const r = applyPositionsItem(it); holdings += r.count; r.accounts.forEach(a => posAccts.add(a)); continue; }
     const r = applyTxItem(it);
     added += r.added; skipped += r.skipped; unc += r.unc; if (r.bal) bal = true;
     Object.values(r.dest).forEach(a => accts.add(a.id)); fresh.push(...r.fresh);
   }
   closeModal(); IMP = null;
+  if (pp.length && pp.length === items.length) return ppReviewOpen(pp.flatMap(it => it.ppRows), pp[0].fileName);
   commit();
+  if (pp.length) ppReviewOpen(pp.flatMap(it => it.ppRows), pp[0].fileName);   // now that the card statements are in
   const bits = [];
   if (added || accts.size) bits.push(`Imported ${added.toLocaleString()} transaction${added === 1 ? '' : 's'} into ${accts.size} account${accts.size === 1 ? '' : 's'}`);
   if (posAccts.size) bits.push(`${bits.length ? 'updated' : 'Updated'} ${holdings} holding${holdings === 1 ? '' : 's'} in ${posAccts.size} account${posAccts.size === 1 ? '' : 's'}`);
