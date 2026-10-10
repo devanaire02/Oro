@@ -123,6 +123,8 @@ function render() {
   }
   paintStatus();
   if (page === 'data') { paintBackups(); voiceMenuSoon(); }
+  if (page === 'transactions') updateBulk();   // the bar for rows still ticked from before the list was redrawn
+  else if (UI.txSel?.size) UI.txSel.clear();   // leaving Transactions lets go of the selection
   paintTalk();
   if (keepY) keepScroll(keepY);
 }

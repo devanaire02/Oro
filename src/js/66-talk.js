@@ -13,7 +13,7 @@ function talkCtx() {
   const page = route().page, c = UI.talkCtx, fresh = c && Date.now() - c.at < 20 * 60 * 1000;
   const t = fresh && c.kind === 'txn' ? state.transactions.find(x => x.id === c.id) || null : null;
   const a = fresh && c.kind === 'acct' ? acctById(c.id) || null : null;
-  const sel = page === 'transactions' ? $$('.tx-cb:checked').map(x => x.value).filter(id => state.transactions.some(t => t.id === id)) : [];
+  const sel = page === 'transactions' ? txSelIds() : [];
   return { page, t, a, sel };
 }
 /* The panel keeps its own conversation; the check-in page keeps its own */

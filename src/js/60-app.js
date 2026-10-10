@@ -26,7 +26,7 @@ const ACTIONS = {
     const sort = route().params.sort;   // the sort order isn't a filter, so it stays
     go(`#/transactions?m=all${sort ? `&sort=${encodeURIComponent(sort)}` : ''}`);
   },
-  'tx-select': () => { UI.txSelect = !UI.txSelect; if (!UI.txSelect) { $$('.tx-cb:checked').forEach(c => { c.checked = false; }); } render(); },
+  'tx-select': () => { UI.txSelect = !UI.txSelect; if (!UI.txSelect) txSel().clear(); render(); },
   'more-money-date': () => { closeModal(true); ACTIONS['money-date'](); },
   'money-date': el => startMoneyDate(el?.dataset.mk),
   'privacy': () => { state.settings.privacy = !state.settings.privacy; commit({ silent: true }); render(); },
@@ -78,18 +78,18 @@ const ACTIONS = {
     commit(); toast(`Updated ${n} budget${n === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
   },
   'bulk-cat': () => {
-    const ids = new Set($$('.tx-cb:checked').map(c => c.value)), cat = $('#bulk-cat').value || null;
+    const ids = new Set(txSelIds()), cat = $('#bulk-cat').value || null;
     let unflagged = 0;
     state.transactions.forEach(t => { if (ids.has(t.id)) { t.categoryId = cat; delete t.splits; if (cat && t.flag) { delete t.flag; unflagged++; } } });
     commit(); toast(`Updated ${ids.size} transaction${ids.size === 1 ? '' : 's'}${unflagged ? ` and cleared ${unflagged} flag${unflagged === 1 ? '' : 's'}` : ''}.`, { label: 'Undo', fn: undo });
   },
   'bulk-who': () => {
-    const ids = new Set($$('.tx-cb:checked').map(c => c.value)), who = $('#bulk-who').value;
+    const ids = new Set(txSelIds()), who = $('#bulk-who').value;
     state.transactions.forEach(t => { if (ids.has(t.id)) { if (who) t.person = who; else delete t.person; } });
     commit(); toast(`Updated ${ids.size} transaction${ids.size === 1 ? '' : 's'}.`);
   },
   'bulk-tag': () => {
-    const ids = new Set($$('.tx-cb:checked').map(c => c.value)), tags = parseTags($('#bulk-tag').value);
+    const ids = new Set(txSelIds()), tags = parseTags($('#bulk-tag').value);
     if (!tags.length) return toast('Type a tag first.');
     state.transactions.forEach(t => { if (ids.has(t.id)) t.tags = [...new Set([...(t.tags || []), ...tags])]; });
     commit(); toast(`Tagged ${ids.size} transaction${ids.size === 1 ? '' : 's'}.`);
@@ -102,17 +102,17 @@ const ACTIONS = {
     if (first) toast('Flagged. Flagged transactions collect under Transactions › flagged, and on Overview, until you pick a category.');
   },
   'bulk-flag': () => {
-    const ids = new Set($$('.tx-cb:checked').map(c => c.value));
+    const ids = new Set(txSelIds());
     state.transactions.forEach(t => { if (ids.has(t.id)) t.flag = true; });
     commit(); toast(`Flagged ${ids.size} transaction${ids.size === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
   },
   'bulk-unflag': () => {
-    const ids = new Set($$('.tx-cb:checked').map(c => c.value));
+    const ids = new Set(txSelIds());
     state.transactions.forEach(t => { if (ids.has(t.id)) delete t.flag; });
     commit(); toast(`Cleared ${ids.size} flag${ids.size === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
   },
   'bulk-del': async () => {
-    const ids = new Set($$('.tx-cb:checked').map(c => c.value));
+    const ids = new Set(txSelIds());
     if (!await confirmBox('Delete transactions', `Delete ${ids.size} transaction${ids.size === 1 ? '' : 's'}?`, 'Delete', true)) return;
     state.transactions = state.transactions.filter(t => !ids.has(t.id)); commit(); toast('Deleted.', { label: 'Undo', fn: undo });
   },
@@ -279,10 +279,15 @@ function applyTheme() {
   for (const m of document.querySelectorAll('meta[name="theme-color"]'))
     m.content = THEME_COLORS[look][(t === 'auto' ? /dark/.test(m.media) : t === 'dark') ? 1 : 0];
 }
+/* The ticked transactions, kept outside the page so sorting or redrawing the list doesn't untick them */
+const txSel = () => (UI.txSel ||= new Set());
+const txSelIds = () => [...txSel()].filter(id => state.transactions.some(t => t.id === id));
 function updateBulk() {
-  const n = $$('.tx-cb:checked').length, b = $('#bulk');
+  const n = txSel().size, b = $('#bulk');
   if (!b) return;
   b.hidden = !n; $('#bulk-count').textContent = `${n} selected`;
+  const all = $('#tx-all'), cbs = $$('.tx-cb');
+  if (all) all.checked = cbs.length > 0 && cbs.every(c => c.checked);
 }
 
 document.addEventListener('click', e => {
@@ -371,8 +376,8 @@ document.addEventListener('change', e => {
   // Household: let the dropdown or name box finish (and lose focus) before the page is redrawn, so it isn't pulled out from under it
   if (d.memberRole) { const m = state.settings.members.find(x => x.id === d.memberRole); if (m) { if (el.value === 'adult') delete m.role; else m.role = el.value; if (isTouch()) el.blur(); commit({ silent: true }); setTimeout(render, 0); } return; }
   if (d.member) { const m = state.settings.members.find(x => x.id === d.member); if (m && el.value.trim()) { m.name = el.value.trim(); commit({ silent: true }); setTimeout(render, 0); } return; }
-  if (el.classList.contains('tx-cb')) return updateBulk();
-  if (el.id === 'tx-all') { $$('.tx-cb').forEach(c => c.checked = el.checked); return updateBulk(); }
+  if (el.classList.contains('tx-cb')) { if (el.checked) txSel().add(el.value); else txSel().delete(el.value); return updateBulk(); }
+  if (el.id === 'tx-all') { $$('.tx-cb').forEach(c => { c.checked = el.checked; if (el.checked) txSel().add(c.value); else txSel().delete(c.value); }); return updateBulk(); }
 });
 const searchDebounced = debounce(v => setParam('q', v), 300);
 const notesDebounced = debounce((mk, v) => { (state.reviews[mk] = state.reviews[mk] || {}).notes = v; commit({ silent: true }); }, 500);

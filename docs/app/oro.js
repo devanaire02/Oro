@@ -3859,6 +3859,8 @@ function render() {
   }
   paintStatus();
   if (page === 'data') { paintBackups(); voiceMenuSoon(); }
+  if (page === 'transactions') updateBulk();   // the bar for rows still ticked from before the list was redrawn
+  else if (UI.txSel?.size) UI.txSel.clear();   // leaving Transactions lets go of the selection
   paintTalk();
   if (keepY) keepScroll(keepY);
 }
@@ -4034,7 +4036,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '0474da9';
+const ORO_BUILD = 'c25d843';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -4500,6 +4502,10 @@ VIEWS.transactions = p => {
   const limit = +p.limit || 250;
   const shown = list.slice(0, limit);
   UI.txVisible = list.map(t => t.id);   // what "the Jewel Osco one" means to Talk while this list is on screen
+  // ticked rows stay ticked through sorting, Show more and edits; ones no longer in the list (filtered out, re-filed off
+  // the flagged list, deleted) drop out of the selection
+  { const inList = new Set(UI.txVisible); for (const id of txSel()) if (!inList.has(id)) txSel().delete(id); }
+  const allTicked = shown.length > 0 && shown.every(t => txSel().has(t.id));
   const months = [...new Set(state.transactions.map(t => monthKey(t.date)))].sort().reverse();
   if (!months.includes(thisMonth())) months.unshift(thisMonth());
   // Totals leave out transfers (credit card payments, moves between your own accounts), like Overview and Cash flow do
@@ -4542,11 +4548,11 @@ VIEWS.transactions = p => {
     <button class="btn small ghost danger-text" data-act="bulk-del">Delete</button>
   </div>
   ${shown.length ? `<div class="scroll-table"><table class="ledger tx-table ${UI.txSelect ? 'selecting' : ''}" id="tx-table">
-    <thead><tr><th class="cb"><input type="checkbox" id="tx-all" aria-label="Select all shown"></th>${txSortHead('date', sort)}${txSortHead('payee', sort)}${txSortHead('cat', sort)}${multi ? txSortHead('who', sort, 'hide-sm detail-only') : ''}${txSortHead('acct', sort, 'hide-sm')}${txSortHead('amount', sort, 'num')}</tr></thead>
+    <thead><tr><th class="cb"><input type="checkbox" id="tx-all" aria-label="Select all shown" ${allTicked ? 'checked' : ''}></th>${txSortHead('date', sort)}${txSortHead('payee', sort)}${txSortHead('cat', sort)}${multi ? txSortHead('who', sort, 'hide-sm detail-only') : ''}${txSortHead('acct', sort, 'hide-sm')}${txSortHead('amount', sort, 'num')}</tr></thead>
     <tbody>${shown.map(t => {
       const who = personOf(t);
       return `<tr data-id="${t.id}" class="${isUncat(t) ? 'needs' : ''}">
-      <td class="cb"><input type="checkbox" class="tx-cb" value="${t.id}" aria-label="Select"></td>
+      <td class="cb"><input type="checkbox" class="tx-cb" value="${t.id}" aria-label="Select" ${txSel().has(t.id) ? 'checked' : ''}></td>
       <td class="nowrap muted tx-date">${dateLabel(t.date)}${t.reconciled ? ' <span class="rec" title="Reconciled">✓</span>' : ''}<span class="tx-acct-sm"> · ${esc(acctById(t.accountId)?.name || '—')}</span></td>
       <td class="tx-payee"><span class="payee-line"><button class="linklike" data-edit-txn="${t.id}">${esc(t.payee || '(no description)')}</button>${t.attachments?.length ? ' <span class="clip" title="Has a receipt">⎘</span>' : ''}<button class="flag-btn ${t.flag ? 'on' : ''}" data-act="tx-flag" data-id="${t.id}" aria-pressed="${t.flag ? 'true' : 'false'}" aria-label="${t.flag ? 'Flagged. Clear the flag' : 'Flag to come back to'}" title="${t.flag ? 'Flagged. Click to clear' : 'Not sure what this was? Flag it to come back to'}">${FLAG_ICON}</button></span>
         ${memoWorthShowing(t) || t.tags?.length ? `<div class="tx-meta">${(t.tags || []).map(x => `<button class="tagchip" data-tagfilter="${esc(x)}">#${esc(x)}</button>`).join('')}${memoWorthShowing(t) ? `<span class="muted small">${esc(t.memo)}</span>` : ''}</div>` : ''}</td>
@@ -6424,7 +6430,7 @@ function armAutoLock() {
 ['mousemove', 'keydown', 'mousedown', 'touchstart', 'wheel'].forEach(ev => document.addEventListener(ev, debounce(armAutoLock, 1000), { passive: true }));
 function lockNow() {
   if (!Store.key || $('.lock-screen')) return;
-  UI.sticky = {}; UI.sorts = {};   // filters and column sorts start fresh after a lock
+  UI.sticky = {}; UI.sorts = {}; UI.txSel = null;   // filters, column sorts and ticked rows start fresh after a lock
   ciReset();        // and so does a check-in
   closeTalk(); Object.assign(TALK, { draft: null, heard: '', last: null, ai: null, queue: [], aiThread: null }); UI.talkCtx = null; aiCancel(); aiThreadForget();
   if ($('#present')) { $('#present').remove(); document.body.classList.remove('presenting'); }
@@ -6472,7 +6478,7 @@ const ACTIONS = {
     const sort = route().params.sort;   // the sort order isn't a filter, so it stays
     go(`#/transactions?m=all${sort ? `&sort=${encodeURIComponent(sort)}` : ''}`);
   },
-  'tx-select': () => { UI.txSelect = !UI.txSelect; if (!UI.txSelect) { $$('.tx-cb:checked').forEach(c => { c.checked = false; }); } render(); },
+  'tx-select': () => { UI.txSelect = !UI.txSelect; if (!UI.txSelect) txSel().clear(); render(); },
   'more-money-date': () => { closeModal(true); ACTIONS['money-date'](); },
   'money-date': el => startMoneyDate(el?.dataset.mk),
   'privacy': () => { state.settings.privacy = !state.settings.privacy; commit({ silent: true }); render(); },
@@ -6524,18 +6530,18 @@ const ACTIONS = {
     commit(); toast(`Updated ${n} budget${n === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
   },
   'bulk-cat': () => {
-    const ids = new Set($$('.tx-cb:checked').map(c => c.value)), cat = $('#bulk-cat').value || null;
+    const ids = new Set(txSelIds()), cat = $('#bulk-cat').value || null;
     let unflagged = 0;
     state.transactions.forEach(t => { if (ids.has(t.id)) { t.categoryId = cat; delete t.splits; if (cat && t.flag) { delete t.flag; unflagged++; } } });
     commit(); toast(`Updated ${ids.size} transaction${ids.size === 1 ? '' : 's'}${unflagged ? ` and cleared ${unflagged} flag${unflagged === 1 ? '' : 's'}` : ''}.`, { label: 'Undo', fn: undo });
   },
   'bulk-who': () => {
-    const ids = new Set($$('.tx-cb:checked').map(c => c.value)), who = $('#bulk-who').value;
+    const ids = new Set(txSelIds()), who = $('#bulk-who').value;
     state.transactions.forEach(t => { if (ids.has(t.id)) { if (who) t.person = who; else delete t.person; } });
     commit(); toast(`Updated ${ids.size} transaction${ids.size === 1 ? '' : 's'}.`);
   },
   'bulk-tag': () => {
-    const ids = new Set($$('.tx-cb:checked').map(c => c.value)), tags = parseTags($('#bulk-tag').value);
+    const ids = new Set(txSelIds()), tags = parseTags($('#bulk-tag').value);
     if (!tags.length) return toast('Type a tag first.');
     state.transactions.forEach(t => { if (ids.has(t.id)) t.tags = [...new Set([...(t.tags || []), ...tags])]; });
     commit(); toast(`Tagged ${ids.size} transaction${ids.size === 1 ? '' : 's'}.`);
@@ -6548,17 +6554,17 @@ const ACTIONS = {
     if (first) toast('Flagged. Flagged transactions collect under Transactions › flagged, and on Overview, until you pick a category.');
   },
   'bulk-flag': () => {
-    const ids = new Set($$('.tx-cb:checked').map(c => c.value));
+    const ids = new Set(txSelIds());
     state.transactions.forEach(t => { if (ids.has(t.id)) t.flag = true; });
     commit(); toast(`Flagged ${ids.size} transaction${ids.size === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
   },
   'bulk-unflag': () => {
-    const ids = new Set($$('.tx-cb:checked').map(c => c.value));
+    const ids = new Set(txSelIds());
     state.transactions.forEach(t => { if (ids.has(t.id)) delete t.flag; });
     commit(); toast(`Cleared ${ids.size} flag${ids.size === 1 ? '' : 's'}.`, { label: 'Undo', fn: undo });
   },
   'bulk-del': async () => {
-    const ids = new Set($$('.tx-cb:checked').map(c => c.value));
+    const ids = new Set(txSelIds());
     if (!await confirmBox('Delete transactions', `Delete ${ids.size} transaction${ids.size === 1 ? '' : 's'}?`, 'Delete', true)) return;
     state.transactions = state.transactions.filter(t => !ids.has(t.id)); commit(); toast('Deleted.', { label: 'Undo', fn: undo });
   },
@@ -6725,10 +6731,15 @@ function applyTheme() {
   for (const m of document.querySelectorAll('meta[name="theme-color"]'))
     m.content = THEME_COLORS[look][(t === 'auto' ? /dark/.test(m.media) : t === 'dark') ? 1 : 0];
 }
+/* The ticked transactions, kept outside the page so sorting or redrawing the list doesn't untick them */
+const txSel = () => (UI.txSel ||= new Set());
+const txSelIds = () => [...txSel()].filter(id => state.transactions.some(t => t.id === id));
 function updateBulk() {
-  const n = $$('.tx-cb:checked').length, b = $('#bulk');
+  const n = txSel().size, b = $('#bulk');
   if (!b) return;
   b.hidden = !n; $('#bulk-count').textContent = `${n} selected`;
+  const all = $('#tx-all'), cbs = $$('.tx-cb');
+  if (all) all.checked = cbs.length > 0 && cbs.every(c => c.checked);
 }
 
 document.addEventListener('click', e => {
@@ -6817,8 +6828,8 @@ document.addEventListener('change', e => {
   // Household: let the dropdown or name box finish (and lose focus) before the page is redrawn, so it isn't pulled out from under it
   if (d.memberRole) { const m = state.settings.members.find(x => x.id === d.memberRole); if (m) { if (el.value === 'adult') delete m.role; else m.role = el.value; if (isTouch()) el.blur(); commit({ silent: true }); setTimeout(render, 0); } return; }
   if (d.member) { const m = state.settings.members.find(x => x.id === d.member); if (m && el.value.trim()) { m.name = el.value.trim(); commit({ silent: true }); setTimeout(render, 0); } return; }
-  if (el.classList.contains('tx-cb')) return updateBulk();
-  if (el.id === 'tx-all') { $$('.tx-cb').forEach(c => c.checked = el.checked); return updateBulk(); }
+  if (el.classList.contains('tx-cb')) { if (el.checked) txSel().add(el.value); else txSel().delete(el.value); return updateBulk(); }
+  if (el.id === 'tx-all') { $$('.tx-cb').forEach(c => { c.checked = el.checked; if (el.checked) txSel().add(c.value); else txSel().delete(c.value); }); return updateBulk(); }
 });
 const searchDebounced = debounce(v => setParam('q', v), 300);
 const notesDebounced = debounce((mk, v) => { (state.reviews[mk] = state.reviews[mk] || {}).notes = v; commit({ silent: true }); }, 500);
@@ -9010,7 +9021,7 @@ function talkCtx() {
   const page = route().page, c = UI.talkCtx, fresh = c && Date.now() - c.at < 20 * 60 * 1000;
   const t = fresh && c.kind === 'txn' ? state.transactions.find(x => x.id === c.id) || null : null;
   const a = fresh && c.kind === 'acct' ? acctById(c.id) || null : null;
-  const sel = page === 'transactions' ? $$('.tx-cb:checked').map(x => x.value).filter(id => state.transactions.some(t => t.id === id)) : [];
+  const sel = page === 'transactions' ? txSelIds() : [];
   return { page, t, a, sel };
 }
 /* The panel keeps its own conversation; the check-in page keeps its own */

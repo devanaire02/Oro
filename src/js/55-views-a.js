@@ -235,6 +235,10 @@ VIEWS.transactions = p => {
   const limit = +p.limit || 250;
   const shown = list.slice(0, limit);
   UI.txVisible = list.map(t => t.id);   // what "the Jewel Osco one" means to Talk while this list is on screen
+  // ticked rows stay ticked through sorting, Show more and edits; ones no longer in the list (filtered out, re-filed off
+  // the flagged list, deleted) drop out of the selection
+  { const inList = new Set(UI.txVisible); for (const id of txSel()) if (!inList.has(id)) txSel().delete(id); }
+  const allTicked = shown.length > 0 && shown.every(t => txSel().has(t.id));
   const months = [...new Set(state.transactions.map(t => monthKey(t.date)))].sort().reverse();
   if (!months.includes(thisMonth())) months.unshift(thisMonth());
   // Totals leave out transfers (credit card payments, moves between your own accounts), like Overview and Cash flow do
@@ -277,11 +281,11 @@ VIEWS.transactions = p => {
     <button class="btn small ghost danger-text" data-act="bulk-del">Delete</button>
   </div>
   ${shown.length ? `<div class="scroll-table"><table class="ledger tx-table ${UI.txSelect ? 'selecting' : ''}" id="tx-table">
-    <thead><tr><th class="cb"><input type="checkbox" id="tx-all" aria-label="Select all shown"></th>${txSortHead('date', sort)}${txSortHead('payee', sort)}${txSortHead('cat', sort)}${multi ? txSortHead('who', sort, 'hide-sm detail-only') : ''}${txSortHead('acct', sort, 'hide-sm')}${txSortHead('amount', sort, 'num')}</tr></thead>
+    <thead><tr><th class="cb"><input type="checkbox" id="tx-all" aria-label="Select all shown" ${allTicked ? 'checked' : ''}></th>${txSortHead('date', sort)}${txSortHead('payee', sort)}${txSortHead('cat', sort)}${multi ? txSortHead('who', sort, 'hide-sm detail-only') : ''}${txSortHead('acct', sort, 'hide-sm')}${txSortHead('amount', sort, 'num')}</tr></thead>
     <tbody>${shown.map(t => {
       const who = personOf(t);
       return `<tr data-id="${t.id}" class="${isUncat(t) ? 'needs' : ''}">
-      <td class="cb"><input type="checkbox" class="tx-cb" value="${t.id}" aria-label="Select"></td>
+      <td class="cb"><input type="checkbox" class="tx-cb" value="${t.id}" aria-label="Select" ${txSel().has(t.id) ? 'checked' : ''}></td>
       <td class="nowrap muted tx-date">${dateLabel(t.date)}${t.reconciled ? ' <span class="rec" title="Reconciled">✓</span>' : ''}<span class="tx-acct-sm"> · ${esc(acctById(t.accountId)?.name || '—')}</span></td>
       <td class="tx-payee"><span class="payee-line"><button class="linklike" data-edit-txn="${t.id}">${esc(t.payee || '(no description)')}</button>${t.attachments?.length ? ' <span class="clip" title="Has a receipt">⎘</span>' : ''}<button class="flag-btn ${t.flag ? 'on' : ''}" data-act="tx-flag" data-id="${t.id}" aria-pressed="${t.flag ? 'true' : 'false'}" aria-label="${t.flag ? 'Flagged. Clear the flag' : 'Flag to come back to'}" title="${t.flag ? 'Flagged. Click to clear' : 'Not sure what this was? Flag it to come back to'}">${FLAG_ICON}</button></span>
         ${memoWorthShowing(t) || t.tags?.length ? `<div class="tx-meta">${(t.tags || []).map(x => `<button class="tagchip" data-tagfilter="${esc(x)}">#${esc(x)}</button>`).join('')}${memoWorthShowing(t) ? `<span class="muted small">${esc(t.memo)}</span>` : ''}</div>` : ''}</td>
