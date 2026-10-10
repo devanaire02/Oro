@@ -455,6 +455,7 @@ async function boot() {
   if (isCompanion()) await syncLoad();
   applyTheme();
   resetHistory();
+  await aiRecLoad().catch(() => {}); await aiThreadRestore();   // carry on with Claude after a refresh
   window.addEventListener('hashchange', () => { if ($('#present')) endMoneyDate(); render(); });
   render();
   if (!payload || (state.version || 0) < 2 || (hasFolder() && !state.meta.saveNo)) persist();   // first numbered save

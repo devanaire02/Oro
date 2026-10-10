@@ -305,6 +305,30 @@ function aiThreadAdd(text, said, reply, T, mode) {
   th.at = Date.now();
   TALK.aiThread = th;
 }
+/* A refresh (or Chrome reloading the app) shouldn't lose the conversation: the thread, Claude's last answer or the
+   Try again card are kept for this window only (sessionStorage), locked with the passphrase like the key and the log,
+   and brought back after unlocking. Locking, 20 minutes, or turning Claude help off still forgets them. */
+const AI_THREAD_KEY = 'oro.ai.thread';
+async function aiThreadSave() {
+  try {
+    const th = aiThreadLive(), a = TALK.ai && ['answer', 'error'].includes(TALK.ai.status) ? (({ status, text, mode, answer, error, cost, model, T }) => ({ status, text, mode, answer, error, cost, model, T }))(TALK.ai) : null;
+    if (!th && !a) return aiThreadForget();
+    sessionStorage.setItem(AI_THREAD_KEY, JSON.stringify(await aiSeal(JSON.stringify({ th, a, last: TALK.lastAiText || '', at: Date.now() }))));
+  } catch (e) { /* a convenience */ }
+}
+async function aiThreadRestore() {
+  let raw = null;
+  try { raw = sessionStorage.getItem(AI_THREAD_KEY); } catch (e) { return; }
+  if (!raw) return;
+  try {
+    const { th, a, last, at } = JSON.parse(await aiOpen(JSON.parse(raw)));
+    if (!aiReady() || Date.now() - (at || 0) >= AI_THREAD_MS) return aiThreadForget();
+    if (th && Date.now() - th.at < AI_THREAD_MS) TALK.aiThread = th;
+    if (a && !TALK.ai) TALK.ai = a;
+    if (last && !TALK.lastAiText) TALK.lastAiText = last;
+  } catch (e) { aiThreadForget(); }
+}
+function aiThreadForget() { try { sessionStorage.removeItem(AI_THREAD_KEY); } catch (e) { /* none */ } }
 function aiThreadLines(th) {
   if (!th) return '';
   return `Earlier in this conversation (most recent last):
@@ -571,6 +595,7 @@ async function aiTalkRun() {
     if (!(e instanceof AiError)) console.error(e);
   }
   if (document.body.classList.contains('locked')) { TALK.ai = null; TALK.draft = null; return; }
+  aiThreadSave();
   render();
 }
 function aiTalkCardHtml() {
@@ -590,7 +615,7 @@ document.addEventListener('click', e => {
   const a = el.dataset.talk;
   if (a === 'ai-ask' || a === 'ai-retry') { if (TALK.ai) { TALK.ai.status = 'offer'; aiTalkRun(); } return; }
   if (a === 'ai-cancel') { AI.seq++; aiCancel(); TALK.ai = null; return paintTalk(); }
-  if (a === 'ai-dismiss') { TALK.ai = null; return paintTalk(); }
+  if (a === 'ai-dismiss') { TALK.ai = null; aiThreadSave(); return paintTalk(); }
   if (a === 'ai-settings') { closeTalk(); go('#/data'); setTimeout(() => $('#ai-settings')?.scrollIntoView({ block: 'start' }), 60); }
 });
 
@@ -847,7 +872,7 @@ document.addEventListener('change', e => {
   const k = el.dataset.aiPref;
   setAiPref(k, el.type === 'checkbox' ? el.checked : k === 'cap' ? Number(el.value) : el.value);
   if (k === 'model') AI.model = null;
-  if (k === 'on' && !el.checked) { aiCancel(); TALK.ai = null; CI.ai = null; }
+  if (k === 'on' && !el.checked) { aiCancel(); TALK.ai = null; CI.ai = null; TALK.aiThread = null; aiThreadForget(); }
   render();
 });
 document.addEventListener('DOMContentLoaded', () => setTimeout(aiRecLoad, 0));
