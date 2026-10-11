@@ -1315,3 +1315,12 @@ body.talk-open .main-wrap { margin-right: 390px; }
 .nc-inline[hidden] { display: none; }
 .nc-inline .field.wide { grid-column: 1 / -1; }
 .nc-for { margin: 0 0 10px; }
+
+/* the phone getting the Mac's data: what came in */
+.sync-result p { margin: 0 0 8px; }
+.sync-big { font: 600 15px var(--sans); color: var(--muted); margin: 0 0 2px !important; }
+.sync-big strong { font: 500 34px/1.1 var(--serif); color: var(--ink); margin-left: 4px; }
+.sync-when { margin-bottom: 12px !important; }
+.sync-tips, .sync-notes { margin: 6px 0 0; padding-left: 1.1em; font-size: 14px; }
+.sync-tips li, .sync-notes li { margin-bottom: 6px; }
+.sync-busy { display: flex; align-items: center; gap: 10px; }

@@ -4138,7 +4138,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '16829c3';
+const ORO_BUILD = 'c0546f3';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -7254,12 +7254,41 @@ function fieldPrevs(v, refs) {
 }
 const changesWord = n => `${n} change${n === 1 ? '' : 's'}`;
 
+/* The file picker stays on the page until you've picked: iOS can throw away a loose one while the Files window is open,
+   and then nothing happens when you pick. Picking shows "Opening…" straight away, and the result stays up until OK. */
 function syncPickFile() {
+  SYNC.picker?.remove();
   const inp = document.createElement('input'); inp.type = 'file';
-  inp.onchange = async () => { const f = inp.files[0]; if (f) await syncOpenText(await readFileAsText(f), f.name); };
+  inp.setAttribute('aria-hidden', 'true'); inp.tabIndex = -1;
+  inp.style.cssText = 'position:fixed;left:-200px;top:0;width:1px;height:1px;opacity:0;';
+  document.body.appendChild(inp); SYNC.picker = inp;
+  const done = () => { inp.remove(); if (SYNC.picker === inp) SYNC.picker = null; };
+  inp.addEventListener('cancel', done);
+  inp.onchange = async () => {
+    const f = inp.files[0]; done();
+    if (!f) return;
+    openModal({ title: 'Opening your Mac’s data', id: 'sync-busy', body: `<p class="sync-busy"><span class="ai-dots" aria-hidden="true"><i></i><i></i><i></i></span> Reading ${esc(f.name)}…</p>`, actions: '' });
+    try { await syncOpenText(await readFileAsText(f), f.name, f); }
+    catch (e) { toast(e.message || 'That file couldn’t be read.'); }
+    finally { if ($('#modal .modal[data-id="sync-busy"]')) closeModal(true); }
+  };
   inp.click();
 }
-async function syncOpenText(text, fileName = '') {
+const fileDate = f => f?.lastModified ? whenLabel(new Date(f.lastModified).toISOString()) : '';
+/* What came in: the Mac's save number and time, what this device had before, and anything else worth knowing */
+function syncResult({ same, nNo, nAt, prev, notes, file }) {
+  const dev = deviceLabel();
+  const big = `<p class="sync-big">Mac save <strong>${nNo || '—'}</strong></p><p class="muted sync-when">Saved on your Mac ${whenLabel(nAt)}</p>`;
+  const before = prev?.macSaved ? `<p class="muted small">Before: ${saveLabel(prev.macSaveNo, prev.macSaved)}</p>` : '';
+  const body = same
+    ? `${big}<p>This ${dev} already had this copy. If your Mac shows a higher save number, iCloud Drive hasn’t brought the newer file here yet${file?.lastModified ? ` (the file it gave this ${dev} is dated ${fileDate(file)})` : ''}.</p>
+       <ul class="sync-tips"><li>Open the Files app › iCloud Drive › Ọrọ̀ › data, pull down to refresh, and wait for oro.json to finish downloading. Then choose it again.</li><li>Or AirDrop it: on the Mac, Finder › Ọrọ̀ › data › right-click oro.json › Share › AirDrop to this ${dev}, then choose it from Downloads.</li></ul>`
+    : `${big}${before}<p>This ${dev} now has your Mac’s data as of that save. When nothing newer has been saved, your Mac’s sidebar shows the same number.</p>`;
+  openModal({ title: same ? 'Same copy as before' : 'Updated from your Mac', id: 'sync-result',
+    body: `<div class="sync-result">${body}${notes.length ? `<ul class="sync-notes">${notes.map(n => `<li>${n}</li>`).join('')}</ul>` : ''}</div>`,
+    actions: `${same ? '<button class="btn ghost" data-act="sync-open">Choose again</button>' : ''}<button class="btn primary" data-close>OK</button>` });
+}
+async function syncOpenText(text, fileName = '', file = null) {
   let parsed;
   try { parsed = JSON.parse(text); } catch (e) { return toast('That isn’t an Ọrọ̀ data file. Choose Ọrọ̀ › data › oro.json.'); }
   if (parsed.oroChanges || /^oro-changes-/i.test(fileName)) return toast('That’s a change file. Choose Ọrọ̀ › data › oro.json instead.');
@@ -7293,15 +7322,14 @@ async function syncOpenText(text, fileName = '') {
   await syncSave();
   closeModal(true); render();
   const same = !!prev?.macSaved && (nNo && prev.macSaveNo ? nNo === prev.macSaveNo : nAt === prev.macSaved);
-  let msg = same ? `This is the same copy this ${dev} already had, your Mac’s ${saveLabel(nNo, nAt)}. If your Mac has saved since, iCloud Drive hasn’t brought the new one here yet: open the Files app, go to Ọrọ̀ › data, let oro.json finish downloading, then try again.`
-    : `Opened your Mac’s ${saveLabel(nNo, nAt)}.`;
+  const notes = [];
   const lm = next.meta?.lastMerge;
-  if (lm && (!prev?.macSaved || lm.at > prev.macSaved)) msg += ` It includes ${changesWord(lm.applied)} from your ${lm.device || dev}, added on your Mac ${whenLabel(lm.at)}${lm.conflicts ? `; your Mac kept its own version of ${lm.conflicts === 1 ? 'one item' : lm.conflicts + ' items'}${lm.kept?.length ? ` (${lm.kept.slice(0, 2).join(', ')}${lm.kept.length > 2 ? '…' : ''})` : ''}` : ''}.`;
+  if (lm && (!prev?.macSaved || lm.at > prev.macSaved)) notes.push(`It includes ${changesWord(lm.applied)} from your ${esc(lm.device || dev)}, added on your Mac ${whenLabel(lm.at)}${lm.conflicts ? `; your Mac kept its own version of ${lm.conflicts === 1 ? 'one item' : lm.conflicts + ' items'}${lm.kept?.length ? ` (${lm.kept.slice(0, 2).map(esc).join(', ')}${lm.kept.length > 2 ? '…' : ''})` : ''}` : ''}.`);
   const left = syncPending().length;
-  if (left) msg += ` ${changesWord(left)} made here still ${left === 1 ? 'needs' : 'need'} to go to your Mac.`;
-  if (res?.conflicts.length) msg += ` Your Mac had also changed ${res.conflicts.length === 1 ? 'one item' : res.conflicts.length + ' items'} you edited here (${res.conflicts.slice(0, 2).join(', ')}${res.conflicts.length > 2 ? '…' : ''}), so its version was kept.`;
-  toast(msg);
+  if (left) notes.push(`${changesWord(left)} made here still ${left === 1 ? 'needs' : 'need'} to go to your Mac.`);
+  if (res?.conflicts.length) notes.push(`Your Mac had also changed ${res.conflicts.length === 1 ? 'one item' : res.conflicts.length + ' items'} you edited here (${res.conflicts.slice(0, 2).map(esc).join(', ')}${res.conflicts.length > 2 ? '…' : ''}), so its version was kept.`);
   if (!prev) go('#/overview');
+  syncResult({ same, nNo, nAt, prev, notes, file });
   return carried;
 }
 
