@@ -104,11 +104,16 @@ function render() {
   let html;
   try { html = VIEWS[page](params); }
   catch (e) { console.error(e); html = `<div class="notice bad">This page hit an error: ${esc(e.message)}. Your data is safe; try another page or reload.</div>`; }
-  $('#main').innerHTML = html;
-  for (const t of $$('#main table.ledger')) {
-    if (t.parentElement.classList.contains('scroll-table')) continue;
-    const w = document.createElement('div'); w.className = 'scroll-table'; t.replaceWith(w); w.appendChild(t);
-  }
+  // A redraw while you're typing in a box (search as you type, the next box after Budget or Settings, a background
+  // save or merge) draws the page around that box and leaves the box itself alone: a new box makes the iPhone's
+  // keyboard flip back to letters or close, and moves the cursor. Not when the redraw comes from finishing that box
+  // (Enter, Go, leaving it), so the page can show the result.
+  const lc = UI.lastCommit, committed = lc && Date.now() - lc.at < 1000 && (lc.el === ae || lc.el?.contains?.(ae));
+  const keep = focusSel && isTypingField(ae) && !committed && $('#main')?.contains(ae) ? ae : null;
+  const kept = keep && patchAround($('#main'), html, keep, focusSel);
+  if (!kept) $('#main').innerHTML = html;
+  if (kept) focusSel = null;
+  wrapTables($('#main'));
   decorateSortable($('#main'));   // headings you can click to sort (51-sort.js)
   if (UI.navCheckin !== (state.settings.checkin !== false)) buildShell();   // Check-in was turned on or off
   $$('.nav a').forEach(a => a.classList.toggle('active', a.dataset.page === page));
@@ -127,6 +132,41 @@ function render() {
   else if (UI.txSel?.size) UI.txSel.clear();   // leaving Transactions lets go of the selection
   paintTalk();
   if (keepY) keepScroll(keepY);
+}
+/* Put the newly drawn page in place around one element that stays exactly where it is (same node, still focused).
+   Only when that element sits at the same depth, under the same kinds of elements, in the new page; otherwise false. */
+const isTypingField = el => !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !/^(checkbox|radio|file|button|submit|reset|image|range|color|date|month|week|time|datetime-local|hidden)$/i.test(el.type)));
+document.addEventListener('change', e => { UI.lastCommit = { el: e.target, at: Date.now() }; }, true);
+document.addEventListener('submit', e => { UI.lastCommit = { el: e.target, at: Date.now() }; }, true);
+/* Tables scroll sideways inside their own box on narrow screens */
+function wrapTables(root) {
+  for (const t of root.querySelectorAll('table.ledger')) {
+    if (t.parentElement.classList.contains('scroll-table')) continue;
+    const w = document.createElement('div'); w.className = 'scroll-table'; t.replaceWith(w); w.appendChild(t);
+  }
+}
+function patchAround(root, html, keep, sel) {
+  const tpl = document.createElement('template'); tpl.innerHTML = html;
+  wrapTables(tpl.content);   // as the page will be, so the two line up
+  let twin = null; try { twin = tpl.content.querySelector(sel); } catch (e) { return false; }
+  if (!twin || twin.tagName !== keep.tagName) return false;
+  const chain = (el, top) => { const out = []; for (let x = el; x && x !== top; x = x.parentNode) out.unshift(x); return out; };
+  const olds = chain(keep, root), news = chain(twin, tpl.content);
+  if (olds.length !== news.length || olds.some((o, i) => o.tagName !== news[i].tagName)) return false;
+  const syncAttrs = (o, n, skip) => {
+    for (const a of [...o.attributes]) if (!n.hasAttribute(a.name) && a.name !== skip) o.removeAttribute(a.name);
+    for (const a of [...n.attributes]) if (a.name !== skip && o.getAttribute(a.name) !== a.value) o.setAttribute(a.name, a.value);
+  };
+  let po = root, pn = tpl.content;
+  olds.forEach((co, i) => {
+    const cn = news[i];
+    for (const x of [...po.childNodes]) if (x !== co) x.remove();
+    const sibs = [...pn.childNodes], at = sibs.indexOf(cn);
+    co.before(...sibs.slice(0, at)); co.after(...sibs.slice(at + 1));
+    syncAttrs(co, cn, co === keep && keep.value !== keep.defaultValue ? 'value' : null);   // what you've typed stays
+    po = co; pn = cn;
+  });
+  return true;
 }
 /* On the iPhone and iPad, Safari can jump to the top of the page when the field you just used (a dropdown, a name box) is
    replaced as the page is redrawn. Put the page back where it was, unless you've started scrolling or typing since. */

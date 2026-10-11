@@ -107,7 +107,14 @@ function applySort(table) {
     }
     return a.dataset.ord - b.dataset.ord;
   });
-  for (const r of [...movable, ...fixed]) tbody.appendChild(r);
+  const want = [...movable, ...fixed];
+  // Only move rows when the order changes, and never the row you're typing in (moving it would drop the keyboard):
+  // the other rows go around it
+  if (want.some((r, i) => rows[i] !== r)) {
+    const here = want.find(r => r.contains(document.activeElement));
+    if (here) { const at = want.indexOf(here); here.before(...want.slice(0, at)); here.after(...want.slice(at + 1)); }
+    else for (const r of want) tbody.appendChild(r);
+  }
   for (const b of table.querySelectorAll('thead .th-sort[data-sort-col]')) {
     const on = s && +b.dataset.sortCol === s.col, cell = b.closest('th');
     if (on) cell.setAttribute('aria-sort', s.dir === 'asc' ? 'ascending' : 'descending'); else cell.removeAttribute('aria-sort');

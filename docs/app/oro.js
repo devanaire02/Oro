@@ -3942,11 +3942,16 @@ function render() {
   let html;
   try { html = VIEWS[page](params); }
   catch (e) { console.error(e); html = `<div class="notice bad">This page hit an error: ${esc(e.message)}. Your data is safe; try another page or reload.</div>`; }
-  $('#main').innerHTML = html;
-  for (const t of $$('#main table.ledger')) {
-    if (t.parentElement.classList.contains('scroll-table')) continue;
-    const w = document.createElement('div'); w.className = 'scroll-table'; t.replaceWith(w); w.appendChild(t);
-  }
+  // A redraw while you're typing in a box (search as you type, the next box after Budget or Settings, a background
+  // save or merge) draws the page around that box and leaves the box itself alone: a new box makes the iPhone's
+  // keyboard flip back to letters or close, and moves the cursor. Not when the redraw comes from finishing that box
+  // (Enter, Go, leaving it), so the page can show the result.
+  const lc = UI.lastCommit, committed = lc && Date.now() - lc.at < 1000 && (lc.el === ae || lc.el?.contains?.(ae));
+  const keep = focusSel && isTypingField(ae) && !committed && $('#main')?.contains(ae) ? ae : null;
+  const kept = keep && patchAround($('#main'), html, keep, focusSel);
+  if (!kept) $('#main').innerHTML = html;
+  if (kept) focusSel = null;
+  wrapTables($('#main'));
   decorateSortable($('#main'));   // headings you can click to sort (51-sort.js)
   if (UI.navCheckin !== (state.settings.checkin !== false)) buildShell();   // Check-in was turned on or off
   $$('.nav a').forEach(a => a.classList.toggle('active', a.dataset.page === page));
@@ -3965,6 +3970,41 @@ function render() {
   else if (UI.txSel?.size) UI.txSel.clear();   // leaving Transactions lets go of the selection
   paintTalk();
   if (keepY) keepScroll(keepY);
+}
+/* Put the newly drawn page in place around one element that stays exactly where it is (same node, still focused).
+   Only when that element sits at the same depth, under the same kinds of elements, in the new page; otherwise false. */
+const isTypingField = el => !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !/^(checkbox|radio|file|button|submit|reset|image|range|color|date|month|week|time|datetime-local|hidden)$/i.test(el.type)));
+document.addEventListener('change', e => { UI.lastCommit = { el: e.target, at: Date.now() }; }, true);
+document.addEventListener('submit', e => { UI.lastCommit = { el: e.target, at: Date.now() }; }, true);
+/* Tables scroll sideways inside their own box on narrow screens */
+function wrapTables(root) {
+  for (const t of root.querySelectorAll('table.ledger')) {
+    if (t.parentElement.classList.contains('scroll-table')) continue;
+    const w = document.createElement('div'); w.className = 'scroll-table'; t.replaceWith(w); w.appendChild(t);
+  }
+}
+function patchAround(root, html, keep, sel) {
+  const tpl = document.createElement('template'); tpl.innerHTML = html;
+  wrapTables(tpl.content);   // as the page will be, so the two line up
+  let twin = null; try { twin = tpl.content.querySelector(sel); } catch (e) { return false; }
+  if (!twin || twin.tagName !== keep.tagName) return false;
+  const chain = (el, top) => { const out = []; for (let x = el; x && x !== top; x = x.parentNode) out.unshift(x); return out; };
+  const olds = chain(keep, root), news = chain(twin, tpl.content);
+  if (olds.length !== news.length || olds.some((o, i) => o.tagName !== news[i].tagName)) return false;
+  const syncAttrs = (o, n, skip) => {
+    for (const a of [...o.attributes]) if (!n.hasAttribute(a.name) && a.name !== skip) o.removeAttribute(a.name);
+    for (const a of [...n.attributes]) if (a.name !== skip && o.getAttribute(a.name) !== a.value) o.setAttribute(a.name, a.value);
+  };
+  let po = root, pn = tpl.content;
+  olds.forEach((co, i) => {
+    const cn = news[i];
+    for (const x of [...po.childNodes]) if (x !== co) x.remove();
+    const sibs = [...pn.childNodes], at = sibs.indexOf(cn);
+    co.before(...sibs.slice(0, at)); co.after(...sibs.slice(at + 1));
+    syncAttrs(co, cn, co === keep && keep.value !== keep.defaultValue ? 'value' : null);   // what you've typed stays
+    po = co; pn = cn;
+  });
+  return true;
 }
 /* On the iPhone and iPad, Safari can jump to the top of the page when the field you just used (a dropdown, a name box) is
    replaced as the page is redrawn. Put the page back where it was, unless you've started scrolling or typing since. */
@@ -4138,7 +4178,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = 'c0546f3';
+const ORO_BUILD = '997cf01';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -4330,7 +4370,14 @@ function applySort(table) {
     }
     return a.dataset.ord - b.dataset.ord;
   });
-  for (const r of [...movable, ...fixed]) tbody.appendChild(r);
+  const want = [...movable, ...fixed];
+  // Only move rows when the order changes, and never the row you're typing in (moving it would drop the keyboard):
+  // the other rows go around it
+  if (want.some((r, i) => rows[i] !== r)) {
+    const here = want.find(r => r.contains(document.activeElement));
+    if (here) { const at = want.indexOf(here); here.before(...want.slice(0, at)); here.after(...want.slice(at + 1)); }
+    else for (const r of want) tbody.appendChild(r);
+  }
   for (const b of table.querySelectorAll('thead .th-sort[data-sort-col]')) {
     const on = s && +b.dataset.sortCol === s.col, cell = b.closest('th');
     if (on) cell.setAttribute('aria-sort', s.dir === 'asc' ? 'ascending' : 'descending'); else cell.removeAttribute('aria-sort');
@@ -4636,7 +4683,7 @@ VIEWS.transactions = p => {
     <label class="field inline more"><span>Flag</span><select data-filter="flag"><option value="">Any</option><option value="1" ${p.flag ? 'selected' : ''}>Flagged only</option></select></label>
     ${tags.length ? `<label class="field inline more"><span>Tag</span><select data-filter="tag"><option value="">Any tag</option>${tags.map(t => `<option ${t === p.tag ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>` : ''}
     ${txSortSelect(sort, multi)}
-    <label class="field inline grow"><span>Search</span><input type="search" id="tx-search" data-filter="q" value="${esc(p.q || '')}" placeholder="Payee, memo, #tag, >100"></label>
+    <label class="field inline grow"><span>Search</span><input type="search" id="tx-search" data-filter="q" value="${esc(p.q || '')}" placeholder="Payee, memo, #tag, >100" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"></label>
     ${clearBtn('tx-clear-wide')}
     <div class="filters-sm"><button class="btn small ghost" data-act="tx-filters" aria-expanded="${fOpen ? 'true' : 'false'}">${fOpen ? 'Fewer filters' : 'More filters'}${nFilters ? ` · ${nFilters} on` : ''}</button>${clearBtn('')}${shown.length ? `<button class="btn small ghost" data-act="tx-select" aria-pressed="${UI.txSelect ? 'true' : 'false'}">${UI.txSelect ? 'Done selecting' : 'Select'}</button>` : ''}</div>
   </div>
