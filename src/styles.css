@@ -162,7 +162,9 @@ body.simple .detail-only { display: none !important; }
 .chip.flat { background: var(--rule); color: var(--muted); }
 
 /* ---------- KPI tiles ---------- */
-.kpis-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
+.kpis-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
+.kpis-row .kpi { grid-column: span 2; }   /* this month: money in, spent, kept */
+.kpis-row .kpi-bal { grid-column: span 3; }   /* balances: cash on hand, investments */
 .kpi { background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius); padding: 14px 16px 12px; display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto auto; column-gap: 8px; box-shadow: var(--shadow); min-width: 0; }
 .kpi-label { grid-column: 1 / -1; color: var(--muted); font-size: 12.5px; }
 .kpi-value { font-family: var(--serif); font-size: 25px; font-weight: 600; text-align: left; margin: 2px 0; }
@@ -601,6 +603,8 @@ body.presenting { overflow: hidden; }
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
   .kpis-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpis-row .kpi, .kpis-row .kpi-bal { grid-column: auto; }
+  .kpis-row .kpi-kept { grid-column: 1 / -1; }   /* money in and spent side by side, what was kept under both */
   .plan-layout { grid-template-columns: 1fr; }
   .cols.wide-left { grid-template-columns: 1fr; }
 }
