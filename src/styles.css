@@ -336,6 +336,18 @@ body.simple .detail-only { display: none !important; }
 .sched .subtotal th, .sched .subtotal td { font-weight: 600; }
 .sched .net th, .sched .net td { font-weight: 700; }
 .tax-side { display: flex; flex-direction: column; gap: 12px; }
+.tax-side .interest-from { display: block; margin-top: 3px; }
+.form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.tax-person { border: 0; padding: 0; margin: 0; min-width: 0; }   /* a fieldset would otherwise widen the page on a small iPhone */
+.tax-person legend { padding: 0; margin-bottom: 6px; font-weight: 600; }
+.aftertax h3 { margin: 18px 0 10px; font-size: 16px; }
+.aftertax .aftertax-table { max-width: 560px; margin: 12px 0; }
+.aftertax .tax-how { margin: 6px 0 4px; }
+.aftertax .tax-how .sched { max-width: 560px; margin: 8px 0; }
+.rate-compare { display: grid; gap: 8px; max-width: 560px; margin: 0 0 12px; }
+.rate-row { display: grid; grid-template-columns: 110px minmax(0, 1fr) 60px; gap: 12px; align-items: center; font-size: 14px; }
+.rate-row strong { text-align: right; }
+.rate-row.avg .meter span { background: var(--pos); }
 .member-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-bottom: 12px; max-width: 420px; }
 .member-row { display: flex; gap: 10px; align-items: center; }
 .member-row input { flex: 1; min-width: 0; }   /* shrinks on a small iPhone instead of widening the page */
@@ -1328,3 +1340,4 @@ body.talk-open .main-wrap { margin-right: 390px; }
 .sync-tips, .sync-notes { margin: 6px 0 0; padding-left: 1.1em; font-size: 14px; }
 .sync-tips li, .sync-notes li { margin-bottom: 6px; }
 .sync-busy { display: flex; align-items: center; gap: 10px; }
+@media (max-width: 640px) { .form-grid.three { grid-template-columns: 1fr; } .rate-row { grid-template-columns: 92px minmax(0, 1fr) 52px; gap: 8px; } }

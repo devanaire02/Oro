@@ -176,10 +176,19 @@ const ACTIONS = {
   'export-tax': el => {
     const year = +el.dataset.year, q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const lines = [`Ọrọ̀ tax summary for ${year}`, ''];
+    const X = taxEstimate(year), src = k => (X.actual[k] != null ? 'actual' : 'estimate'), from = f => (f === '1098' ? 'Form 1098' : f === 'schedule' ? 'payment schedule' : '');
+    if (X.H.entered) {
+      lines.push('What you keep after tax,Amount,Source', `Pay before tax,${X.gross.toFixed(2)},`, `Other income,${X.other.toFixed(2)},`, `Saved before tax,${(-X.pretax).toFixed(2)},`,
+        `Federal income tax,${(-X.federal).toFixed(2)},${src('federal')}`, `Illinois income tax,${(-X.state).toFixed(2)},${src('state')}`, `Social Security and Medicare,${(-X.fica).toFixed(2)},${src('fica')}`,
+        `Kept after tax,${X.kept.toFixed(2)},`, `Average rate (effective),${(X.average * 100).toFixed(1)}%,`, `Top rate (marginal),${(X.top.all * 100).toFixed(1)}%,`, `Filing,${q(FILING[X.status])},`, '');
+    }
+    lines.push('Schedule A (Ọrọ̀ estimate),Amount,Source', `4,Medical and dental over 7.5% of income,${X.A.medical.toFixed(2)},`, `5e,State and local taxes,${X.A.salt.toFixed(2)},`);
+    for (const x of X.A.loans) lines.push(`8a,${q(`Home mortgage interest: ${x.prop?.name || x.loan.name}`)},${x.amount.toFixed(2)},${from(x.from)}`);
+    lines.push(`14,Gifts to charity,${X.A.charity.toFixed(2)},`, `17,Itemized deductions,${X.A.total.toFixed(2)},`, `,Standard deduction,${X.std.toFixed(2)},`, '');
     for (const a of activeAccounts().filter(x => x.type === 'realestate' && x.rental)) {
       const E = scheduleE(a, year);
       lines.push(`Schedule E,${q(a.name)}`, 'Line,Description,Amount');
-      for (const k of Object.keys(SCHED_E)) if (E.lines[k]) lines.push(`${k},${q(SCHED_E[k])},${E.lines[k].toFixed(2)}`);
+      for (const k of Object.keys(SCHED_E)) if (E.lines[k]) lines.push(`${k},${q(SCHED_E[k])},${E.lines[k].toFixed(2)}${k === '12' && E.interestFrom ? `,${from(E.interestFrom)}` : ''}`);
       lines.push(`20,Total expenses,${E.expenses.toFixed(2)}`, `21,Income or (loss),${E.net.toFixed(2)}`, '');
     }
     const D = deductionSummary(year);
@@ -374,6 +383,15 @@ document.addEventListener('change', e => {
     commit({ silent: true }); setTimeout(render, 0); return;
   }
   if (d.taxint) { const v = parseAmount(el.value || ''); ((state.tax[d.taxint] = state.tax[d.taxint] || {})[d.year] = state.tax[d.taxint][d.year] || {}).interest = isFinite(v) ? round2(v) : null; commit({ silent: true }); setTimeout(render, 0); return; }
+  if (d.taxh || d.taxp || d.taxa) {   // Taxes › What you keep after tax: filing, each person's pay, other income, actual taxes
+    const H = ((state.tax.household = state.tax.household || {})[d.year] = state.tax.household[d.year] || {});
+    const raw = el.value.trim(), v = parseAmount(raw), val = raw === '' || !isFinite(v) ? null : d.taxh === 'deps' || d.taxh === 'kids' ? Math.max(0, Math.round(v)) : round2(v);
+    if (d.taxh === 'status') H.status = el.value;
+    else if (d.taxh) H[d.taxh] = val;
+    else if (d.taxa) (H.actual = H.actual || {})[d.taxa] = val;
+    else { const [id, f] = d.taxp.split(':'); ((H.people = H.people || {})[id] = H.people[id] || {})[f] = val; }
+    commit({ silent: true }); setTimeout(render, 0); return;
+  }
   if (d.schede) { const c = catById(d.schede); if (c) { c.schedE = el.value; commit({ silent: true }); setTimeout(render, 0); } return; }
   // Household: let the dropdown or name box finish (and lose focus) before the page is redrawn, so it isn't pulled out from under it
   if (d.memberRole) { const m = state.settings.members.find(x => x.id === d.memberRole); if (m) { if (el.value === 'adult') delete m.role; else m.role = el.value; if (isTouch()) el.blur(); commit({ silent: true }); setTimeout(render, 0); } return; }

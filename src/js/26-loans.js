@@ -46,6 +46,39 @@ function loanTrack(a) {
   });
 }
 
+/* A tax year's interest: what the payments Ọrọ̀ followed that year paid, plus an estimate for the year's other months
+   from the schedule (worked back from the statement balance for months before it, forward from the last payment for
+   months after). The estimate needs the rate and the monthly payment; a typed Form 1098 figure always wins over this. */
+function loanInterestForYear(a, year) {
+  return memo(`loanint:${a.id}:${year}`, () => {
+    const L = loanTrack(a), r = (Number(a.rate) || 0) / 1200, pi = loanPI(a), Y = String(year), first = `${Y}-01`, last = `${Y}-12`;
+    const inst = L.applied.filter(p => p.date.startsWith(Y) && p.interest > 0);
+    const covered = new Set(inst.map(p => p.date.slice(0, 7)));
+    const followed = round2(sum(inst.map(p => p.interest)));
+    let before = 0, beforeN = 0, ahead = 0, aheadN = 0;
+    const canEstimate = r > 0 && pi > L.anchor * r && !!a.balanceDate;
+    if (canEstimate) {
+      const am = a.amort || {}, orig = Number(am.original) || 0, firstPay = am.firstPayment ? am.firstPayment.slice(0, 7) : '';
+      // The statement balance is taken as after that month's payment, unless a followed payment falls in that month.
+      const stmtM = a.balanceDate.slice(0, 7);
+      let m = L.applied.some(p => p.date.startsWith(stmtM) && p.interest > 0) ? addMonths(stmtM, -1) : stmtM, bal = L.anchor;
+      for (let i = 0; i < 48 && m >= first; i++) {
+        const prev = (bal + pi) / (1 + r);
+        if ((orig && prev > orig * 1.001) || (firstPay && m < firstPay)) break;
+        if (m <= last && !covered.has(m)) { before += prev * r; beforeN++; }
+        bal = prev; m = addMonths(m, -1);
+      }
+      const lastM = L.applied.length ? L.last.slice(0, 7) : stmtM;
+      if (lastM < last) {
+        const proj = loanProjection(a, L.balance, addMonths(lastM, 1));
+        for (const row of proj?.rows || []) { if (row.m > last) break; if (row.m >= first && !covered.has(row.m)) { ahead += row.interest; aheadN++; } }
+      }
+    }
+    const estimated = round2(before + ahead);
+    return { total: round2(followed + estimated), followed, followedN: inst.length, estimated, estimatedN: beforeN + aheadN, months: inst.length + beforeN + aheadN, canEstimate };
+  });
+}
+
 /* Month-by-month from `bal`, starting with the payment due in `startMonth`, with optional extra principal each month. */
 function loanProjection(a, bal, startMonth, extra = 0) {
   const r = (Number(a.rate) || 0) / 1200, pi = loanPI(a);

@@ -142,13 +142,14 @@ function scheduleE(a, year) {
     if (!line) { unmapped += Math.abs(l.amount); continue; }
     lines[line] = (lines[line] || 0) + (line === '3' ? l.amount : -l.amount);
   }
-  const interest = Number(state.tax?.[a.id]?.[year]?.interest);
-  if (isFinite(interest) && interest > 0) lines['12'] = (lines['12'] || 0) + interest;
+  // line 12: the Form 1098 figure you typed, or else the interest from the mortgage's payment schedule
+  const MI = mortgageInterestFor(a.id, a.mortgageId ? acctById(a.mortgageId) : null, year);
+  if (MI.amount > 0) lines['12'] = (lines['12'] || 0) + MI.amount;
   const dep = depreciationFor(a, year);
   if (dep) lines['18'] = dep;
   for (const k in lines) lines[k] = round2(lines[k]);
   const expenses = round2(sum(Object.entries(lines).filter(([k]) => k !== '3').map(([, v]) => v)));
-  return { lines, rents: lines['3'] || 0, expenses, net: round2((lines['3'] || 0) - expenses), debtPaid: round2(debtPaid), interestEntered: isFinite(interest) && interest > 0, unmapped: round2(unmapped) };
+  return { lines, rents: lines['3'] || 0, expenses, net: round2((lines['3'] || 0) - expenses), debtPaid: round2(debtPaid), interestEntered: MI.from === '1098', interestFrom: MI.from, interestEst: MI.est, unmapped: round2(unmapped) };
 }
 function deductionSummary(year) {
   const by = {}, tagged = [];

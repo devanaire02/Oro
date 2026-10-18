@@ -246,12 +246,118 @@ VIEWS.planning = p => {
 };
 
 /* ================= Taxes ================= */
+/* Where a mortgage interest figure came from, in a line under its box. */
+function interestFromLine(from, est, loan) {
+  const sm = n => money(n, { cents: false }), plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const how = est && est.total > 0 ? [est.followedN ? `${plural(est.followedN, 'payment')} Ọrọ̀ followed` : '', est.estimatedN ? `${plural(est.estimatedN, 'month')} estimated from the balance, rate and payment` : ''].filter(Boolean).join(' and ') : '';
+  if (from === '1098') return est && est.total > 0 ? `Using your 1098 figure. The payment schedule comes to ${sm(est.total)}.` : 'Using your 1098 figure.';
+  if (from === 'schedule') return `Using the payment schedule until you type the 1098 figure: ${sm(est.total)} from ${how}.`;
+  if (loan && est && !est.canEstimate) return `Add the mortgage’s rate, monthly payment and balance date (<button class="linklike" data-edit-acct="${loan.id}">edit ${esc(loan.name)}</button>) and Ọrọ̀ will estimate it from the payment schedule.`;
+  return '';
+}
+
+/* What you keep after tax: the estimate (or your actual taxes), the average and top rates, and your numbers. */
+function afterTaxPanel(X) {
+  const { year, H } = X, sm = n => money(n, { cents: false }), rate = n => pct(n, 1), cur = year === new Date().getFullYear();
+  const box = (attr, v, ph = '0') => `<input ${attr} data-year="${year}" inputmode="decimal" value="${v ?? ''}" placeholder="${ph}">`;
+  const est = { federal: X.fedEst, state: X.ilEst, fica: X.ficaEst }, anyActual = Object.values(X.actual).some(v => v != null);
+  const tag = k => `<span class="tag soft">${X.actual[k] != null ? 'actual' : 'estimate'}</span>`;
+  const interestIn = round2(sum(txInRange(`${year}-01-01`, `${year}-12-31`).flatMap(t => txLines(t)).filter(l => /interest|dividend/i.test(catById(l.categoryId)?.name || '') && catById(l.categoryId)?.kind === 'income').map(l => l.amount)));
+  const rentNet = round2(sum(activeAccounts().filter(a => a.type === 'realestate' && a.rental).map(a => scheduleE(a, year).net)));
+  const inputs = `
+    <h3>${X.H.entered ? `Your numbers for ${year}` : `Start with each person’s pay for ${year}`}</h3>
+    <div class="form-grid three">
+      <label class="field"><span>Filing</span><select data-taxh="status" data-year="${year}">${Object.entries(FILING).map(([k, l]) => `<option value="${k}" ${X.status === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    </div>
+    ${X.earners.length ? X.earners.map(e => `<fieldset class="tax-person"><legend>${esc(e.name)}</legend><div class="form-grid three">
+      <label class="field"><span>Pay before tax</span>${box(`data-taxp="${e.id}:gross"`, H.people[e.id].gross)}<small class="muted">Salary and bonus for the year</small></label>
+      <label class="field"><span>Saved before tax</span>${box(`data-taxp="${e.id}:retire"`, H.people[e.id].retire)}<small class="muted">401(k), 403(b) or 457 from pay</small></label>
+      <label class="field"><span>Health through pay</span>${box(`data-taxp="${e.id}:health"`, H.people[e.id].health)}<small class="muted">HSA, FSA and health premiums</small></label>
+    </div></fieldset>`).join('') : '<p class="muted">Add the adults in your household in Settings › Household to enter their pay.</p>'}
+    <div class="form-grid three">
+      <label class="field"><span>Other income</span>${box('data-taxh="other"', H.other)}<small class="muted">Interest, dividends, rental profit.${interestIn > 0 ? ` Interest and dividends in your transactions: ${sm(interestIn)}.` : ''}${rentNet ? ` Rentals (Schedule E): ${money(rentNet, { cents: false, paren: true })}.` : ''}</small></label>
+      <label class="field"><span>Dependents you claim</span>${box('data-taxh="deps"', H.deps)}<small class="muted">For Illinois’s exemptions</small></label>
+      <label class="field"><span>Children under 17</span>${box('data-taxh="kids"', H.kids)}<small class="muted">At the end of ${year}, for the child tax credit</small></label>
+    </div>
+    <h3>Actual taxes</h3>
+    <p class="muted small">Once you have your W-2s or your return. Leave a box blank to use Ọrọ̀’s estimate.</p>
+    <div class="form-grid three">
+      <label class="field"><span>Federal income tax</span>${box('data-taxa="federal"', X.actual.federal, sm(est.federal))}</label>
+      <label class="field"><span>Illinois income tax</span>${box('data-taxa="state"', X.actual.state, sm(est.state))}</label>
+      <label class="field"><span>Social Security and Medicare</span>${box('data-taxa="fica"', X.actual.fica, sm(est.fica))}</label>
+    </div>`;
+  const head = `<header class="panel-head"><h2>What you keep after tax</h2><span class="muted small">${year} · ${anyActual ? 'with your actual taxes' : 'Ọrọ̀’s estimate'} · ${FILING[X.status]}</span></header>`;
+  if (!X.H.entered) return `<section class="panel aftertax">${head}
+    <p>Type each person’s pay before tax to see what you keep after tax, your average and top tax rates side by side, and what saving before tax is worth.</p>${inputs}</section>`;
+  const saved = taxSavedByPretax(year), atTop = round2(X.income * X.top.all - X.taxes), paid = paychecksIn(year);
+  const exact = n => `${Math.round(n * 10000) / 100}%`;   // 4.95%, 8.55%, 24%: rates as the tables give them
+  const topParts = [X.top.federal && `${exact(X.top.federal)} federal`, X.top.state && `${exact(X.top.state)} Illinois`, X.top.fica && `${exact(X.top.fica)} Social Security and Medicare`].filter(Boolean).join(' + ');
+  const meter = (label, v, cls) => `<div class="rate-row ${cls}"><span>${label}</span><div class="meter"><span style="width:${Math.min(100, v / 0.6 * 100).toFixed(1)}%"></span></div><strong class="num">${rate(v)}</strong></div>`;
+  return `<section class="panel aftertax">${head}
+    <dl class="kpis">
+      <div><dt>Kept after tax</dt><dd class="num">${sm(X.kept)}</dd><span class="muted small">of ${sm(X.income)}${X.other ? ' pay and other income' : ' pay'}${X.pretax ? `, after ${sm(X.pretax)} saved before tax` : ''}</span></div>
+      <div><dt>Average rate</dt><dd class="num">${rate(X.average)}</dd><span class="muted small">All taxes ÷ all income (your effective rate)</span></div>
+      <div><dt>Top rate</dt><dd class="num">${rate(X.top.all)}</dd><span class="muted small">On another dollar of ${esc(X.top.who)}’s pay (your marginal rate)</span></div>
+      <div><dt>Saved in tax</dt><dd class="num">${sm(saved)}</dd><span class="muted small">${X.pretax ? `By putting ${sm(X.pretax)} away before tax` : 'Nothing saved before tax yet'}</span></div>
+    </dl>
+    <div class="rate-compare">${meter('Average rate', X.average, 'avg')}${meter('Top rate', X.top.all, 'top')}</div>
+    <p>Only your last dollars are taxed at the top rate of ${rate(X.top.all)} (${topParts || 'nothing yet'}). Across everything, you pay ${rate(X.average)}: ${sm(Math.max(0, atTop))} less than if every dollar were taxed at the top rate.${saved > 0 ? ` Saving ${sm(X.pretax)} before tax kept ${sm(saved)} out of taxes this year, about ${rate(saved / X.pretax)} of it.` : ''}</p>
+    <table class="ledger compact sched aftertax-table"><tbody>
+      <tr class="income-line"><th scope="row">Pay before tax</th><td class="num">${money(X.gross)}</td></tr>
+      ${X.other ? `<tr class="income-line"><th scope="row">Other income</th><td class="num">${money(X.other)}</td></tr>` : ''}
+      ${X.pretax ? `<tr><th scope="row">Saved before tax <span class="muted small">${[X.retire && `${sm(X.retire)} retirement`, X.health && `${sm(X.health)} health`].filter(Boolean).join(', ')}</span></th><td class="num">${money(-X.pretax)}</td></tr>` : ''}
+      <tr><th scope="row">Federal income tax ${tag('federal')}</th><td class="num">${money(-X.federal)}</td></tr>
+      <tr><th scope="row">Illinois income tax ${tag('state')}</th><td class="num">${money(-X.state)}</td></tr>
+      <tr><th scope="row">Social Security and Medicare ${tag('fica')}</th><td class="num">${money(-X.fica)}</td></tr>
+      <tr class="net"><th scope="row">Kept after tax</th><td class="num total double">${money(X.kept)}</td></tr>
+      ${X.pretax ? `<tr class="subtotal"><th scope="row">Kept, counting what you saved before tax</th><td class="num">${money(X.kept + X.pretax)}</td></tr>` : ''}
+    </tbody></table>
+    <details class="tax-how"><summary>How the federal estimate works</summary>
+      <table class="ledger compact sched"><tbody>
+        <tr><th scope="row">Income after saving before tax</th><td class="num">${money(X.agi)}</td></tr>
+        <tr><th scope="row">${X.itemize ? 'Itemized deductions (below)' : `Standard deduction, ${FILING[X.status].toLowerCase()}`}</th><td class="num">${money(-X.deduction)}</td></tr>
+        ${X.charityStd ? `<tr><th scope="row">Gifts to charity, without itemizing</th><td class="num">${money(-X.charityStd)}</td></tr>` : ''}
+        <tr class="subtotal"><th scope="row">Taxable income</th><td class="num">${money(X.taxable)}</td></tr>
+        ${X.brackets.map(b => `<tr><th scope="row">${rate(b.rate).replace('.0%', '%')} on ${sm(b.amount)}</th><td class="num">${money(b.tax)}</td></tr>`).join('')}
+        ${X.ctc ? `<tr><th scope="row">Child tax credit</th><td class="num">${money(-X.ctc)}</td></tr>` : ''}
+        <tr class="net"><th scope="row">Federal income tax (estimate)</th><td class="num total">${money(X.fedEst)}</td></tr>
+      </tbody></table>
+      <p class="small">Top rate: ${topParts || 'none yet'}${X.top.ctcPhase ? '; it includes 5% while the child tax credit phases out' : ''}${X.top.saltPhase ? '; it includes the state and local tax deduction shrinking at your income' : ''}. Social Security stops at ${sm(taxTables(year).T.ssBase)} of each person’s pay.</p>
+      <p class="muted small">${X.tableYear !== year ? `Ọrọ̀ has the tax tables for 2025 and 2026; ${year} uses ${X.tableYear}’s. ` : ''}Not counted: capital gains and dividend rates, self-employment tax, the 65-and-older deductions, tips and overtime, other credits. Organized for your CPA; not tax advice.</p>
+    </details>
+    ${paid > 0 ? `<p class="muted small">Paychecks that came into your accounts in ${year}${cur ? ' so far' : ''}: ${sm(paid)}.</p>` : ''}
+    ${inputs}</section>`;
+}
+
+/* Itemized or standard: Schedule A beside the standard deduction, with the home mortgage interest. */
+function scheduleAPanel(X) {
+  const { year, A } = X, sm = n => money(n, { cents: false }), key = (k, l, v, note = '') => `<tr><td class="lineno">${k}</td><th scope="row">${l}${note ? `<br><span class="muted small">${note}</span>` : ''}</th><td class="num">${money(v)}</td></tr>`;
+  const loans = A.loans.map(x => `<label class="field"><span>${esc(x.prop?.name || x.loan.name)}: mortgage interest from Form 1098, ${year}</span><input data-taxint="${x.key}" data-year="${year}" inputmode="decimal" value="${state.tax?.[x.key]?.[year]?.interest ?? ''}" placeholder="${x.est?.total ? sm(x.est.total) : '0.00'}"><small class="muted interest-from">${interestFromLine(x.from, x.est, x.loan)}</small>${Math.abs(Number(x.loan.balance) || 0) > 750000 ? '<small class="muted">Interest on more than $750,000 of mortgage is limited; ask your CPA.</small>' : ''}</label>`).join('');
+  const diff = round2(A.total - X.std);
+  return `<section class="panel"><header class="panel-head"><h2>Itemized or standard deduction</h2><span class="muted small">Schedule A, ${year}</span></header>
+    <div class="cols tight">
+      <table class="ledger compact sched"><tbody>
+        ${key('4', 'Medical and dental over 7.5% of income', A.medical, A.medicalPaid ? `${sm(A.medicalPaid)} paid` : '')}
+        ${key('5e', `State and local taxes, up to ${sm(A.saltCap)}`, A.salt, `Illinois income tax ${sm(X.state)} + property tax ${sm(A.propertyTax)}`)}
+        ${key('8a', 'Home mortgage interest', A.interest)}
+        ${key('14', 'Gifts to charity', A.charity, A.charityPaid && A.charityPaid !== A.charity ? `${sm(A.charityPaid)} given, less 0.5% of income` : '')}
+        <tr class="subtotal"><td class="lineno">17</td><th scope="row">Itemized deductions</th><td class="num total">${money(A.total)}</td></tr>
+        <tr><td class="lineno"></td><th scope="row">Standard deduction, ${FILING[X.status].toLowerCase()}</th><td class="num">${money(X.std)}</td></tr>
+      </tbody></table>
+      <div class="tax-side">
+        <p class="callout">${diff > 0 ? `Itemizing is worth ${sm(diff)} more than the standard deduction, so the estimate above itemizes.` : `The standard deduction is ${sm(-diff)} more than itemizing, so the estimate above uses it.`}</p>
+        ${loans || '<p class="muted small">No home mortgage in Ọrọ̀. A mortgage on a rental goes on its Schedule E below.</p>'}
+        <label class="field"><span>Property tax paid on your home, ${year}</span><input data-taxh="propertyTax" data-year="${year}" inputmode="decimal" value="${X.H.propertyTax ?? ''}" placeholder="${sm(round2(deductionSummary(year).by['State and local taxes'] || 0))}"><small class="muted">Including any paid through your mortgage’s escrow (Form 1098, box 10). Blank uses your categories tagged for state and local taxes.</small></label>
+      </div>
+    </div></section>`;
+}
+
 VIEWS.taxes = p => {
   const year = +(p.y || new Date().getFullYear());
   const years = [...new Set([new Date().getFullYear(), new Date().getFullYear() - 1, ...state.transactions.map(t => yearOf(t.date))])].sort((a, b) => b - a);
   const rentals = activeAccounts().filter(a => a.type === 'realestate' && a.rental);
-  const ded = deductionSummary(year);
-  return pageHead('Taxes', `${year} tax year. Organized for your CPA; not tax advice.`, `<label class="field inline"><span class="sr">Year</span><select data-filter="y">${years.map(y => `<option ${y === year ? 'selected' : ''}>${y}</option>`).join('')}</select></label><button class="btn" data-act="export-tax" data-year="${year}">Export for your CPA</button>`) + `
+  const ded = deductionSummary(year), TX = taxEstimate(year);
+  return pageHead('Taxes', `${year} tax year. Organized for your CPA; not tax advice.`, `<label class="field inline"><span class="sr">Year</span><select data-filter="y">${years.map(y => `<option ${y === year ? 'selected' : ''}>${y}</option>`).join('')}</select></label><button class="btn" data-act="export-tax" data-year="${year}">Export for your CPA</button>`) + afterTaxPanel(TX) + scheduleAPanel(TX) + `
   ${rentals.length ? rentals.map(a => {
     const E = scheduleE(a, year), g = a.rentalGroup || 'Rental property';
     const rentalCats = state.categories.filter(c => c.group === g);
@@ -263,7 +369,7 @@ VIEWS.taxes = p => {
           <tr class="net"><td class="lineno">21</td><th scope="row">Income or (loss)</th><td class="num total double ${signClass(E.net)}">${money(E.net, { paren: true })}</td></tr>
         </tbody></table>
         <div class="tax-side">
-          <label class="field"><span>Mortgage interest from Form 1098, ${year}</span><input data-taxint="${a.id}" data-year="${year}" inputmode="decimal" value="${state.tax?.[a.id]?.[year]?.interest ?? ''}" placeholder="0.00"><small class="muted">Recorded mortgage payments this year: ${money(E.debtPaid, { cents: false })} (principal and interest). Only the interest goes on line 12.</small></label>
+          <label class="field"><span>Mortgage interest from Form 1098, ${year}</span><input data-taxint="${a.id}" data-year="${year}" inputmode="decimal" value="${state.tax?.[a.id]?.[year]?.interest ?? ''}" placeholder="0.00"><small class="muted">Recorded mortgage payments this year: ${money(E.debtPaid, { cents: false })} (principal and interest). Only the interest goes on line 12.</small><small class="muted interest-from">${interestFromLine(E.interestFrom, E.interestEst, acctById(a.mortgageId))}</small></label>
           <p class="small">${a.buildingBasis && a.placedInService ? `Depreciation: ${money(a.buildingBasis, { cents: false })} building basis over 27.5 years from ${dateLabel(a.placedInService, true)} (mid-month convention).` : `<button class="linklike" data-edit-acct="${a.id}">Add the building basis and in-service date</button> to calculate depreciation.`}</p>
           <details><summary>Which line each category goes on</summary>
             <table class="ledger compact"><tbody>${rentalCats.map(c => `<tr><th scope="row">${esc(c.name)}</th><td>${c.rental === 'debt' ? '<span class="muted">Debt service (use 1098 interest)</span>' : `<select data-schede="${c.id}">${Object.entries(SCHED_E).filter(([k]) => k !== '18' && k !== '12').map(([k, l]) => `<option value="${k}" ${(c.schedE || (c.rental === 'income' ? '3' : '19')) === k ? 'selected' : ''}>Line ${k}: ${l}</option>`).join('')}</select>`}</td></tr>`).join('')}</tbody></table></details>
