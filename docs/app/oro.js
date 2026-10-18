@@ -4125,15 +4125,14 @@ function render() {
   invalidate();
   const ae = document.activeElement;
   let focusSel = null;
-  if (ae && ae !== document.body && $('#main')?.contains(ae)) {
-    if (ae.id) focusSel = '#' + CSS.escape(ae.id);
-    else { const k = Object.keys(ae.dataset)[0]; if (k) focusSel = `[data-${k.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}="${CSS.escape(ae.dataset[k])}"]`; }
-  }
+  if (ae && ae !== document.body && $('#main')?.contains(ae)) focusSel = fieldSel(ae);
   const { page, params } = route();
   // iPhone and iPad: the same page drawn again because of a dropdown or text box: stay where you were (keepScroll, below)
   const changed = Date.now() - (UI.lastChange?.at || 0) < 1500;
   const fromField = isTouch() && (changed || (ae && ae.matches?.('input, select, textarea') && $('#main')?.contains(ae)));
   const keepY = fromField && UI.renderedPage === page && !document.body.classList.contains('page-held') ? Math.max(window.scrollY, changed ? UI.lastChange.y : 0) : 0;
+  // Every device: the page drawn again because of a box you just changed: keep that box where it was on screen (keepPlace)
+  const anchor = changed && UI.lastChange.sel && UI.renderedPage === page && !document.body.classList.contains('page-held') ? UI.lastChange : null;
   UI.renderedPage = page;
   for (const k in ChartSpecs) delete ChartSpecs[k];
   document.body.classList.toggle('simple', UI.mode === 'simple');
@@ -4168,7 +4167,14 @@ function render() {
   if (page === 'transactions') updateBulk();   // the bar for rows still ticked from before the list was redrawn
   else if (UI.txSel?.size) UI.txSel.clear();   // leaving Transactions lets go of the selection
   paintTalk();
-  if (keepY) keepScroll(keepY);
+  if (anchor) keepPlace(anchor, keepY);
+  else if (keepY) keepScroll(keepY);
+}
+/* How to find a box again after the page is drawn anew: its id, or its first data- attribute. */
+function fieldSel(el) {
+  if (el.id) return '#' + CSS.escape(el.id);
+  const k = Object.keys(el.dataset || {})[0];
+  return k ? `[data-${k.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}="${CSS.escape(el.dataset[k])}"]` : null;
 }
 /* Put the newly drawn page in place around one element that stays exactly where it is (same node, still focused).
    Only when that element sits at the same depth, under the same kinds of elements, in the new page; otherwise false. */
@@ -4218,8 +4224,26 @@ function keepScroll(y) {
   fix(); requestAnimationFrame(fix); setTimeout(fix, 120); setTimeout(fix, 400);
   setTimeout(() => { if (_keepScroll === mark) _keepScroll = null; }, 450);
 }
+/* After a box you changed redraws the page, keep that box where it was on screen: what's above it may have grown or
+   shrunk (Taxes' results appear above its boxes and gain rows as you type), and Safari on the iPhone and iPad jumps to
+   the top when the box is replaced. Unless you've started scrolling or typing since. Falls back to keepScroll. */
+function keepPlace(a, y) {
+  const mark = _keepScroll = { a };
+  const fix = () => {
+    if (_keepScroll !== mark || document.body.classList.contains('page-held')) return;
+    const el = $(a.sel, $('#main')), r = el?.getBoundingClientRect();
+    if (!r || !r.height) { const max = document.documentElement.scrollHeight - window.innerHeight; if (y && window.scrollY < 40 && y > 120 && y <= max + 30) window.scrollTo(0, y); return; }
+    const d = r.top - a.top;
+    if (Math.abs(d) > 2) window.scrollBy(0, d);
+  };
+  fix(); requestAnimationFrame(fix); setTimeout(fix, 120); setTimeout(fix, 400);
+  setTimeout(() => { if (_keepScroll === mark) _keepScroll = null; }, 450);
+}
 ['touchstart', 'wheel', 'keydown', 'mousedown'].forEach(ev => window.addEventListener(ev, () => { _keepScroll = null; }, { passive: true, capture: true }));
-window.addEventListener('change', () => { UI.lastChange = { at: Date.now(), y: window.scrollY }; }, { capture: true });   // where you were when the field changed
+window.addEventListener('change', e => {   // where you were, and where the box was on screen, when it changed
+  const el = e.target, inMain = !!el?.closest?.('#main');
+  UI.lastChange = { at: Date.now(), y: window.scrollY, sel: inMain ? fieldSel(el) : null, top: inMain ? el.getBoundingClientRect().top : 0 };
+}, { capture: true });
 
 /* Pages in the menu: Check-in only while it's turned on */
 const shownPages = () => PAGES.filter(([id]) => id !== 'checkin' || state.settings?.checkin !== false);
@@ -4377,7 +4401,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '05c8adc';
+const ORO_BUILD = '53c7545';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
