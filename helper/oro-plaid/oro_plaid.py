@@ -7,7 +7,8 @@ Plaid needs a secret key that must never sit inside a web page, so Ọrọ̀ ask
 - The Plaid client ID and secret, the helper key and each bank connection's access token live in the Mac's Keychain
   (service "oro-plaid"), read and written with macOS's own `security` tool. Nothing else is written to disk.
 - It keeps nothing about your transactions and logs only the time, the path asked for and the result code.
-Python standard library only. Runs at login through launchd (see dev/tools/setup-plaid.sh in the private dev folder,
+Python standard library only, Python 3.11 or newer (macOS's own /usr/bin/python3 is 3.9, past its end of life, and
+is refused). Runs at login through launchd (see dev/tools/setup-plaid.sh in the private dev folder,
 or install.sh here). Settings come from the environment:
   ORO_PLAID_ENV      sandbox (default) or production
   ORO_PLAID_PORT     47321 by default
@@ -19,6 +20,11 @@ or install.sh here). Settings come from the environment:
 """
 import base64, hmac, json, os, secrets, subprocess, sys, threading, time, urllib.error, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+MIN_PYTHON = (3, 11)   # older versions no longer get security fixes; install.sh picks one at least this new
+if sys.version_info < MIN_PYTHON:
+    sys.exit(f'The bank helper needs Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} or newer, and this is {sys.version.split()[0]}. '
+             'Install one with Homebrew (brew install python), then run install.sh again.')
 
 VERSION = '1'
 ENV = os.environ.get('ORO_PLAID_ENV', 'sandbox')

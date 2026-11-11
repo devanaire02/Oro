@@ -6,7 +6,7 @@
 - Your Plaid client ID and secret, and each bank connection, stay in the Mac's **Keychain** (service `oro-plaid`), read and written with macOS's own `security` tool. Nothing else is written to disk.
 - It keeps nothing about your transactions and logs only the time, the path asked for and the result code (`~/Library/Logs/oro-plaid.log`).
 - Plaid's sign-in window is Plaid's own hosted page, opened in a window of its own, so Plaid's code never runs inside Ọrọ̀.
-- Python 3 standard library only.
+- Python standard library only. It needs **Python 3.11 or newer** (Homebrew's: `brew install python`). macOS's own `python3` is 3.9, which no longer gets security fixes, so the helper won't start on it. `bash install.sh python` shows which Python it will use.
 
 ## Setting it up
 
