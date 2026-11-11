@@ -68,7 +68,7 @@ function defaultState() {
     meta: { created: now, modified: now },
     settings: { theme: 'auto', look: 'ng', lowCash: 2500, staleDays: 35, targets: {}, privacy: false, autoLock: 15, keepBackups: 30, checkin: true, checkinQuiet: {}, members: [{ id: 'joint', name: 'Joint' }, { id: 'you', name: 'You' }, { id: 'partner', name: 'Partner' }] },
     accounts: [], transactions: [], categories: defaultCategories(), rules: [],
-    holdings: [], recurring: [], snapshots: {}, reviews: {}, goals: [], plan: defaultPlan(), tax: {},
+    holdings: [], recurring: [], snapshots: {}, reviews: {}, goals: [], plan: defaultPlan(), tax: {}, banks: { items: [], price: null },
   };
 }
 function migrate(s) {
@@ -79,6 +79,7 @@ function migrate(s) {
   s.plan = Object.assign(defaultPlan(), s.plan || {});
   for (const k of ['accounts', 'transactions', 'categories', 'rules', 'holdings', 'recurring', 'goals']) if (!Array.isArray(s[k])) s[k] = [];
   for (const k of ['snapshots', 'reviews', 'tax']) if (!s[k] || typeof s[k] !== 'object') s[k] = {};
+  if (!s.banks || typeof s.banks !== 'object' || !Array.isArray(s.banks.items)) s.banks = { items: [], price: s.banks?.price ?? null };
   if (!s.categories.length) s.categories = defaultCategories();
   if (!Array.isArray(s.settings.members) || !s.settings.members.length) s.settings.members = defaultState().settings.members;
   if (fromVersion < 2) {
@@ -353,13 +354,14 @@ async function syncFromDiskIfNewer() {
 
 async function setPassphrase(pass) {
   const old = Store.pass;
-  if (!pass) { Store.key = null; Store.salt = null; Store.pass = null; await persistNow(); if (SYNC.rec) await syncSave(); await aiRekey(old); return; }
+  if (!pass) { Store.key = null; Store.salt = null; Store.pass = null; await persistNow(); if (SYNC.rec) await syncSave(); await bankRekey(old); await aiRekey(old); return; }
   Store.salt = crypto.getRandomValues(new Uint8Array(16));
   Store.key = await Vault.key(pass, Store.salt);
   Store.pass = pass;
   Store.lastBackup = null; // next save writes a fresh, encrypted backup
   await persistNow();
   if (SYNC.rec) await syncSave();
+  await bankRekey(old);   // and the bank helper's key (68-banks.js)
   await aiRekey(old);   // the Claude key on this device is locked again with the new passphrase (67-claude.js)
 }
 

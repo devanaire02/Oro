@@ -136,7 +136,7 @@ function syncApply(target, ops) {
       if (idx < 0) {
         if (!okPrev('')) { (res.conflicts.push(opLabel(o, target)), res.conflictOps.push(o)); continue; }       // deleted on the receiving side
         const v = o.v;
-        if (o.path.length === 1 && o.path[0] === 'transactions' && v.importId && arr.some(t => t.accountId === v.accountId && t.importId === v.importId)) { res.dupes++; continue; }
+        if (o.path.length === 1 && o.path[0] === 'transactions' && txIds(v).length && arr.some(t => t.accountId === v.accountId && txIds(t).some(k => txIds(v).includes(k)))) { res.dupes++; continue; }
         arr.push(cloneVal(v)); res.applied++;
       } else if (!sameVal(arr[idx], o.v)) {
         if (okPrev(hashVal(arr[idx]))) { arr[idx] = cloneVal(o.v); res.applied++; }
@@ -370,7 +370,7 @@ function mergeNote(lm, dev) {
 }
 
 /* What's waiting to be sent, in words: "Account “Chase checking”: name", "Transaction “Jewel Osco”: category". */
-const FIELD_WORDS = { categoryId: 'category', payee: 'payee', amount: 'amount', memo: 'memo', name: 'name', flag: 'flag', tags: 'tags', person: 'person', date: 'date', balance: 'balance', balanceDate: 'balance date', owner: 'owner', budget: 'budget', mortgageId: 'mortgage', amort: 'payment tracking', rate: 'rate', minPayment: 'payment', splits: 'split', institution: 'institution', last4: 'last 4 digits', pp: 'PayPal details', rawPayee: 'bank description', card: 'card', cards: 'cards' };
+const FIELD_WORDS = { categoryId: 'category', payee: 'payee', amount: 'amount', memo: 'memo', name: 'name', flag: 'flag', tags: 'tags', person: 'person', date: 'date', balance: 'balance', balanceDate: 'balance date', owner: 'owner', budget: 'budget', mortgageId: 'mortgage', amort: 'payment tracking', rate: 'rate', minPayment: 'payment', splits: 'split', institution: 'institution', last4: 'last 4 digits', pp: 'PayPal details', rawPayee: 'bank description', card: 'card', cards: 'cards', ids: 'linked IDs', importId: 'import ID' };
 function pendingLabels() {
   const rec = SYNC.rec; if (!rec?.base) return [];
   return syncPending().map(o => {

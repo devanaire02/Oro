@@ -425,7 +425,7 @@ function ciCardHtml(item, q) {
     }
     case 'import': {
       const a = acctById(item.accountId);
-      return body(esc(a?.name || 'Account'), `<p class="ci-meta">Newest transaction: ${dateLabel(item.newest)}, ${item.age} days ago.</p>`, '<button class="btn primary" data-ci="import">Import a file</button>');
+      return body(esc(a?.name || 'Account'), `<p class="ci-meta">Newest transaction: ${dateLabel(item.newest)}, ${item.age} days ago.</p>`, bankHere() && bankLinkedTo(item.accountId) ? '<button class="btn primary" data-bank="pull">Get new transactions</button><button class="btn" data-ci="import">Import a file</button>' : '<button class="btn primary" data-ci="import">Import a file</button>');
     }
     case 'coin': {
       const c = cryptoHeld().find(x => x.symbol === item.symbol); if (!c) return '';

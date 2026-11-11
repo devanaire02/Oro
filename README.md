@@ -43,6 +43,8 @@ Click **Import** (or press `I`) and drop a file:
 
 Fix one by hand and it offers to remember the fix. On Transactions, **Auto-categorize** runs all of this again on anything still uncategorized.
 
+**Bank connections (Mac, optional):** instead of downloading files, connect a bank once through Plaid and **Get new transactions** brings in what's new, for you to review first. It needs Ọrọ̀'s small bank helper on the Mac, which keeps Plaid's key and your connections in the Mac's Keychain; see [helper/oro-plaid](helper/oro-plaid/README.md). Ones you already have from a file are matched (same account, amount and date), never added twice, and a file imported later is matched the same way. Your categories, names and notes are never changed by a pull. The iPhone gets the results with Get latest.
+
 ## On your iPhone
 
 Ọrọ̀ also runs on your iPhone from **https://devanaire02.github.io/Oro/**. Only the app is published there. Your data never goes to that address; it stays on your devices and in your iCloud Drive.

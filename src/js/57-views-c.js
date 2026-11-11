@@ -443,6 +443,7 @@ VIEWS.data = () => {
 
   ${checkinSettings()}
 
+  ${bankSettings()}
   ${claudeSettings()}
 
   <section class="panel">

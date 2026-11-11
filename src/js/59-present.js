@@ -168,7 +168,7 @@ function lockNow() {
   if (!Store.key || $('.lock-screen')) return;
   UI.sticky = {}; UI.sorts = {}; UI.txSel = null;   // filters, column sorts and ticked rows start fresh after a lock
   ciReset();        // and so does a check-in
-  closeTalk(); Object.assign(TALK, { draft: null, heard: '', last: null, ai: null, queue: [], aiThread: null }); UI.talkCtx = null; aiCancel(); aiThreadForget();
+  closeTalk(); Object.assign(TALK, { draft: null, heard: '', last: null, ai: null, queue: [], aiThread: null }); UI.talkCtx = null; aiCancel(); aiThreadForget(); BANKS.key = null;
   if ($('#present')) { $('#present').remove(); document.body.classList.remove('presenting'); }
   closeModal(true);
   const wrap = document.createElement('div');

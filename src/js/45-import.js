@@ -188,14 +188,14 @@ function findCategoryByName(name) {
 }
 function rowAccountId(r) { return IMP.multi ? (IMP.acctMap[r.srcAccount || ''] || '') : (IMP.accountId || ''); }
 function buildTxRows(list) {
-  IMP.rawList = list;
+  IMP.rawList = list; IMP._claimed = new Set();
   const seenByAcct = {};
   const hist = categoryHistory(), transferId = categoryIdByName('Transfer between accounts'), cardPayId = categoryIdByName('Credit card payment');
   IMP.txRows = list.map(t => {
     const acctId = rowAccountId(t);
     const acct = acctId && !acctId.startsWith('__') ? acctById(acctId) : null;
     const existing = acct ? txByAccount(acct.id) : [];
-    const ids = acct ? (seenByAcct[acct.id] = seenByAcct[acct.id] || new Map(existing.filter(x => x.importId).map(x => [x.importId, x.id]))) : new Map();
+    const ids = acct ? (seenByAcct[acct.id] = seenByAcct[acct.id] || new Map(existing.flatMap(x => txIds(x).map(k => [k, x.id])))) : new Map();
     const seen = (IMP._seen = IMP._seen || {});
     const base = t.fitid ? 'fit:' + t.fitid : 'h:' + hashStr(`${t.date}|${t.amount}|${normPayee(t.payee)}`);
     const k = (acctId || '') + base; seen[k] = (seen[k] || 0) + 1;
@@ -203,8 +203,15 @@ function buildTxRows(list) {
     let status = 'new', existingId = '';
     if (ids.has(importId)) { status = 'dup'; existingId = ids.get(importId); }
     else {
-      const e = existing.find(e => Math.abs(e.amount - t.amount) < 0.005 && Math.abs(daysBetween(e.date, t.date)) <= 3 && (normPayee(e.rawPayee || e.payee).split(' ')[0] === normPayee(t.payee).split(' ')[0] || !e.importId));
-      if (e) { status = 'maybe'; existingId = e.id; }
+      // already here from a bank connection (Plaid's IDs never equal the file's): the same amount within 3 days, one to one,
+      // nearest date first, then the closest description; linked, not added (68-banks.js)
+      const pl = existing.filter(e => !IMP._claimed.has(e.id) && plIdOf(e) && txIds(e).every(k => k.startsWith('pl:')) && Math.abs(e.amount - t.amount) < 0.005 && Math.abs(daysBetween(e.date, t.date)) <= 3)
+        .sort((a, b) => Math.abs(daysBetween(a.date, t.date)) - Math.abs(daysBetween(b.date, t.date)) || bankLikeness(t.payee, `${b.rawPayee || ''} ${b.payee}`) - bankLikeness(t.payee, `${a.rawPayee || ''} ${a.payee}`))[0];
+      if (pl) { status = 'link'; existingId = pl.id; IMP._claimed.add(pl.id); }
+      else {
+        const e = existing.find(e => Math.abs(e.amount - t.amount) < 0.005 && Math.abs(daysBetween(e.date, t.date)) <= 3 && (normPayee(e.rawPayee || e.payee).split(' ')[0] === normPayee(t.payee).split(' ')[0] || !e.importId));
+        if (e) { status = 'maybe'; existingId = e.id; }
+      }
     }
     const rule = matchRule(t.payee, { amount: t.amount, accountId: acctId });
     const named = findCategoryByName(t.bankCategory);
@@ -343,7 +350,7 @@ function renderReviewStep(box) {
         ${IMP.multi ? `<td class="muted small">${esc(r.srcAccount)}</td>` : ''}
         <td>${r.newCat && !r.categoryId ? `<span class="tag soft" title="Will be created">New: ${esc(r.newCat)}</span>` : `<select data-cat="${i}"${r.guess && r.categoryId ? ` title="${esc(GUESS_WHY[r.guess] || '')}"` : ''}>${opts.replace(`value="${r.categoryId}"`, `value="${r.categoryId}" selected`)}</select>`}</td>
         <td class="num ${signClass(r.amount)}">${IMP.source !== 'ofx' ? `<button class="linklike num" data-flip="${i}" title="Flip sign">${money(r.amount)}</button>` : money(r.amount)}</td>
-        <td>${r.status === 'dup' ? '<span class="tag">Already imported</span>' : r.status === 'maybe' ? '<span class="tag">Possible duplicate</span>' : ''}</td></tr>`).join('')}
+        <td>${r.status === 'dup' ? '<span class="tag">Already imported</span>' : r.status === 'link' ? '<span class="tag">Already in from your bank</span>' : r.status === 'maybe' ? '<span class="tag">Possible duplicate</span>' : ''}</td></tr>`).join('')}
     </tbody></table>${rows.length > 1500 ? `<p class="muted small">Showing the first 1,500 rows for review; all ${rows.length.toLocaleString()} will import.</p>` : ''}</div>`;
   const rebuild = () => { stashNewAcct(); if (IMP.source === 'pdf') buildTxRowsFromPdf(); else buildTxRows(IMP.rawList); renderImport(); };
   if ($('#imp-acct')) $('#imp-acct').onchange = e => { IMP.accountId = e.target.value; rebuild(); };
@@ -483,7 +490,7 @@ function applyTxItem(it) {
     const acct = it.multi ? dest[r.srcAccount || ''] : dest[''];
     if (!acct) continue;   // an account you chose not to import
     if (r.importId) {
-      const ids = have[acct.id] || (have[acct.id] = new Set(state.transactions.filter(t => t.accountId === acct.id && t.importId).map(t => t.importId)));
+      const ids = have[acct.id] || (have[acct.id] = new Set(state.transactions.filter(t => t.accountId === acct.id).flatMap(txIds)));
       if (ids.has(r.importId)) { skipped++; continue; }   // e.g. two overlapping downloads in one batch
       ids.add(r.importId);
     }
@@ -496,6 +503,8 @@ function applyTxItem(it) {
     state.transactions.push(t); added++;
     if (!t.categoryId) unc++;
   }
+  // rows already here from a bank connection: the file's ID is added to them, so nothing is created and the next file skips them
+  for (const r of it.txRows) if (r.status === 'link' && !r.include && r.existingId && r.importId) { const t = state.transactions.find(x => x.id === r.existingId); if (t && !txIds(t).includes(r.importId)) (t.ids ||= []).push(r.importId); }
   state.transactions.sort((a, b) => b.date.localeCompare(a.date));
   const single = dest[''];
   if (single && it.ofx?.last4) single.last4 = it.ofx.last4;

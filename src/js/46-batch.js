@@ -43,7 +43,7 @@ function matchByOverlap(list) {
   const keys = list.map(t => keyOf(t, 1)), flippedKeys = list.map(t => keyOf(t, -1));
   let best = null, bestN = 0, second = 0;
   for (const a of txnAccounts()) {
-    const ids = new Set(state.transactions.filter(t => t.accountId === a.id && t.importId).map(t => (t.importId.startsWith('h:') ? t.importId.replace(/:\d+$/, '') : t.importId)));
+    const ids = new Set(state.transactions.filter(t => t.accountId === a.id).flatMap(txIds).map(k => (k.startsWith('h:') ? k.replace(/:\d+$/, '') : k)));
     if (!ids.size) continue;
     for (const [ks, flipped] of [[keys, false], [flippedKeys, true]]) {
       const n = ks.filter(k => ids.has(k)).length;
