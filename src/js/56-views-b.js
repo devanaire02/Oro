@@ -139,7 +139,7 @@ VIEWS.cashflow = () => {
     `<button class="btn primary" data-act="add-recurring">Add a bill or paycheck</button>`) + lensNote() + `
   <section class="panel">
     <header class="panel-head"><h2>Next ${days} days</h2><span class="muted small">Lowest point ${money(f.low.y, { cents: false })} on ${dateLabel(f.low.x)}. ${money(f.end, { cents: false })} on ${dateLabel(addDays(today(), days))}.</span></header>
-    ${recs.length ? chartHost({ h: 230, label: 'Projected cash balance', series: [{ points: f.series, color: 'var(--ink-accent)', area: true }], threshold: low || null, thresholdLabel: low ? `Cushion ${moneyCompact(low)}` : '', zero: true,
+    ${recs.length ? chartHost({ h: 230, label: 'Projected cash balance', ranges: [['30 days', 31], ['60 days', 61], ['90 days', 0]], rangeFrom: 'start', rangeKey: 'cf-forecast', series: [{ points: f.series, color: 'var(--ink-accent)', area: true }], threshold: low || null, thresholdLabel: low ? `Cushion ${moneyCompact(low)}` : '', zero: true,
       xFmt: x => dateLabel(x), markers: lowIdx > 0 ? [{ i: lowIdx, y: f.low.y, label: `Low ${moneyCompact(f.low.y)}`, below: true }] : [],
       tip: i => { const p = f.series[i]; const ev = f.events.filter(e => e.date === p.x); return `<strong>${dateLabel(p.x)}</strong><br>${money(p.y, { cents: false })}${ev.map(e => `<br><span class="muted">${esc(e.name)} ${money(e.amount, { cents: false, sign: true })}</span>`).join('')}`; } })
       : `<p class="muted">Add your paychecks, mortgage or rent, and other regular bills to project your cash balance day by day.</p>`}
@@ -167,7 +167,7 @@ VIEWS.cashflow = () => {
 
   <section class="panel">
     <header class="panel-head"><h2>Money in and out, by month</h2></header>
-    ${chartHost({ type: 'bars', h: 200, label: 'Income and spending by month', labels: months.map(m => MON[+m.slice(5) - 1]), series: [{ values: flows.map(x => x.income), color: 'var(--c1)' }, { values: flows.map(x => x.spending), color: 'var(--c4)' }],
+    ${chartHost({ type: 'bars', h: 200, label: 'Income and spending by month', labels: months.map(m => MON[+m.slice(5) - 1]), series: [{ name: 'Money in', values: flows.map(x => x.income), color: 'var(--c1)' }, { name: 'Money out', values: flows.map(x => x.spending), color: 'var(--c4)' }], pick: i => drillMonth(months[i]), pickLabel: 'Open the month', ranges: months.length > 6 ? [['6 months', 6], ['A year', 0]] : null, rangeKey: 'cf-months',
       tip: i => `<strong>${monthLabel(months[i])}</strong><br>In ${money(flows[i].income, { cents: false })}<br>Out ${money(flows[i].spending, { cents: false })}<br>Left over <span class="${signClass(flows[i].net)}">${money(flows[i].net, { cents: false })}</span>` })}
     <p class="legend"><span><i style="background:var(--c1)"></i>Money in</span><span><i style="background:var(--c4)"></i>Money out</span></p>
   </section>`;

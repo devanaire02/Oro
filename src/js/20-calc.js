@@ -330,15 +330,15 @@ function attentionItems() {
   if (nFlag) items.push({ tone: 'warn', text: `${nFlag} flagged transaction${nFlag > 1 ? 's' : ''} to sort out`, go: '#/transactions?flag=1&m=all' });
   const mk = thisMonth();
   const over = state.categories.filter(c => c.kind === 'expense' && c.budget > 0).map(c => ({ c, v: budgetView(c, mk) })).filter(x => x.v.period === 'year' ? x.v.actual > x.v.budget * 1.0001 : x.v.available < -0.01);
-  if (over.length) items.push({ tone: 'bad', text: `${over.length} categor${over.length > 1 ? 'ies are' : 'y is'} over budget: ${over.slice(0, 3).map(x => x.c.name).join(', ')}${over.length > 3 ? '…' : ''}`, go: '#/budget' });
+  if (over.length) items.push({ tone: 'bad', k: 'off', text: `${over.length} categor${over.length > 1 ? 'ies are' : 'y is'} over budget: ${over.slice(0, 3).map(x => x.c.name).join(', ')}${over.length > 3 ? '…' : ''}`, go: '#/budget' });
   if (state.recurring.length && forecastAccounts().length) {
     const f = forecast(60);
-    if (f.low.y < (state.settings.lowCash || 0)) items.push({ tone: 'bad', text: `Cash is projected to dip to ${money(f.low.y, { cents: false })} on ${dateLabel(f.low.x)}`, go: '#/cashflow' });
+    if (f.low.y < (state.settings.lowCash || 0)) items.push({ tone: 'bad', k: 'off', text: `Cash is projected to dip to ${money(f.low.y, { cents: false })} on ${dateLabel(f.low.x)}`, go: '#/cashflow' });
   }
   const conc = concentration();
   if (conc) items.push({ tone: 'info', text: `${conc.symbol} is ${pct(conc.share, 0)} of your investments`, go: '#/investments' });
   const behind = state.goals.filter(g => goalProgress(g).status === 'behind');
-  if (behind.length) items.push({ tone: 'warn', text: `${behind.length} goal${behind.length > 1 ? 's are' : ' is'} behind pace: ${behind.map(g => g.name).slice(0, 2).join(', ')}`, go: '#/planning' });
+  if (behind.length) items.push({ tone: 'warn', k: 'off', text: `${behind.length} goal${behind.length > 1 ? 's are' : ' is'} behind pace: ${behind.map(g => g.name).slice(0, 2).join(', ')}`, go: '#/planning' });
   const lm = addMonths(mk, -1);
   if (state.transactions.some(t => t.date.startsWith(lm)) && !state.reviews[lm]?.completedAt) items.push({ tone: 'warn', text: `${MONTHS[+lm.slice(5) - 1]} hasn’t been reviewed yet`, go: `#/review?m=${lm}` });
   const rep = detectRepeating();

@@ -1,107 +1,147 @@
-/* ================= Money date: a month, one screen at a time ================= */
-const MD = { i: 0, mk: null, slides: [] };
+/* ================= Money date: the month, one page at a time, for the two of you =================
+   It has an evening look of its own (deep forest, with the àdìrẹ field), a strip of cloth that is woven as you go, the few
+   things that matter up front, and every chart and figure opens into what's behind it without leaving the date. */
+const MD = { i: 0, mk: null, slides: [], dir: 1, lens: '' };
+/* A Yoruba proverb for the first page: it is with the hands gathered together that we beat the chest. */
+const MD_PROVERB = ['Àgbájọ ọwọ́ la fi ń sọ̀yà.', 'We are strongest with our hands together.'];
 function startMoneyDate(mk) {
   const lm = addMonths(thisMonth(), -1);
   MD.mk = mk || (state.transactions.some(t => t.date.startsWith(lm)) ? lm : thisMonth());
-  MD.i = 0;
+  MD.i = 0; MD.dir = 1;
+  if (!$('#present')) { MD.lens = UI.lens; UI.lens = ''; }   // a Money date is about the whole household
   MD.slides = buildSlides(MD.mk);
   let el = $('#present');
   if (!el) { el = document.createElement('div'); el.id = 'present'; el.className = 'present'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Money date'); document.body.appendChild(el); }
   document.body.classList.add('presenting');
   paintSlide();
 }
-/* Swipe left or right between slides on a phone or iPad */
+/* Swipe left or right between pages on a phone or iPad (a finger on a chart reads the chart instead) */
 document.addEventListener('touchstart', e => {
-  const el = e.target.closest?.('#present .slide'); if (!el || e.touches.length !== 1 || e.target.closest('textarea, input, select, button')) { MD.swipe = null; return; }
+  const el = e.target.closest?.('#present .slide'); if (!el || e.touches.length !== 1 || e.target.closest('textarea, input, select, button, .chart-host')) { MD.swipe = null; return; }
   MD.swipe = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
 }, { passive: true });
 document.addEventListener('touchend', e => {
-  const s = MD.swipe; MD.swipe = null; if (!s || !$('#present')) return;
+  const s = MD.swipe; MD.swipe = null; if (!s || !$('#present') || $('#modal')) return;
   const t = e.changedTouches[0], dx = t.clientX - s.x, dy = t.clientY - s.y;
   if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && Date.now() - s.t < 700) { if (dx > 0) mdAction('prev'); else if (MD.i < MD.slides.length - 1) mdAction('next'); }
 }, { passive: true });
-function endMoneyDate() { $('#present')?.remove(); document.body.classList.remove('presenting'); render(); }
+function endMoneyDate() {
+  if (!$('#present')) return;
+  $('#present').remove(); document.body.classList.remove('presenting');
+  if (document.fullscreenElement) document.exitFullscreen?.().catch?.(() => {});
+  UI.lens = MD.lens || '';
+  render();
+}
 function paintSlide() {
   const el = $('#present'); if (!el) return;
   for (const k in ChartSpecs) delete ChartSpecs[k];
-  const n = MD.slides.length, s = MD.slides[MD.i];
+  const n = MD.slides.length, s = MD.slides[MD.i], last = MD.i === n - 1;
+  el.dataset.kind = s.kind || '';
   el.innerHTML = `
     <header class="present-top"><span class="brand" title="Ọrọ̀ is Yoruba for wealth">${BRAND_MARK}</span><span class="present-title">Money date · ${monthLabel(MD.mk)}</span>
-      <span class="present-prog">${MD.slides.map((_, k) => `<i class="${k === MD.i ? 'on' : k < MD.i ? 'done' : ''}"></i>`).join('')}</span>
+      <div class="present-prog" role="group" aria-label="Pages">${MD.slides.map((x, k) => `<button type="button" class="${k === MD.i ? 'on' : k < MD.i ? 'done' : ''}" data-md="go:${k}" aria-label="Page ${k + 1}: ${esc(x.title)}"${k === MD.i ? ' aria-current="step"' : ''}></button>`).join('')}</div>
+      ${document.fullscreenEnabled && !isTouch() ? '<button class="icon-btn present-full" data-md="full" aria-label="Full screen" title="Full screen"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>' : ''}
       <button class="icon-btn" data-md="close" aria-label="Exit Money date">×</button></header>
-    <section class="slide" aria-live="polite">${s.html()}</section>
-    <footer class="present-nav"><button class="btn ghost" data-md="prev" ${MD.i ? '' : 'disabled'}>Back</button><span class="muted">${MD.i + 1} of ${n} · ${esc(s.title)}</span><button class="btn primary" data-md="next">${MD.i === n - 1 ? 'Finish' : 'Next'}</button></footer>`;
+    <section class="slide ${MD.dir < 0 ? 'back' : MD.dir > 0 ? 'fwd' : 'still'}" aria-live="polite"><div class="slide-in">${s.html()}</div></section>
+    <footer class="present-nav"><button class="btn ghost" data-md="prev" ${MD.i ? '' : 'disabled'}>Back</button><span class="muted">${MD.i + 1} of ${n} · ${esc(s.title)}</span><button class="btn primary" data-md="next">${last ? 'Finish' : MD.i === 0 ? 'Begin' : 'Next'}</button></footer>`;
+  if (MD.dir) CHART.page = null;   // a new page's charts draw themselves in
   drawCharts(el);
 }
+/* Something changed underneath (a transaction filed from a page of the date): work the pages out again, in place. */
+function mdRefresh() {
+  const el = $('#present'); if (!el || el.querySelector('textarea:focus')) return;
+  MD.slides = buildSlides(MD.mk); MD.i = Math.min(MD.i, MD.slides.length - 1); MD.dir = 0;
+  const y = el.querySelector('.slide')?.scrollTop || 0;
+  paintSlide();
+  if (y) el.querySelector('.slide').scrollTop = y;
+}
 function buildSlides(mk) {
-  const prev = addMonths(mk, -1);
+  const prev = addMonths(mk, -1), cur = mk === thisMonth(), sm = n => money(n, { cents: false });
   const txs = txInMonth(mk), f = flowSummary(txs);
   const avg = [1, 2, 3].map(i => flowSummary(txInMonth(addMonths(mk, -i))));
   const avgSpend = sum(avg.map(x => x.spending)) / 3;
-  const endNW = mk === thisMonth() ? totals().netWorth : snapshotNW(mk), startNW = snapshotNW(prev);
+  const endNW = cur ? totals().netWorth : snapshotNW(mk), startNW = snapshotNW(prev);
   const nwChange = endNW != null && startNW != null ? endNW - startNW : null;
-  const M = MONTHS[+mk.slice(5) - 1];
+  const M = MONTHS[+mk.slice(5) - 1], P = MONTHS[+prev.slice(5) - 1];
   const groups = spendByGroup(txs), items = donutItems(groups, 6), spendTotal = sum(groups.map(g => g.value));
-  const acts = monthActuals(mk);
   const exp = state.categories.filter(c => c.kind === 'expense' && c.period !== 'year' && c.budget > 0).map(c => ({ c, v: budgetView(c, mk) }));
   const wins = exp.filter(x => x.v.actual < x.v.budget).sort((a, b) => (b.v.budget - b.v.actual) - (a.v.budget - a.v.actual)).slice(0, 4);
   const misses = exp.filter(x => x.v.actual > x.v.budget).sort((a, b) => (b.v.actual - b.v.budget) - (a.v.actual - a.v.budget)).slice(0, 4);
   const notes = insights(mk, { limit: 4 });
+  const adults = people().filter(m => roleOf(m.id) === 'adult').map(m => m.name);
+  const who = adults.length === 2 ? `${adults[0]} and ${adults[1]}` : adults.length === 1 ? adults[0] : '';
   const slides = [];
-  slides.push({ title: 'The big picture', html: () => `<div class="slide-center">
+  slides.push({ title: 'Welcome', kind: 'cover', html: () => `<div class="md-cover">
+      <p class="md-kicker">Money date</p>
+      <h1 class="md-month">${M} <span>${mk.slice(0, 4)}</span></h1>
+      <div class="md-band" aria-hidden="true"></div>
+      <p class="slide-lede">${who ? `${esc(who)}: the` : 'The'} month in ${slides.length} short pages. Tap any chart or figure to see what’s behind it.</p>
+      <p class="md-proverb"><span lang="yo">${MD_PROVERB[0]}</span> ${MD_PROVERB[1]}</p></div>` });
+  slides.push({ title: 'The big picture', kind: 'big', html: () => `<div class="slide-center">
       <p class="eyebrow-plain">${monthLabel(mk)}</p>
-      <h1 class="slide-h">${f.net >= 0 ? `We kept <span class="num pos">${money(f.net, { cents: false })}</span> this month.` : `We spent <span class="num neg">${money(-f.net, { cents: false })}</span> more than came in.`}</h1>
-      <p class="slide-lede">${money(f.income, { cents: false })} came in and ${money(f.spending, { cents: false })} went out${nwChange != null ? `, and our net worth ${nwChange >= 0 ? 'grew' : 'fell'} by ${money(Math.abs(nwChange), { cents: false })}` : ''}.</p></div>` });
+      <h1 class="slide-h">${f.net >= 0 ? `We kept <span class="num pos">${sm(f.net)}</span> ${cur ? 'so far this month' : 'this month'}.` : `We spent <span class="num neg">${sm(-f.net)}</span> more than came in.`}</h1>
+      <p class="slide-lede">${sm(f.income)} came in and ${sm(f.spending)} went out${nwChange != null ? `, and our net worth ${nwChange >= 0 ? 'grew' : 'fell'} by ${sm(Math.abs(nwChange))}` : ''}.</p>
+      <div class="md-trio">
+        <button class="md-fig" data-drill="in|${mk}"><span>Came in</span><strong class="num">${sm(f.income)}</strong></button>
+        <button class="md-fig" data-drill="out|${mk}"><span>Went out</span><strong class="num">${sm(f.spending)}</strong></button>
+        <button class="md-fig" data-drill="kept|${mk}"><span>Kept</span><strong class="num ${signClass(f.net)}">${sm(f.net)}</strong></button></div></div>` });
+  slides.push({ title: 'What matters', kind: 'matters', html: () => `<h2 class="slide-h2">What matters ${cur ? 'now' : `from ${M}`}</h2>${briefPanel(mk, { head: false, big: true, inert: true, max: 3 })}` });
   if (endNW != null) {
     const series = netWorthSeries().filter(p => p.x <= mk).slice(-13);
-    const bk = BUCKETS.map(b => { const s = mk === thisMonth() ? null : state.snapshots[mk] || {}; const v = s ? sum(Object.entries(s).filter(([id]) => ACCOUNT_TYPES[acctById(id)?.type]?.bucket === b.id).map(([, x]) => x)) : (b.id === 'debt' ? -totals().debt : totals()[b.id]); return { b, v }; });
-    slides.push({ title: 'Net worth', html: () => `<div class="slide-split">
-      <div><p class="eyebrow-plain">What we own, minus what we owe</p><p class="slide-num num">${money(endNW, { cents: false })}</p>${startNW != null ? `<p class="slide-lede">${deltaChip(endNW, startNW, { pct: true })} since the end of ${MONTHS[+prev.slice(5) - 1]}</p>` : ''}
-        <ul class="slide-bars">${bk.map(({ b, v }) => `<li><span>${esc(b.label)}</span><span class="num ${v < 0 ? 'neg' : ''}">${money(v, { cents: false })}</span></li>`).join('')}</ul></div>
-      <div>${chartHost({ h: 300, series: [{ points: series, color: 'var(--ink-accent)', area: true }], xFmt: x => MON[+x.slice(5) - 1], tip: i => `<strong>${monthLabel(series[i].x)}</strong><br>${money(series[i].y, { cents: false })}` })}</div></div>` });
+    const bk = BUCKETS.map(b => { const s = cur ? null : state.snapshots[mk] || {}; const v = s ? sum(Object.entries(s).filter(([id]) => ACCOUNT_TYPES[acctById(id)?.type]?.bucket === b.id && acctInEstate(acctById(id))).map(([, x]) => x)) : (b.id === 'debt' ? -totals().debt : totals()[b.id]); return { b, v }; });
+    const moves = startNW != null ? netWorthMoves(mk).slice(0, 3) : [];
+    slides.push({ title: 'Net worth', kind: 'nw', html: () => `<div class="slide-split">
+      <div><p class="eyebrow-plain">What we own, minus what we owe</p><p class="slide-num num">${sm(endNW)}</p>${startNW != null ? `<p class="slide-lede">${deltaChip(endNW, startNW, { pct: true })} since the end of ${P}</p>` : ''}
+        <ul class="slide-bars">${bk.map(({ b, v }) => `<li><span>${esc(b.label)}</span><span class="num ${v < 0 ? 'neg' : ''}">${sm(v)}</span></li>`).join('')}</ul></div>
+      <div>${chartHost({ h: 280, label: 'Net worth by month', series: [{ points: series, color: 'var(--ink-accent)', area: true }], xFmt: x => MON[+x.slice(5) - 1], pick: i => drillNetWorth(series[i].x), pickLabel: 'See what changed', tip: i => `<strong>${monthLabel(series[i].x)}</strong><br>${sm(series[i].y)}` })}
+        ${moves.length ? `<div class="md-moves"><h3>What moved it most</h3><ul class="simple-list">${moves.map(r => `<li><span>${esc(r.name)}</span><span></span><span class="num ${signClass(r.d)}">${money(r.d, { cents: false, sign: true })}</span></li>`).join('')}</ul><button class="linklike md-more" data-drill="nw|${mk}">See every account</button></div>` : ''}</div></div>` });
   }
-  slides.push({ title: 'Money in and out', html: () => {
-    const mx = Math.max(f.income, f.spending, 1);
+  slides.push({ title: 'Money in and out', kind: 'io', html: () => {
+    const mx = Math.max(f.income, f.spending, 1), ms = Array.from({ length: 6 }, (_, i) => addMonths(mk, i - 5)), kept = ms.map(m => flowSummary(txInMonth(m)).net);
     return `<div class="slide-split">
       <div><h2 class="slide-h2">In and out</h2>
-        <div class="io-bars"><div><span>Came in</span><div class="io-track"><span style="width:${f.income / mx * 100}%;background:var(--pos)"></span></div><strong class="num">${money(f.income, { cents: false })}</strong></div>
-        <div><span>Went out</span><div class="io-track"><span style="width:${f.spending / mx * 100}%;background:var(--c4)"></span></div><strong class="num">${money(f.spending, { cents: false })}</strong></div></div>
-        <p class="slide-lede">Spending was ${avgSpend ? `${money(Math.abs(f.spending - avgSpend), { cents: false })} ${f.spending > avgSpend ? 'more' : 'less'} than` : 'compared with'} our usual month.</p></div>
+        <div class="io-bars"><button class="io-row" data-drill="in|${mk}"><span>Came in</span><div class="io-track"><span style="width:${f.income / mx * 100}%;background:var(--pos)"></span></div><strong class="num">${sm(f.income)}</strong></button>
+        <button class="io-row" data-drill="out|${mk}"><span>Went out</span><div class="io-track"><span style="width:${f.spending / mx * 100}%;background:var(--c4)"></span></div><strong class="num">${sm(f.spending)}</strong></button></div>
+        <p class="slide-lede">Spending was ${avgSpend ? `${sm(Math.abs(f.spending - avgSpend))} ${f.spending > avgSpend ? 'more' : 'less'} than` : 'compared with'} our usual month.</p>
+        <div class="md-mini"><h3>Kept, the last six months</h3>${chartHost({ type: 'bars', h: 150, label: 'Kept by month', labels: ms.map(m => MON[+m.slice(5) - 1]), series: [{ name: 'Kept', values: kept, color: 'var(--ink-accent)' }], pick: i => drillMonth(ms[i]), pickLabel: 'Open the month', tip: i => `<strong>${monthLabel(ms[i])}</strong><br>Kept ${money(kept[i], { cents: false })}` })}</div></div>
       <div class="slide-center">${ring(isFinite(f.rate) ? Math.max(0, f.rate) : 0, { size: 220, width: 20, label: isFinite(f.rate) ? pct(f.rate, 0) : '—', color: f.rate >= 0.2 ? 'var(--pos)' : f.rate >= 0 ? 'var(--ink-accent)' : 'var(--neg)' })}<p class="slide-lede">of what came in, we kept</p></div></div>`;
   } });
-  if (items.length) slides.push({ title: 'Where it went', html: () => `<div class="slide-split">
-      <div>${chartHost({ type: 'donut', h: 330, items, center: { value: money(spendTotal, { cents: false }), label: 'spent' } })}</div>
+  if (items.length) slides.push({ title: 'Where it went', kind: 'where', html: () => `<div class="slide-split">
+      <div>${chartHost({ type: 'donut', h: 330, label: 'Where the money went', items, center: { value: sm(spendTotal), label: 'spent' }, pick: it => drillGroup(it.label, mk) })}</div>
       <div><h2 class="slide-h2">Where it went</h2>${legendList(items, spendTotal)}
       <p class="slide-lede">${groups[0] ? `${esc(groups[0].label)} was the biggest piece at ${pct(groups[0].value / spendTotal, 0)}.` : ''}</p></div></div>` });
-  if (wins.length || misses.length) slides.push({ title: 'Budget', html: () => `<h2 class="slide-h2 center">How the budget did</h2><div class="slide-split">
-      <div class="wins"><h3>Under budget</h3>${wins.length ? wins.map(x => `<div class="wm good"><span>${esc(x.c.name)}</span><strong class="num">${money(x.v.budget - x.v.actual, { cents: false })} under</strong>${bar(x.v.actual, x.v.budget)}</div>`).join('') : '<p class="muted">Nothing came in under.</p>'}</div>
-      <div class="misses"><h3>Over budget</h3>${misses.length ? misses.map(x => `<div class="wm bad"><span>${esc(x.c.name)}</span><strong class="num">${money(x.v.actual - x.v.budget, { cents: false })} over</strong>${bar(x.v.actual, x.v.budget)}</div>`).join('') : '<p class="slide-lede pos">Every category stayed within budget.</p>'}</div></div>` });
+  if (wins.length || misses.length) slides.push({ title: 'Budget', kind: 'budget', html: () => `<h2 class="slide-h2 center">How the budget did</h2><div class="slide-split top">
+      <div class="wins"><h3>Under budget</h3>${wins.length ? wins.map(x => `<button class="wm good" data-drill="cat|${x.c.id}|${mk}"><span>${esc(x.c.name)}</span><strong class="num">${sm(x.v.budget - x.v.actual)} under</strong>${bar(x.v.actual, x.v.budget)}</button>`).join('') : '<p class="muted">Nothing came in under.</p>'}</div>
+      <div class="misses"><h3>Over budget</h3>${misses.length ? misses.map(x => `<button class="wm bad" data-drill="cat|${x.c.id}|${mk}"><span>${esc(x.c.name)}</span><strong class="num">${sm(x.v.actual - x.v.budget)} over</strong>${bar(x.v.actual, x.v.budget)}</button>`).join('') : '<p class="slide-lede pos">Every category stayed within budget.</p>'}</div></div>` });
   if (people().length > 1) {
     const per = people().map(m => ({ m, f: flowSummary(txs.filter(t => personOf(t) === m.id)), a: categoryActuals(txs.filter(t => personOf(t) === m.id)) })).filter(x => x.f.spending > 0);
     const tot = sum(per.map(x => x.f.spending)) || 1;
-    if (per.length > 1) slides.push({ title: 'Who spent what', html: () => `<h2 class="slide-h2 center">Who spent what</h2>
+    if (per.length > 1) slides.push({ title: 'Who spent what', kind: 'who', html: () => `<h2 class="slide-h2 center">Who spent what</h2>
       <div class="stack huge">${per.map(x => `<span style="width:${x.f.spending / tot * 100}%;background:${memberColor(x.m.id)}"></span>`).join('')}</div>
-      <div class="people-cards">${per.map(x => `<div class="person-card" style="--pc:${memberColor(x.m.id)}"><span class="person-name">${esc(x.m.name)}</span><span class="s-value num">${money(x.f.spending, { cents: false })}</span><span class="muted">${pct(x.f.spending / tot, 0)}</span><ul>${Object.entries(x.a).filter(([id, v]) => v > 0 && catById(id)?.kind === 'expense').sort((p, q) => q[1] - p[1]).slice(0, 3).map(([id, v]) => `<li><span>${esc(catName(id))}</span><span class="num">${money(v, { cents: false })}</span></li>`).join('')}</ul></div>`).join('')}</div>` });
+      <div class="people-cards">${per.map(x => `<div class="person-card" style="--pc:${memberColor(x.m.id)}"><span class="person-name">${esc(x.m.name)}</span><span class="s-value num">${sm(x.f.spending)}</span><span class="muted">${pct(x.f.spending / tot, 0)}</span><ul>${Object.entries(x.a).filter(([id, v]) => v > 0 && catById(id)?.kind === 'expense').sort((p, q) => q[1] - p[1]).slice(0, 3).map(([id, v]) => `<li><span>${esc(catName(id))}</span><span class="num">${sm(v)}</span></li>`).join('')}</ul></div>`).join('')}</div>` });
   }
-  if (state.goals.length) slides.push({ title: 'Goals', html: () => `<h2 class="slide-h2 center">Our goals</h2><div class="goal-strip big">${state.goals.map(goalTile).join('')}</div>` });
-  const nextFrom = mk === thisMonth() ? today() : `${addMonths(mk, 1)}-01`;
+  if (state.goals.length) slides.push({ title: 'Goals', kind: 'goals', html: () => `<h2 class="slide-h2 center">Our goals</h2><div class="goal-strip big">${state.goals.map(goalTile).join('')}</div>` });
+  const nextFrom = cur ? today() : `${addMonths(mk, 1)}-01`;
   const ahead = []; for (const r of state.recurring) for (const d of occurrences(r, nextFrom, addDays(nextFrom, 40))) ahead.push({ d, r });
   ahead.sort((a, b) => a.d.localeCompare(b.d));
-  slides.push({ title: 'Looking ahead', html: () => `<div class="slide-split">
+  slides.push({ title: 'Looking ahead', kind: 'ahead', html: () => `<div class="slide-split top">
       <div><h2 class="slide-h2">Looking ahead</h2>
         ${notes.length ? `<ul class="insights big">${notes.map(n => `<li class="${n.tone}">${esc(n.text)}</li>`).join('')}</ul>` : '<p class="slide-lede">Nothing unusual to flag.</p>'}</div>
-      <div><h3>Bills in the next few weeks</h3><ul class="simple-list">${ahead.filter(x => Math.abs(x.r.amount) >= 50).slice(0, 8).map(x => `<li><span class="date-chip">${dateLabel(x.d)}</span><span>${esc(x.r.name)}</span><span class="num ${signClass(x.r.amount)}">${money(x.r.amount, { cents: false })}</span></li>`).join('') || '<li class="muted">None scheduled.</li>'}</ul></div></div>` });
-  slides.push({ title: 'Decisions', html: () => `<div class="slide-narrow"><h2 class="slide-h2">What we decided</h2>
+      <div><h3>Bills in the next few weeks</h3><ul class="simple-list">${ahead.filter(x => Math.abs(x.r.amount) >= 50).slice(0, 8).map(x => `<li><span class="date-chip">${dateLabel(x.d)}</span><span>${esc(x.r.name)}</span><span class="num ${signClass(x.r.amount)}">${sm(x.r.amount)}</span></li>`).join('') || '<li class="muted">None scheduled.</li>'}</ul></div></div>` });
+  slides.push({ title: 'Decisions', kind: 'decide', html: () => { const open = whatMatters(mk).decide.slice(0, 4); return `<div class="slide-narrow"><h2 class="slide-h2">What we decided</h2>
+      ${open.length ? `<div class="md-settle"><h3>Still to settle</h3><ul>${open.map(o => `<li>${esc(o.text)}</li>`).join('')}</ul></div>` : ''}
       <p class="slide-lede">Write down anything you agreed to change. It’s saved with ${M}’s review.</p>
-      <textarea data-review-notes="${mk}" rows="7" placeholder="e.g. Move $300 a month from dining out to the roof fund">${esc(state.reviews[mk]?.notes || '')}</textarea>
+      <textarea data-review-notes="${mk}" rows="6" placeholder="e.g. Move $300 a month from dining out to the roof fund">${esc(state.reviews[mk]?.notes || '')}</textarea>
       <div class="actions"><button class="btn primary" data-md="done">Mark ${M} as reviewed</button></div>
-      <p class="slide-sign"><span class="wordmark">Ọrọ̀</span> · ${ORO_TAGLINE}</p></div>` });
+      <p class="slide-sign"><span class="wordmark">Ọrọ̀</span> · ${ORO_TAGLINE}</p></div>`; } });
   return slides;
 }
 function mdAction(a) {
   if (a === 'close') return endMoneyDate();
-  if (a === 'prev' && MD.i > 0) { MD.i--; return paintSlide(); }
-  if (a === 'next') { if (MD.i < MD.slides.length - 1) { MD.i++; return paintSlide(); } return endMoneyDate(); }
+  if (a === 'full') { if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.().catch(() => {}); return; }
+  if (a.startsWith('go:')) { const k = clamp(+a.slice(3), 0, MD.slides.length - 1); if (k !== MD.i) { MD.dir = k > MD.i ? 1 : -1; MD.i = k; paintSlide(); } return; }
+  if (a === 'prev' && MD.i > 0) { MD.i--; MD.dir = -1; return paintSlide(); }
+  if (a === 'next') { if (MD.i < MD.slides.length - 1) { MD.i++; MD.dir = 1; return paintSlide(); } return endMoneyDate(); }
   if (a === 'done') { (state.reviews[MD.mk] = state.reviews[MD.mk] || {}).completedAt = today(); commit({ silent: true }); toast(`${monthLabel(MD.mk)} marked as reviewed.`); return endMoneyDate(); }
 }
 

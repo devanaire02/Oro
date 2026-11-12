@@ -11,20 +11,20 @@ function insights(mk = thisMonth(), opts = {}) {
   for (const c of state.categories.filter(c => c.kind === 'expense' && c.budget > 0)) {
     const v = budgetView(c, mk);
     if (fixed(c) && v.period !== 'year' && v.available >= -1) continue;
-    if (v.period === 'year') { if (v.actual > v.budget) out.push({ tone: 'bad', w: v.actual - v.budget, text: `${c.name} is ${money(v.actual - v.budget, { cents: false })} over its yearly budget.` }); continue; }
-    if (v.available < -1) out.push({ tone: 'bad', w: -v.available, text: `${c.name} is ${money(-v.available, { cents: false })} over budget${isCur ? ' this month' : ''}.` });
-    else if (isCur && dayShare < 0.85 && v.actual > 100 && v.actual > (v.budget + (v.carry || 0)) * dayShare * 1.3) out.push({ tone: 'warn', w: v.actual - v.budget * dayShare, text: `${c.name} is ahead of pace: ${money(v.actual, { cents: false })} of ${money(v.budget + (v.carry || 0), { cents: false })} with ${dim - dayN} days to go.` });
+    if (v.period === 'year') { if (v.actual > v.budget) out.push({ tone: 'bad', w: v.actual - v.budget, go: '#/budget', text: `${c.name} is ${money(v.actual - v.budget, { cents: false })} over its yearly budget.` }); continue; }
+    if (v.available < -1) out.push({ tone: 'bad', w: -v.available, drill: `cat|${c.id}|${mk}`, text: `${c.name} is ${money(-v.available, { cents: false })} over budget${isCur ? ' this month' : ''}.` });
+    else if (isCur && dayShare < 0.85 && v.actual > 100 && v.actual > (v.budget + (v.carry || 0)) * dayShare * 1.3) out.push({ tone: 'warn', w: v.actual - v.budget * dayShare, drill: `cat|${c.id}|${mk}`, text: `${c.name} is ahead of pace: ${money(v.actual, { cents: false })} of ${money(v.budget + (v.carry || 0), { cents: false })} with ${dim - dayN} days to go.` });
   }
   const acts = monthActuals(mk);
   for (const c of state.categories.filter(c => c.kind === 'expense' && !c.rental)) {
     const a = acts[c.id] || 0, avg = trailingAvg(c.id, mk, 3);
-    if (!isCur && a > 150 && avg > 0 && a > avg * 1.4 && !out.some(o => o.text.startsWith(c.name))) out.push({ tone: 'info', w: (a - avg) / 2, text: `${c.name} came to ${money(a, { cents: false })}, versus a usual ${money(avg, { cents: false })}.` });
+    if (!isCur && a > 150 && avg > 0 && a > avg * 1.4 && !out.some(o => o.text.startsWith(c.name))) out.push({ tone: 'info', w: (a - avg) / 2, drill: `cat|${c.id}|${mk}`, text: `${c.name} came to ${money(a, { cents: false })}, versus a usual ${money(avg, { cents: false })}.` });
   }
-  if (isCur) for (const u of upcoming(35).filter(u => u.amount <= -1000 && !/mortgage|rent\b|card payment/i.test(u.name))) out.push({ tone: 'info', w: -u.amount / 3, text: `${u.name} of ${money(-u.amount, { cents: false })} is due ${dateLabel(u.date)}.` });
-  for (const g of state.goals) { const p = goalProgress(g); if (p.status === 'behind') out.push({ tone: 'warn', w: 400, text: `${g.name} needs ${money(p.needed, { cents: false })} a month to hit ${dateLabel(g.targetDate, true)}; you’re putting in ${money(g.monthly, { cents: false })}.` }); else if (p.status === 'done') out.push({ tone: 'good', w: 300, text: `${g.name} is fully funded. Nice work.` }); }
-  for (const d of detectRepeating().filter(d => d.isNew)) out.push({ tone: 'info', w: d.monthly * 6, text: `New subscription: ${d.payee}, ${money(d.monthly)} a month (${money(d.monthly * 12, { cents: false })} a year).` });
+  if (isCur) for (const u of upcoming(35).filter(u => u.amount <= -1000 && !/mortgage|rent\b|card payment/i.test(u.name))) out.push({ tone: 'info', w: -u.amount / 3, go: '#/cashflow', text: `${u.name} of ${money(-u.amount, { cents: false })} is due ${dateLabel(u.date)}.` });
+  for (const g of state.goals) { const p = goalProgress(g); if (p.status === 'behind') out.push({ tone: 'warn', w: 400, go: '#/planning', text: `${g.name} needs ${money(p.needed, { cents: false })} a month to hit ${dateLabel(g.targetDate, true)}; you’re putting in ${money(g.monthly, { cents: false })}.` }); else if (p.status === 'done') out.push({ tone: 'good', w: 300, go: '#/planning', text: `${g.name} is fully funded. Nice work.` }); }
+  for (const d of detectRepeating().filter(d => d.isNew)) out.push({ tone: 'info', w: d.monthly * 6, go: '#/cashflow', text: `New subscription: ${d.payee}, ${money(d.monthly)} a month (${money(d.monthly * 12, { cents: false })} a year).` });
   const f = flowSummary(txInMonth(mk)), avgRate = (() => { const xs = [1, 2, 3].map(i => flowSummary(txInMonth(addMonths(mk, -i)))); const inc = sum(xs.map(x => x.income)), sp = sum(xs.map(x => x.spending)); return inc ? (inc - sp) / inc : NaN; })();
-  if (!isCur && isFinite(f.rate) && isFinite(avgRate) && Math.abs(f.rate - avgRate) > 0.05) out.push({ tone: f.rate > avgRate ? 'good' : 'warn', w: 500, text: `You kept ${pct(f.rate, 0)} of income, ${f.rate > avgRate ? 'better than' : 'below'} the recent ${pct(avgRate, 0)}.` });
+  if (!isCur && isFinite(f.rate) && isFinite(avgRate) && Math.abs(f.rate - avgRate) > 0.05) out.push({ tone: f.rate > avgRate ? 'good' : 'warn', w: 500, drill: `kept|${mk}`, text: `You kept ${pct(f.rate, 0)} of income, ${f.rate > avgRate ? 'better than' : 'below'} the recent ${pct(avgRate, 0)}.` });
   return out.sort((a, b) => b.w - a.w).slice(0, opts.limit || 5);
 }
 
@@ -71,7 +71,8 @@ function overviewDetailed(sub) {
   const t = totals(true), mk = thisMonth(), prev = addMonths(mk, -1);
   const prevNW = snapshotNW(prev, true);
   const series = netWorthSeries(true);
-  const shown = UI.nwRange === 'all' ? series : series.slice(-13);
+  const nwN = { 6: 7, 12: 13, 36: 37 }[UI.nwRange], shown = nwN ? series.slice(-nwN) : series;
+  const nwRanges = [['6', '6M', 8], ['12', '1Y', 0], ['36', '3Y', 38], ['all', 'All', 14]].filter(r => series.length >= r[2]);
   const txs = lensed(txInMonth(mk));
   const f = flowSummary(txs);
   const groups = spendByGroup(txs), items = donutItems(groups), spendTotal = sum(groups.map(g => g.value));
@@ -89,7 +90,7 @@ function overviewDetailed(sub) {
   const invSeries = monthlySeries(m => { const s = state.snapshots[m] || {}; return sum(Object.entries(s).filter(([id]) => inNW(id) && ['invest'].includes(ACCOUNT_TYPES[acctById(id)?.type]?.bucket)).map(([, v]) => v)); });
   const fc = forecast(60, true);
   const days = {};
-  for (const tx of lensed(txInRange(addDays(today(), -53 * 7), today()))) for (const l of txLines(tx)) { const c = catById(l.categoryId); if ((c && c.kind === 'expense' && !c.rental && !/Mortgage|Auto payment|Childcare/.test(c.name)) || (!c && l.amount < 0)) days[tx.date] = (days[tx.date] || 0) - l.amount; }
+  for (const tx of lensed(txInRange(addDays(today(), -53 * 7), today()))) for (const l of txLines(tx)) if (isDailySpend(l)) days[tx.date] = (days[tx.date] || 0) - l.amount;
   const goals = state.goals.slice(0, 4);
 
   return pageHead('Overview', sub, `${ciButton()}${bankButton()}<button class="btn" data-act="import">Import</button><button class="btn primary" data-act="add-txn">Add transaction</button>`) + lensNote() + `
@@ -106,24 +107,28 @@ function overviewDetailed(sub) {
       ${outEstateLine(t)}
     </div>
     <div class="hero-chart">
-      <div class="seg small" role="group" aria-label="Range"><button class="${UI.nwRange === '12' ? 'on' : ''}" data-nwrange="12">1Y</button><button class="${UI.nwRange === 'all' ? 'on' : ''}" data-nwrange="all">All</button></div>
-      ${chartHost({ h: 220, label: 'Net worth by month', series: [{ points: shown, color: 'var(--ink-accent)', area: true }], xFmt: x => monthLabel(x, true),
-        tip: i => { const p = shown[i], q = shown[i - 1]; return `<strong>${monthLabel(p.x)}</strong><br>${money(p.y, { cents: false })}${q ? `<br><span class="${signClass(p.y - q.y)}">${money(p.y - q.y, { cents: false, sign: true })}</span>` : ''}`; } })}
+      <div class="seg small" role="group" aria-label="Range">${nwRanges.map(([k, l]) => `<button class="${UI.nwRange === k ? 'on' : ''}" data-nwrange="${k}">${l}</button>`).join('')}</div>
+      ${chartHost({ h: 220, label: 'Net worth by month', series: [{ points: shown, color: 'var(--ink-accent)', area: true }], xFmt: x => monthLabel(x, true), pick: i => drillNetWorth(shown[i].x), pickLabel: 'See what changed',
+        tip: i => { const p = shown[i], q = shown[i - 1]; return `<strong>${monthLabel(p.x)}</strong><br><span class="num">${money(p.y, { cents: false })}</span>${q ? `<br><span class="num ${signClass(p.y - q.y)}">${money(p.y - q.y, { cents: false, sign: true })}</span> <span class="muted">in the month</span>` : ''}`; } })}
     </div>
   </section>
 
+  ${briefPanel(mk)}
+
   <section class="kpis-row">
-    <div class="kpi kpi-in"><span class="kpi-label">Money in this month</span><span class="kpi-value num ${f.income > 0 ? 'pos' : ''}">${money(f.income, { cents: false })}</span><span class="kpi-sub">${lastIn ? `${money(lastIn, { cents: false })} in ${MONTHS[+prev.slice(5) - 1]}` : 'Paychecks and other money coming in'}</span>${sparkline(inSeries, { color: 'var(--pos)' })}</div>
-    <div class="kpi kpi-out"><span class="kpi-label">Spent in ${MONTHS[new Date().getMonth()]}</span><span class="kpi-value num">${money(f.spending, { cents: false })}</span><span class="kpi-sub">${planned ? `of ${money(planned, { cents: false })} planned · ${pct(f.spending / planned, 0)}` : 'No budget set'}</span>${sparkline(spendSeries, { color: 'var(--c4)' })}</div>
-    <div class="kpi kpi-kept"><span class="kpi-label">Kept this month</span><span class="kpi-value num ${signClass(f.net)}">${money(f.net, { cents: false })}</span><span class="kpi-sub">${isFinite(f.rate) ? `${pct(f.rate, 0)} of income` : 'No income yet'}</span>${sparkline(keptSeries, { color: 'var(--pos)' })}</div>
-    <div class="kpi kpi-bal"><span class="kpi-label">Cash on hand</span><span class="kpi-value num">${money(t.cash, { cents: false })}</span><span class="kpi-sub">${state.recurring.length ? `Low of ${money(fc.low.y, { cents: false })} on ${dateLabel(fc.low.x)}` : 'Add bills to forecast'}</span>${sparkline(cashSeries, { color: 'var(--c2)' })}</div>
-    <div class="kpi kpi-bal"><span class="kpi-label">Investments</span><span class="kpi-value num">${money(t.invest, { cents: false })}</span><span class="kpi-sub">${(() => { const p = invSeries[invSeries.length - 2]; return p ? `${money(t.invest - p, { cents: false, sign: true })} this month` : '&nbsp;'; })()}</span>${sparkline(invSeries, { color: 'var(--c1)' })}</div>
+    <div class="month-strip" role="group" aria-label="This month: money in, less what was spent, is what was kept">
+    <div class="kpi kpi-in" data-drill="in|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Money in this month</span><span class="kpi-value num ${f.income > 0 ? 'pos' : ''}">${money(f.income, { cents: false })}</span><span class="kpi-sub">${lastIn ? `${money(lastIn, { cents: false })} in ${MONTHS[+prev.slice(5) - 1]}` : 'Paychecks and other money coming in'}</span>${sparkline(inSeries, { color: 'var(--pos)' })}</div>
+    <div class="kpi kpi-out" data-drill="out|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Spent in ${MONTHS[new Date().getMonth()]}</span><span class="kpi-value num">${money(f.spending, { cents: false })}</span><span class="kpi-sub">${planned ? `of ${money(planned, { cents: false })} planned · ${pct(f.spending / planned, 0)}` : 'No budget set'}</span>${sparkline(spendSeries, { color: 'var(--c4)' })}</div>
+    <div class="kpi kpi-kept" data-drill="kept|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Kept this month</span><span class="kpi-value num ${signClass(f.net)}">${money(f.net, { cents: false })}</span><span class="kpi-sub">${isFinite(f.rate) ? `${pct(f.rate, 0)} of income` : 'No income yet'}</span>${sparkline(keptSeries, { color: 'var(--pos)' })}</div>
+    </div>
+    <a class="kpi kpi-bal" href="#/cashflow"><span class="kpi-label">Cash on hand</span><span class="kpi-value num">${money(t.cash, { cents: false })}</span><span class="kpi-sub">${state.recurring.length ? `Low of ${money(fc.low.y, { cents: false })} on ${dateLabel(fc.low.x)}` : 'Add bills to forecast'}</span>${sparkline(cashSeries, { color: 'var(--c2)' })}</a>
+    <a class="kpi kpi-bal" href="#/investments"><span class="kpi-label">Investments</span><span class="kpi-value num">${money(t.invest, { cents: false })}</span><span class="kpi-sub">${(() => { const p = invSeries[invSeries.length - 2]; return p ? `${money(t.invest - p, { cents: false, sign: true })} this month` : '&nbsp;'; })()}</span>${sparkline(invSeries, { color: 'var(--c1)' })}</a>
   </section>
 
   <div class="cols">
     <section class="panel">
       <header class="panel-head"><h2>Where it went</h2><a href="#/reports?r=spending&p=m">Breakdown</a></header>
-      ${items.length ? `<div class="donut-wrap">${chartHost({ type: 'donut', h: 200, items, center: { value: money(spendTotal, { cents: false }), label: 'spent so far' } })}${legendList(items, spendTotal)}</div>` : '<p class="muted">No spending recorded this month yet.</p>'}
+      ${items.length ? `<div class="donut-wrap">${chartHost({ type: 'donut', h: 200, label: 'Where the money went this month', items, center: { value: money(spendTotal, { cents: false }), label: 'spent so far' }, pick: it => drillGroup(it.label, mk) })}${legendList(items, spendTotal)}</div>` : '<p class="muted">No spending recorded this month yet.</p>'}
     </section>
     <section class="panel">
       <header class="panel-head"><h2>Flexible spending</h2><a href="#/budget">Budget</a></header>
@@ -135,7 +140,7 @@ function overviewDetailed(sub) {
 
   <section class="panel">
     <header class="panel-head"><h2>Daily spending</h2><span class="muted small">Darker days mean more spending. Mortgage, rent and other fixed bills are left out.</span></header>
-    ${chartHost({ type: 'heatmap', days, weeks: 52 })}
+    ${chartHost({ type: 'heatmap', label: 'Daily spending', days, weeks: 52, pick: iso => drillDay(iso) })}
   </section>
 
   <div class="cols">
@@ -165,7 +170,6 @@ function overviewSimple(sub) {
   const txs = lensed(txInMonth(mk)), f = flowSummary(txs);
   const planned = sum(state.categories.filter(c => c.kind === 'expense').map(c => c.period === 'year' ? (c.budget || 0) / 12 : (c.budget || 0)));
   const groups = spendByGroup(txs), items = donutItems(groups, 5), total = sum(groups.map(g => g.value));
-  const notes = insights(mk, { limit: 4 });
   const up = upcoming(21, true).filter(u => Math.abs(u.amount) >= 100).slice(0, 5);
   const series = netWorthSeries(true).slice(-13);
   return `<header class="page-head simple-head"><div><p class="sub">${sub}</p><h1 class="big-sentence">${who} spent <span class="num">${money(f.spending, { cents: false })}</span>${!lensActive() && planned ? ` of the <span class="num">${money(planned, { cents: false })}</span> we planned` : ''} this month.</h1></div>${checkinOn() ? `<div class="actions">${ciButton()}</div>` : ''}</header>
@@ -174,28 +178,23 @@ function overviewSimple(sub) {
     <div class="s-card"><span class="s-label">Went out</span><span class="s-value num">${money(f.spending, { cents: false })}</span><span class="s-sub">${planned ? `${pct(Math.min(9.99, f.spending / planned), 0)} of the plan` : '&nbsp;'}</span></div>
     <div class="s-card accent"><span class="s-label">Kept</span><span class="s-value num ${signClass(f.net)}">${money(f.net, { cents: false })}</span><span class="s-sub">${isFinite(f.rate) ? `${pct(f.rate, 0)} of what came in` : '&nbsp;'}</span></div>
   </section>
+  ${briefPanel(mk)}
   <div class="cols">
     <section class="panel">
       <header class="panel-head"><h2>Where it went</h2></header>
-      ${items.length ? `<div class="donut-wrap big">${chartHost({ type: 'donut', h: 230, items, center: { value: money(total, { cents: false }), label: 'this month' } })}${legendList(items, total)}</div>` : '<p class="muted">Nothing spent yet this month.</p>'}
-    </section>
-    <section class="panel">
-      <header class="panel-head"><h2>Worth a look</h2></header>
-      ${notes.length ? `<ul class="insights">${notes.map(n => `<li class="${n.tone}">${esc(n.text)}</li>`).join('')}</ul>` : '<p class="muted">Nothing stands out. Everything is on track.</p>'}
-    </section>
-  </div>
-  <div class="cols">
-    <section class="panel nw-simple">
-      <header class="panel-head"><h2>${lensSingleOut() ? `${esc(memberName(UI.lens))}’s accounts` : 'What we own, minus what we owe'}</h2></header>
-      <span class="s-value num">${money(t.netWorth, { cents: false })}</span>
-      <p class="muted">${prevNW == null ? 'History builds month by month.' : `${t.netWorth >= prevNW ? 'Up' : 'Down'} ${money(Math.abs(t.netWorth - prevNW), { cents: false })} since the end of ${MONTHS[+prev.slice(5) - 1]}.`}</p>
-      ${chartHost({ h: 150, padL: 50, label: 'Net worth', series: [{ points: series, color: 'var(--ink-accent)', area: true, nodots: true }], xFmt: x => MON[+x.slice(5) - 1], tip: i => `<strong>${monthLabel(series[i].x)}</strong><br>${money(series[i].y, { cents: false })}` })}
+      ${items.length ? `<div class="donut-wrap big">${chartHost({ type: 'donut', h: 230, label: 'Where the money went this month', items, center: { value: money(total, { cents: false }), label: 'this month' }, pick: it => drillGroup(it.label, mk) })}${legendList(items, total)}</div>` : '<p class="muted">Nothing spent yet this month.</p>'}
     </section>
     <section class="panel">
       <header class="panel-head"><h2>Coming up</h2></header>
       ${up.length ? `<ul class="simple-list">${up.map(u => `<li><span class="date-chip">${dateLabel(u.date)}</span><span>${esc(u.name)}</span><span class="num ${signClass(u.amount)}">${money(u.amount, { cents: false })}</span></li>`).join('')}</ul>` : '<p class="muted">No big bills in the next three weeks.</p>'}
     </section>
   </div>
+    <section class="panel nw-simple">
+      <header class="panel-head"><h2>${lensSingleOut() ? `${esc(memberName(UI.lens))}’s accounts` : 'What we own, minus what we owe'}</h2></header>
+      <span class="s-value num">${money(t.netWorth, { cents: false })}</span>
+      <p class="muted">${prevNW == null ? 'History builds month by month.' : `${t.netWorth >= prevNW ? 'Up' : 'Down'} ${money(Math.abs(t.netWorth - prevNW), { cents: false })} since the end of ${MONTHS[+prev.slice(5) - 1]}.`}</p>
+      ${chartHost({ h: 150, padL: 50, label: 'Net worth', series: [{ points: series, color: 'var(--ink-accent)', area: true, nodots: true }], xFmt: x => MON[+x.slice(5) - 1], tip: i => `<strong>${monthLabel(series[i].x)}</strong><br>${money(series[i].y, { cents: false })}` })}
+    </section>
   ${state.goals.length ? `<section class="panel"><header class="panel-head"><h2>Our goals</h2></header><div class="goal-strip">${state.goals.map(goalTile).join('')}</div></section>` : ''}`;
 }
 

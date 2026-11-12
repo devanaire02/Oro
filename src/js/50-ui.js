@@ -132,6 +132,7 @@ function render() {
   paintTalk();
   if (anchor) keepPlace(anchor, keepY);
   else if (keepY) keepScroll(keepY);
+  mdRefresh();   // a Money date that is open follows the change (59-present.js)
 }
 /* How to find a box again after the page is drawn anew: its id, or its first data- attribute. */
 function fieldSel(el) {

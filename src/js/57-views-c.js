@@ -19,7 +19,8 @@ VIEWS.reports = p => {
     <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Left over</th><th class="num">Savings rate</th></tr></thead>
       <tbody><tr><th scope="row">${esc(R.label)}</th><td class="num">${money(f.income, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td><td class="num ${signClass(f.net)}">${money(f.net, { cents: false })}</td><td class="num">${pct(f.rate, 0)}</td></tr></tbody></table></section>
     <section class="panel"><header class="panel-head"><h2>Where the money came from and went</h2><span class="muted small">${isTouch() ? 'Tap' : 'Hover over'} a band for the amount</span></header>
-      ${chartHost({ type: 'sankey', left: sk.left, right: sk.right, total: Math.max(sk.income, sk.spending), empty: 'No income or spending in this period.' })}</section>`;
+      ${chartHost({ type: 'sankey', label: 'Where the money came from and went', left: sk.left, right: sk.right, total: Math.max(sk.income, sk.spending), empty: 'No income or spending in this period.',
+        pick: R.from.slice(0, 7) === R.to.slice(0, 7) ? (n, side) => { const m = R.from.slice(0, 7); if (n.saved) drillKept(m); else if (side === 'r') drillGroup(n.name, m); else drillFlow('in', m); } : null })}</section>`;
   }
 
   if (tab === 'spending') {
@@ -117,7 +118,7 @@ VIEWS.reports = p => {
   const ago = ms[Math.max(0, ms.length - 13)];
   return head + `
   <section class="panel"><header class="panel-head"><h2>Net worth over time</h2><span class="muted small">Areas show what you own by type; debt sits below zero. The line is net worth.</span></header>
-    ${chartHost({ type: 'stack', h: 300, labels: ms.map(m => monthLabel(m, true)), series: [['cash', 'Cash', 'var(--c2)'], ['invest', 'Investments', 'var(--c1)'], ['illiquid', 'Property and private', 'var(--c4)'], ['debt', 'Debt', 'var(--neg)']].map(([b, name, color]) => ({ name, color, values: bucketVals(b) })), line: { values: nw, color: 'var(--ink)' },
+    ${chartHost({ type: 'stack', h: 300, labels: ms.map(m => monthLabel(m, true)), series: [['cash', 'Cash', 'var(--c2)'], ['invest', 'Investments', 'var(--c1)'], ['illiquid', 'Property and private', 'var(--c4)'], ['debt', 'Debt', 'var(--neg)']].map(([b, name, color]) => ({ name, color, values: bucketVals(b) })), line: { values: nw, color: 'var(--ink)' }, pick: i => drillNetWorth(ms[i]), pickLabel: 'See what changed',
       tip: i => `<strong>${monthLabel(ms[i])}</strong><br>Net worth ${money(nw[i], { cents: false })}` })}
     <p class="legend"><span><i style="background:var(--c2)"></i>Cash</span><span><i style="background:var(--c1)"></i>Investments</span><span><i style="background:var(--c4)"></i>Property and private</span><span><i style="background:var(--neg)"></i>Debt</span><span><i style="background:var(--ink);height:2px"></i>Net worth</span></p></section>
   <table class="ledger" data-sort-id="rep-nw"><thead><tr><th>Account</th><th class="num">${ago ? monthLabel(ago, true) : ''}</th><th class="num">Now</th><th class="num">Change</th><th class="spark-cell hide-sm" data-nosort>Trend</th></tr></thead><tbody>

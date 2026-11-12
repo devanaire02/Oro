@@ -415,7 +415,7 @@ document.addEventListener('keydown', e => {
   const mod = e.metaKey || e.ctrlKey;
   if (document.body.classList.contains('locked')) return;
   if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); return openPalette(); }
-  if ($('#present') && !typing) {
+  if ($('#present') && !typing && !$('#modal') && !e.target.closest?.('.chart-host')) {
     if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); return mdAction('next'); }
     if (e.key === 'ArrowLeft') { e.preventDefault(); return mdAction('prev'); }
     if (e.key === 'Escape') return mdAction('close');

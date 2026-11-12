@@ -1186,15 +1186,15 @@ function attentionItems() {
   if (nFlag) items.push({ tone: 'warn', text: `${nFlag} flagged transaction${nFlag > 1 ? 's' : ''} to sort out`, go: '#/transactions?flag=1&m=all' });
   const mk = thisMonth();
   const over = state.categories.filter(c => c.kind === 'expense' && c.budget > 0).map(c => ({ c, v: budgetView(c, mk) })).filter(x => x.v.period === 'year' ? x.v.actual > x.v.budget * 1.0001 : x.v.available < -0.01);
-  if (over.length) items.push({ tone: 'bad', text: `${over.length} categor${over.length > 1 ? 'ies are' : 'y is'} over budget: ${over.slice(0, 3).map(x => x.c.name).join(', ')}${over.length > 3 ? '…' : ''}`, go: '#/budget' });
+  if (over.length) items.push({ tone: 'bad', k: 'off', text: `${over.length} categor${over.length > 1 ? 'ies are' : 'y is'} over budget: ${over.slice(0, 3).map(x => x.c.name).join(', ')}${over.length > 3 ? '…' : ''}`, go: '#/budget' });
   if (state.recurring.length && forecastAccounts().length) {
     const f = forecast(60);
-    if (f.low.y < (state.settings.lowCash || 0)) items.push({ tone: 'bad', text: `Cash is projected to dip to ${money(f.low.y, { cents: false })} on ${dateLabel(f.low.x)}`, go: '#/cashflow' });
+    if (f.low.y < (state.settings.lowCash || 0)) items.push({ tone: 'bad', k: 'off', text: `Cash is projected to dip to ${money(f.low.y, { cents: false })} on ${dateLabel(f.low.x)}`, go: '#/cashflow' });
   }
   const conc = concentration();
   if (conc) items.push({ tone: 'info', text: `${conc.symbol} is ${pct(conc.share, 0)} of your investments`, go: '#/investments' });
   const behind = state.goals.filter(g => goalProgress(g).status === 'behind');
-  if (behind.length) items.push({ tone: 'warn', text: `${behind.length} goal${behind.length > 1 ? 's are' : ' is'} behind pace: ${behind.map(g => g.name).slice(0, 2).join(', ')}`, go: '#/planning' });
+  if (behind.length) items.push({ tone: 'warn', k: 'off', text: `${behind.length} goal${behind.length > 1 ? 's are' : ' is'} behind pace: ${behind.map(g => g.name).slice(0, 2).join(', ')}`, go: '#/planning' });
   const lm = addMonths(mk, -1);
   if (state.transactions.some(t => t.date.startsWith(lm)) && !state.reviews[lm]?.completedAt) items.push({ tone: 'warn', text: `${MONTHS[+lm.slice(5) - 1]} hasn’t been reviewed yet`, go: `#/review?m=${lm}` });
   const rep = detectRepeating();
@@ -1892,14 +1892,48 @@ function paychecksIn(year) {
   return round2(total);
 }
 
-/* Charts are drawn at the host's real pixel width after each render, so text stays legible on any screen. */
+/* Charts are drawn at the host's real pixel width after each render, so text stays legible on any screen.
+   They answer the hand: move over one (or drag a finger along it) for the values, tap to hold a point, use the arrow
+   keys when it has focus, click a point, bar, slice, tile or day to open what's behind it (spec.pick), and switch the
+   range where one is offered (spec.ranges). Nothing here loads anything: it is all inline SVG. */
 const ChartSpecs = {};
+const CHART = { page: null, ranges: {}, unpin: null };   // page: the address the charts last drew in for; ranges: the last choice per chart
+const reduceMotion = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } };
 function chartHost(spec) {
   const id = 'ch-' + uid();
   ChartSpecs[id] = spec;
   const auto = spec.type === 'sankey' || spec.type === 'heatmap';
-  return `<div class="chart-host" id="${id}" ${auto ? '' : `style="height:${spec.h || 220}px"`} role="img" aria-label="${esc(spec.label || 'Chart')}"></div>`;
+  const host = `<div class="chart-host${spec.pick ? ' pickable' : ''}" id="${id}" ${auto ? '' : `style="height:${spec.h || 220}px"`} tabindex="0" role="group" aria-label="${esc(spec.label || 'Chart')}. Use the arrow keys to read the values."></div>`;
+  if (!spec.ranges) return host;
+  const cur = chartRange(spec);
+  return `<div class="chart-wrap"><div class="seg small chart-ranges" role="group" aria-label="Range">${spec.ranges.map(([label, n]) => `<button type="button" class="${+n === cur ? 'on' : ''}" data-chart-range="${n}" data-chart="${id}">${esc(label)}</button>`).join('')}</div>${host}</div>`;
 }
+/* The range a chart is showing: how many points (0 = all of them). */
+function chartRange(spec) { const v = CHART.ranges[spec.rangeKey || spec.label]; return +(v ?? spec.range ?? spec.ranges[spec.ranges.length - 1][1]); }
+/* The part of a chart its range shows, with indexes handed back to the page as it knows them. */
+function chartView(spec) {
+  if (!spec.ranges || spec.type === 'donut' || spec.type === 'sankey' || spec.type === 'treemap' || spec.type === 'heatmap') return spec;
+  const n = chartRange(spec), len = spec.labels ? spec.labels.length : Math.max(0, ...spec.series.map(s => s.points.length));
+  if (!n || n >= len) return spec;
+  const off = spec.rangeFrom === 'start' ? 0 : len - n, cut = a => a.slice(off, off + n);
+  const s = { ...spec, series: spec.series.map(x => ({ ...x, ...(x.points ? { points: cut(x.points) } : {}), ...(x.values ? { values: cut(x.values) } : {}) })) };
+  if (spec.labels) s.labels = cut(spec.labels);
+  if (spec.line) s.line = { ...spec.line, values: cut(spec.line.values) };
+  if (spec.bands) s.bands = spec.bands.map(b => ({ ...b, lo: cut(b.lo), hi: cut(b.hi) }));
+  for (const k of ['vlines', 'markers']) if (spec[k]) s[k] = spec[k].filter(v => v.i >= off && v.i < off + n).map(v => ({ ...v, i: v.i - off }));
+  if (spec.tip) s.tip = i => spec.tip(i + off);
+  if (spec.pick) s.pick = i => spec.pick(i + off);
+  return s;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest?.('[data-chart-range]'); if (!b) return;
+  const spec = ChartSpecs[b.dataset.chart]; if (!spec) return;
+  CHART.ranges[spec.rangeKey || spec.label] = +b.dataset.chartRange;
+  for (const x of b.parentNode.children) x.classList.toggle('on', x === b);
+  const host = document.getElementById(b.dataset.chart); if (host) drawChart(host, true);
+});
+/* A tap or click anywhere else lets go of a held point. */
+document.addEventListener('pointerdown', e => { if (CHART.unpin && !e.target.closest?.('.chart-host.held')) CHART.unpin(); }, true);
 function niceTicks(min, max, count = 4) {
   if (min === max) { const p = Math.abs(min) * 0.1 || 1; min -= p; max += p; }
   const span = max - min, step0 = span / count, mag = Math.pow(10, Math.floor(Math.log10(step0)));
@@ -1908,13 +1942,28 @@ function niceTicks(min, max, count = 4) {
   for (let v = lo; v <= hi + step / 2; v += step) ticks.push(round2(v));
   return ticks;
 }
+/* A chart is drawn again whenever its own width changes: Talk opening beside the page, a window resized, an iPad turned. */
+const chartRO = typeof ResizeObserver === 'function' ? new ResizeObserver(debounce(() => {
+  for (const host of $$('.chart-host')) if (host._w && Math.abs(host.clientWidth - host._w) > 1) drawChart(host, false);
+}, 120)) : null;
+function drawChart(host, fresh) {
+  const full = ChartSpecs[host.id]; if (!full) return;
+  const spec = chartView(full), w = Math.max(240, host.clientWidth);
+  if (!host._w && chartRO) chartRO.observe(host);
+  host._w = host.clientWidth;
+  host.innerHTML = spec.type === 'bars' ? svgBars(spec, w) : spec.type === 'stack' ? svgStack(spec, w) : spec.type === 'sankey' ? svgSankey(spec, w) : spec.type === 'donut' ? svgDonut(spec, w) : spec.type === 'treemap' ? svgTreemap(spec, w) : spec.type === 'heatmap' ? svgHeatmap(spec, w) : svgLine(spec, w);
+  host.classList.toggle('anim', !!fresh && !reduceMotion());
+  host.classList.remove('hot', 'held');
+  if (spec.type === 'donut') wireDonut(host, spec);
+  else if (spec.type === 'sankey' || spec.type === 'treemap' || spec.type === 'heatmap') wireMarks(host, spec, w);
+  else wireSeries(host, spec, w);
+}
+/* Charts draw themselves in once when you arrive on a page (or a Money date slide), not on every redraw after that. */
 function drawCharts(root = document) {
-  for (const host of $$('.chart-host', root)) {
-    const spec = ChartSpecs[host.id]; if (!spec) continue;
-    const w = Math.max(240, host.clientWidth);
-    host.innerHTML = spec.type === 'bars' ? svgBars(spec, w) : spec.type === 'stack' ? svgStack(spec, w) : spec.type === 'sankey' ? svgSankey(spec, w) : spec.type === 'donut' ? svgDonut(spec, w) : spec.type === 'treemap' ? svgTreemap(spec, w) : spec.type === 'heatmap' ? svgHeatmap(spec, w) : svgLine(spec, w);
-    wireTooltip(host, spec, w);
-  }
+  const fresh = CHART.page !== location.hash;
+  const hosts = $$('.chart-host', root);
+  for (const host of hosts) drawChart(host, fresh);
+  if (hosts.length && (root === document || root.id === 'main' || root.id === 'present')) CHART.page = location.hash;
 }
 function layout(spec, W) {
   const H = spec.h || 220, P = { l: spec.padL ?? 58, r: 14, t: 14, b: 28 };
@@ -1935,7 +1984,7 @@ function svgLine(spec, W) {
   const y0 = ticks[0], y1 = ticks[ticks.length - 1];
   const X = i => P.l + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
   const Y = v => P.t + ih - ((v - y0) / (y1 - y0 || 1)) * ih;
-  spec._geom = { X, Y, n, P, iw, ih, H };
+  spec._geom = { X, Y, n, P, iw, ih, H, ys: series.map(s => s.points.map(p => Y(p.y))) };
   let g = '';
   for (const t of ticks) g += `<line class="grid" x1="${P.l}" x2="${P.l + iw}" y1="${Y(t)}" y2="${Y(t)}"/><text class="tick" x="${P.l - 8}" y="${Y(t) + 4}" text-anchor="end">${esc((spec.yFmt || moneyCompact)(t))}</text>`;
   const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(iw / 78))));
@@ -1952,7 +2001,7 @@ function svgLine(spec, W) {
   for (const s of series) {
     const d = s.points.map((p, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(p.y).toFixed(1)}`).join('');
     if (s.area) { const gid = 'g' + uid(); g += `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:${s.color};stop-opacity:.30"/><stop offset="1" style="stop-color:${s.color};stop-opacity:0"/></linearGradient></defs><path class="area" fill="url(#${gid})" d="${d}L${X(s.points.length - 1)},${Y(Math.max(y0, 0))}L${X(0)},${Y(Math.max(y0, 0))}Z"/>`; }
-    g += `<path class="line${s.dash ? ' dash' : ''}" style="stroke:${s.color}" d="${d}"/>`;
+    g += `<path class="line${s.dash ? ' dash' : ' draw'}" ${s.dash ? '' : 'pathLength="1"'} style="stroke:${s.color}" d="${d}"/>`;
     if (s.points.length < 30 && !s.nodots) s.points.forEach((p, i) => { g += `<circle class="dot" cx="${X(i)}" cy="${Y(p.y)}" r="${i === s.points.length - 1 ? 3.5 : 2}" style="fill:${s.color}"/>`; });
   }
   for (let m of spec.markers || []) {
@@ -1961,6 +2010,7 @@ function svgLine(spec, W) {
     g += `<circle class="marker" cx="${x}" cy="${y}" r="4.5"/><text class="marker-label" x="${x + (right ? -8 : 8)}" y="${y + (m.below ? 16 : -9)}" text-anchor="${right ? 'end' : 'start'}">${esc(m.label)}</text>`;
   }
   g += `<line class="guide" x1="0" x2="0" y1="${P.t}" y2="${P.t + ih}" style="opacity:0"/>`;
+  for (const s of series) g += `<circle class="hover-dot" r="5" cx="0" cy="0" style="stroke:${s.color};opacity:0"/>`;
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${g}</svg><div class="chart-tip" hidden></div>`;
 }
 function svgBars(spec, W) {
@@ -1971,44 +2021,74 @@ function svgBars(spec, W) {
   const ticks = niceTicks(Math.min(0, ...all), Math.max(0, ...all), spec.ticks || 4);
   const y0 = ticks[0], y1 = ticks[ticks.length - 1];
   const Y = v => P.t + ih - ((v - y0) / (y1 - y0 || 1)) * ih;
-  const band = iw / n, k = spec.series.length, bw = Math.max(3, Math.min(22, (band * 0.72) / k));
+  const band = iw / n, k = spec.series.length, bw = Math.max(3, Math.min(26, (band * 0.72) / k));
   const X = i => P.l + band * i + band / 2;
-  spec._geom = { X, Y, n, P, iw, ih, H, band };
+  spec._geom = { X, Y, n, P, iw, ih, H, band, ys: [spec.labels.map((_, i) => Y(Math.max(0, ...spec.series.map(s => s.values[i] || 0))))] };
   let g = '';
   for (const t of ticks) g += `<line class="grid" x1="${P.l}" x2="${P.l + iw}" y1="${Y(t)}" y2="${Y(t)}"/><text class="tick" x="${P.l - 8}" y="${Y(t) + 4}" text-anchor="end">${esc(moneyCompact(t))}</text>`;
   const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(iw / 46))));
   spec.labels.forEach((l, i) => { if (i % every === 0) g += `<text class="tick" x="${X(i)}" y="${H - 8}" text-anchor="middle">${esc(l)}</text>`; });
+  g += `<rect class="guide-band" x="0" y="${P.t}" width="${band}" height="${ih}" rx="4" style="opacity:0"/>`;
   spec.series.forEach((s, j) => s.values.forEach((v, i) => {
     const x = X(i) - (bw * k) / 2 + j * bw, y = Y(Math.max(0, v)), h = Math.abs(Y(v) - Y(0));
-    g += `<rect class="bar" x="${x + 0.5}" y="${y}" width="${bw - 1}" height="${Math.max(0.5, h)}" rx="1.5" style="fill:${s.color}"/>`;
+    g += `<rect class="bar${v < 0 ? ' down' : ''}" data-g="${i}" x="${x + 0.5}" y="${y}" width="${bw - 1}" height="${Math.max(0.5, h)}" rx="${Math.min(3, (bw - 1) / 2)}" style="fill:${s.color};--i:${i}"/>`;
   }));
   g += `<line class="zero" x1="${P.l}" x2="${P.l + iw}" y1="${Y(0)}" y2="${Y(0)}"/>`;
-  g += `<rect class="guide-band" x="0" y="${P.t}" width="${band}" height="${ih}" style="opacity:0"/>`;
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${g}</svg><div class="chart-tip" hidden></div>`;
 }
-function wireTooltip(host, spec, W) {
-  const svg = host.querySelector('svg'), tip = host.querySelector('.chart-tip');
-  if (!svg || !tip || !spec.tip || !spec._geom) return;
-  const { X, n, P, iw, band } = spec._geom;
-  const guide = svg.querySelector('.guide, .guide-band');
-  const show = clientX => {
-    const r = svg.getBoundingClientRect(), x = clientX - r.left;
-    let i = band ? Math.floor((x - P.l) / band) : Math.round(((x - P.l) / (iw || 1)) * (n - 1));
-    i = clamp(i, 0, n - 1);
-    const html = spec.tip(i); if (!html) return;
-    tip.innerHTML = html; tip.hidden = false;
-    const gx = X(i);
-    if (band) { guide.setAttribute('x', gx - band / 2); } else { guide.setAttribute('x1', gx); guide.setAttribute('x2', gx); }
-    guide.style.opacity = 1;
-    const tw = tip.offsetWidth;
-    tip.style.left = clamp(gx - tw / 2, 0, W - tw) + 'px';
-    tip.style.top = '0px';
+/* What a chart says about one point when the page didn't write its own words. */
+function defaultTip(spec, i) {
+  const label = spec.labels ? spec.labels[i] : (spec.xFmt || (x => x))(spec.series[0].points[i]?.x);
+  return `<strong>${esc(label ?? '')}</strong>` + spec.series.map(s => { const v = s.values ? s.values[i] : s.points[i]?.y; return v == null ? '' : `<br>${s.name ? `<i class="tip-key" style="background:${s.color}"></i>${esc(s.name)} ` : ''}${money(v, { cents: false })}`; }).join('');
+}
+/* Lines, bars and stacked areas: a guide follows the pointer or finger and the nearest point speaks; a tap holds it; a
+   click (or the button on a held point) opens what's behind it; the arrow keys walk the points. */
+function wireSeries(host, spec, W) {
+  const svg = host.querySelector('svg'), tip = host.querySelector('.chart-tip'), G = spec._geom;
+  if (!svg || !tip || !G) return;
+  const { X, n, P, iw, band } = G;
+  const guide = svg.querySelector('.guide, .guide-band'), dots = [...svg.querySelectorAll('.hover-dot')], bars = [...svg.querySelectorAll('.bar')];
+  let cur = -1, held = false, touched = 0;
+  const say = i => (spec.tip ? spec.tip(i) : defaultTip(spec, i));
+  const at = clientX => { const r = svg.getBoundingClientRect(), x = clientX - r.left; return clamp(band ? Math.floor((x - P.l) / band) : Math.round(((x - P.l) / (iw || 1)) * (n - 1)), 0, n - 1); };
+  const hide = () => {
+    tip.hidden = true; held = false; cur = -1; guide.style.opacity = 0; dots.forEach(d => { d.style.opacity = 0; });
+    bars.forEach(b => b.classList.remove('dim')); host.classList.remove('hot', 'held');
+    if (CHART.unpin === hide) CHART.unpin = null;
   };
-  const hide = () => { tip.hidden = true; guide.style.opacity = 0; };
-  host.onmousemove = e => show(e.clientX);
-  host.onmouseleave = hide;
-  host.ontouchstart = host.ontouchmove = e => { if (e.touches[0]) show(e.touches[0].clientX); };
-  host.ontouchend = () => setTimeout(hide, 1600);
+  const show = (i, hold) => {
+    i = clamp(i, 0, n - 1);
+    const html = say(i); if (!html) return;
+    cur = i; held = !!hold;
+    tip.innerHTML = html + (held && spec.pick ? `<button type="button" class="tip-go">${esc(spec.pickLabel || 'See what’s behind it')}</button>` : '');
+    tip.hidden = false;
+    const gx = X(i);
+    if (band) guide.setAttribute('x', gx - band / 2); else { guide.setAttribute('x1', gx); guide.setAttribute('x2', gx); }
+    guide.style.opacity = 1;
+    dots.forEach((d, k) => { const y = G.ys[k]?.[i]; if (y == null) { d.style.opacity = 0; return; } d.setAttribute('cx', gx); d.setAttribute('cy', y); d.style.opacity = 1; });
+    bars.forEach(b => b.classList.toggle('dim', +b.dataset.g !== i));
+    const tw = tip.offsetWidth, th = tip.offsetHeight, top = Math.min(P.t + G.ih, ...G.ys.map(a => a[i]).filter(v => v != null));
+    tip.style.left = clamp(gx - tw / 2, 0, Math.max(0, W - tw)) + 'px';
+    tip.style.top = Math.max(-th - 4, top - th - 14) + 'px';
+    host.classList.add('hot'); host.classList.toggle('held', held);
+    if (held) CHART.unpin = hide;
+  };
+  host.onpointermove = e => { if (e.pointerType === 'mouse' && !held) show(at(e.clientX)); };
+  host.onpointerleave = e => { if (e.pointerType === 'mouse' && !held) hide(); };
+  host.ontouchstart = host.ontouchmove = e => { if (e.touches[0] && !e.target.closest('.tip-go')) { touched = Date.now(); show(at(e.touches[0].clientX), true); } };
+  host.onclick = e => {
+    if (e.target.closest('.tip-go')) { const i = cur; hide(); return spec.pick(i); }
+    if (Date.now() - touched < 700) return;   // a finger already held this point; its button opens it
+    const i = at(e.clientX);
+    if (spec.pick) { hide(); return spec.pick(i); }
+    if (held && i === cur) hide(); else show(i, true);
+  };
+  host.onkeydown = e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { show(cur < 0 ? n - 1 : cur + (e.key === 'ArrowRight' ? 1 : -1), true); e.preventDefault(); }
+    else if (e.key === 'Enter' && cur >= 0 && spec.pick) { const i = cur; hide(); spec.pick(i); e.preventDefault(); }
+    else if (e.key === 'Escape' && cur >= 0) { hide(); e.stopPropagation(); }
+  };
+  host.onblur = e => { if (held && !host.contains(e.relatedTarget)) hide(); };
 }
 
 /* Stacked areas (positive series stack up, negative stack down) with an optional overlay line. */
@@ -2026,7 +2106,7 @@ function svgStack(spec, W) {
   const ticks = niceTicks(Math.min(...ys), Math.max(...ys), spec.ticks || 4);
   const y0 = ticks[0], y1 = ticks[ticks.length - 1];
   const X = i => P.l + (i / (n - 1)) * iw, Y = v => P.t + ih - ((v - y0) / (y1 - y0 || 1)) * ih;
-  spec._geom = { X, Y, n, P, iw, ih, H };
+  spec._geom = { X, Y, n, P, iw, ih, H, ys: spec.line ? [spec.line.values.map(Y)] : [pos.map(Y)] };
   let g = '';
   for (const t of ticks) g += `<line class="grid" x1="${P.l}" x2="${P.l + iw}" y1="${Y(t)}" y2="${Y(t)}"/><text class="tick" x="${P.l - 8}" y="${Y(t) + 4}" text-anchor="end">${esc(moneyCompact(t))}</text>`;
   const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(iw / 70))));
@@ -2037,8 +2117,9 @@ function svgStack(spec, W) {
     g += `<path class="stack-area" style="fill:${s.color}" d="${up}${down}Z"/>`;
   }
   g += `<line class="zero" x1="${P.l}" x2="${P.l + iw}" y1="${Y(0)}" y2="${Y(0)}"/>`;
-  if (spec.line) g += `<path class="line" style="stroke:${spec.line.color}" d="${spec.line.values.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join('')}"/>`;
+  if (spec.line) g += `<path class="line draw" pathLength="1" style="stroke:${spec.line.color}" d="${spec.line.values.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join('')}"/>`;
   g += `<line class="guide" x1="0" x2="0" y1="${P.t}" y2="${P.t + ih}" style="opacity:0"/>`;
+  if (spec.line) g += `<circle class="hover-dot" r="5" cx="0" cy="0" style="stroke:${spec.line.color};opacity:0"/>`;
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${g}</svg><div class="chart-tip" hidden></div>`;
 }
 
@@ -2067,15 +2148,17 @@ function svgSankey(spec, W) {
   const xL = labelW, xC = W / 2 - nodeW / 2, xR = W - labelW - nodeW;
   const fmt = v => (narrow ? moneyCompact(v) : money(v, { cents: false }));
   const trunc = n => n.length > (narrow ? 13 : 26) ? n.slice(0, narrow ? 12 : 25) + '…' : n;
-  const band = (x1, y1, x2, y2, h1, h2, color, title) => {
+  const marks = spec._marks = [];
+  const mark = (n, side) => marks.push({ tip: n.title ? `<strong>${esc(n.name)}</strong><br>${esc(n.title)}` : `<strong>${esc(n.name)}</strong><br>${money(n.value, { cents: false })}, ${pct(n.value / total, 0)} of ${side === 'l' ? 'what came in' : 'the total'}`, pick: spec.pick && !n.title ? () => spec.pick(n, side) : null }) - 1;
+  const band = (x1, y1, x2, y2, h1, h2, color, i) => {
     const mx = (x1 + x2) / 2;
-    return `<path class="sk-band" style="fill:${color}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2} L${x2},${y2 + h2} C${mx},${y2 + h2} ${mx},${y1 + h1} ${x1},${y1 + h1} Z"><title>${esc(title)}</title></path>`;
+    return `<path class="sk-band" data-i="${i}" style="fill:${color}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2} L${x2},${y2 + h2} C${mx},${y2 + h2} ${mx},${y1 + h1} ${x1},${y1 + h1} Z"/>`;
   };
   let g = '', cy = cY;
   L.forEach((n, i) => {
-    const y = lo + n.y, color = n.drawn ? 'var(--neg)' : `var(--c${(i % 8) + 1})`;
-    g += band(xL + nodeW, y, xC, cy, n.h, n.h, color, n.title || `${n.name}: ${money(n.value, { cents: false })}`);
-    g += `<rect class="sk-node" x="${xL}" y="${y}" width="${nodeW}" height="${n.h}" rx="2" style="fill:${color}"/>`;
+    const y = lo + n.y, color = n.drawn ? 'var(--neg)' : `var(--c${(i % 8) + 1})`, m = mark(n, 'l');
+    g += band(xL + nodeW, y, xC, cy, n.h, n.h, color, m);
+    g += `<rect class="sk-node" data-i="${m}" x="${xL}" y="${y}" width="${nodeW}" height="${n.h}" rx="2" style="fill:${color}"/>`;
     g += `<text class="sk-label" x="${xL - 10}" y="${y + n.h / 2 - 2}" text-anchor="end">${esc(trunc(n.name))}</text><text class="sk-value num" x="${xL - 10}" y="${y + n.h / 2 + 12}" text-anchor="end">${fmt(n.value)}</text>`;
     cy += n.h;
   });
@@ -2083,33 +2166,67 @@ function svgSankey(spec, W) {
   if (!narrow) g += `<text class="sk-value" x="${xC + nodeW / 2}" y="${cY - 6}" text-anchor="middle">${money(total, { cents: false })}</text>`;
   cy = cY;
   R.forEach((n, i) => {
-    const y = ro + n.y, color = n.saved ? 'var(--pos)' : `var(--c${((i + 3) % 8) + 1})`;
-    g += band(xC + nodeW, cy, xR, y, n.h, n.h, color, n.title || `${n.name}: ${money(n.value, { cents: false })}`);
-    g += `<rect class="sk-node" x="${xR}" y="${y}" width="${nodeW}" height="${n.h}" rx="2" style="fill:${color}"/>`;
+    const y = ro + n.y, color = n.saved ? 'var(--pos)' : `var(--c${((i + 3) % 8) + 1})`, m = mark(n, 'r');
+    g += band(xC + nodeW, cy, xR, y, n.h, n.h, color, m);
+    g += `<rect class="sk-node" data-i="${m}" x="${xR}" y="${y}" width="${nodeW}" height="${n.h}" rx="2" style="fill:${color}"/>`;
     g += `<text class="sk-label${n.saved ? ' saved' : ''}" x="${xR + nodeW + 10}" y="${y + n.h / 2 - 2}">${esc(trunc(n.name))}</text><text class="sk-value num" x="${xR + nodeW + 10}" y="${y + n.h / 2 + 12}" text-anchor="start">${fmt(n.value)} · ${pct(n.value / total, 0)}</text>`;
     cy += n.h;
   });
-  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" class="sankey">${g}</svg>`;
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" class="sankey">${g}</svg><div class="chart-tip" hidden></div>`;
 }
 
-/* Donut with a center figure. */
+/* Donut with a center figure. Pointing at a slice (or its row in the list beside it) puts that slice in the center. */
 function svgDonut(spec, W) {
   const items = spec.items.filter(i => i.value > 0), total = sum(items.map(i => i.value));
-  const H = spec.h || 220, size = Math.min(W, H), r = size / 2 - 4, inner = r * (spec.thin ? 0.78 : 0.64), cx = W / 2, cy = H / 2;
+  const H = spec.h || 220, size = Math.min(W, H), r = size / 2 - 6, inner = r * (spec.thin ? 0.78 : 0.64), cx = W / 2, cy = H / 2;
   if (!total) return `<div class="chart-empty">${esc(spec.empty || 'Nothing to show yet.')}</div>`;
+  spec._items = items; spec._total = total;
   let a0 = -Math.PI / 2, g = '';
   const gapA = items.length > 1 ? 0.012 : 0;
   const pt = (rad, a) => `${(cx + rad * Math.cos(a)).toFixed(2)},${(cy + rad * Math.sin(a)).toFixed(2)}`;
-  for (const it of items) {
+  items.forEach((it, k) => {
     const a = (it.value / total) * Math.PI * 2, a1 = a0 + a, s0 = a0 + gapA / 2, s1 = Math.max(s0 + 0.001, a1 - gapA / 2), large = s1 - s0 > Math.PI ? 1 : 0;
     const path = items.length === 1
       ? `M${pt(r, -Math.PI / 2)} A${r},${r} 0 1 1 ${pt(r, Math.PI * 1.5 - 0.0001)} L${pt(inner, Math.PI * 1.5 - 0.0001)} A${inner},${inner} 0 1 0 ${pt(inner, -Math.PI / 2)} Z`
       : `M${pt(r, s0)} A${r},${r} 0 ${large} 1 ${pt(r, s1)} L${pt(inner, s1)} A${inner},${inner} 0 ${large} 0 ${pt(inner, s0)} Z`;
-    g += `<path class="donut-seg" d="${path}" style="fill:${it.color}"><title>${esc(it.label)}: ${money(it.value, { cents: false })} (${pct(it.value / total, 0)})</title></path>`;
+    g += `<path class="donut-seg" data-i="${k}" d="${path}" style="fill:${it.color};transform-origin:${cx}px ${cy}px;--i:${k}"><title>${esc(it.label)}: ${money(it.value, { cents: false })} (${pct(it.value / total, 0)})</title></path>`;
     a0 = a1;
-  }
+  });
   if (spec.center) g += `<text x="${cx}" y="${cy - 4}" text-anchor="middle" class="donut-value">${esc(spec.center.value)}</text><text x="${cx}" y="${cy + 16}" text-anchor="middle" class="donut-label">${esc(spec.center.label)}</text>`;
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${g}</svg>`;
+}
+function wireDonut(host, spec) {
+  const svg = host.querySelector('svg'); if (!svg) return;
+  const segs = [...svg.querySelectorAll('.donut-seg')], items = spec._items, total = spec._total;
+  const cv = svg.querySelector('.donut-value'), cl = svg.querySelector('.donut-label');
+  const legend = host.closest('.donut-wrap, .slide-split, .panel')?.querySelector('.legend-list');
+  const rows = legend ? [...legend.children].slice(0, items.length) : [];
+  const short = s => (s.length > 16 ? s.slice(0, 15) + '…' : s);
+  let cur = -1, touched = 0, again = false;
+  const set = i => {
+    cur = i;
+    segs.forEach((s, k) => s.classList.toggle('on', k === i)); svg.classList.toggle('picking', i >= 0);
+    rows.forEach((r, k) => r.classList.toggle('on', k === i));
+    if (cv && cl && spec.center) { cv.textContent = i >= 0 ? money(items[i].value, { cents: false }) : spec.center.value; cl.textContent = i >= 0 ? `${short(items[i].label)}, ${pct(items[i].value / total, 0)}` : spec.center.label; }
+  };
+  const open = i => { if (spec.pick) spec.pick(items[i], i); };
+  segs.forEach((s, i) => {
+    s.onpointerenter = e => { if (e.pointerType === 'mouse') set(i); };
+    // a second tap on the same slice opens it, on the click that follows the touch (opening on the touch itself let the same tap close the window again)
+    s.ontouchstart = () => { touched = Date.now(); again = cur === i; if (!again) set(i); };
+    s.onclick = () => { if (Date.now() - touched < 700) { if (again && spec.pick) open(i); return; } if (spec.pick) open(i); else set(cur === i ? -1 : i); };
+  });
+  svg.onpointerleave = e => { if (e.pointerType === 'mouse') set(-1); };
+  rows.forEach((r, i) => {
+    r.onpointerenter = e => { if (e.pointerType === 'mouse') set(i); };
+    r.onpointerleave = e => { if (e.pointerType === 'mouse') set(-1); };
+    if (spec.pick) { r.classList.add('pickable'); r.tabIndex = 0; r.setAttribute('role', 'button'); r.onclick = () => open(i); r.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(i); } }; }
+  });
+  host.onkeydown = e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { set((cur + (e.key === 'ArrowRight' ? 1 : -1) + items.length + (cur < 0 && e.key === 'ArrowLeft' ? 1 : 0)) % items.length); e.preventDefault(); }
+    else if (e.key === 'Enter' && cur >= 0 && spec.pick) { open(cur); e.preventDefault(); }
+    else if (e.key === 'Escape' && cur >= 0) { set(-1); e.stopPropagation(); }
+  };
 }
 
 /* Squarified treemap. */
@@ -2132,14 +2249,16 @@ function svgTreemap(spec, W) {
     else { const ch = s / w; let xx = x; for (const o of row) { const cw = o.a / ch; rects.push({ ...o, x: xx, y, w: cw, h: ch }); xx += cw; } squarify(list.slice(row.length), x, y + ch, w, h - ch); }
   })(area, 0, 0, W, H);
   let g = '';
+  const marks = spec._marks = [];
   for (const r of rects) {
     const big = r.w > 78 && r.h > 40, mid = r.w > 54 && r.h > 22;
-    const inner = `<rect class="tm-tile" x="${r.x + 1}" y="${r.y + 1}" width="${Math.max(0, r.w - 2)}" height="${Math.max(0, r.h - 2)}" rx="4" style="fill:${r.color}"><title>${esc(r.label)}: ${money(r.value, { cents: false })} (${pct(r.value / total, 0)})</title></rect>` +
+    const m = marks.push({ tip: `<strong>${esc(r.label)}</strong><br>${money(r.value, { cents: false })}, ${pct(r.value / total, 0)} of the total`, pick: r.href ? () => go(r.href) : null }) - 1;
+    const inner = `<rect class="tm-tile" data-i="${m}" x="${r.x + 1}" y="${r.y + 1}" width="${Math.max(0, r.w - 2)}" height="${Math.max(0, r.h - 2)}" rx="5" style="fill:${r.color}"/>` +
       (mid ? `<text class="tm-label" x="${r.x + 9}" y="${r.y + 18}">${esc(r.label.length * 7 > r.w - 14 ? r.label.slice(0, Math.max(3, Math.floor((r.w - 14) / 7) - 1)) + '…' : r.label)}</text>` : '') +
       (big ? `<text class="tm-value" x="${r.x + 9}" y="${r.y + 35}">${money(r.value, { cents: false })}</text>` : '');
-    g += r.href ? `<a href="${r.href}">${inner}</a>` : inner;
+    g += r.href ? `<a href="${r.href}" aria-label="${esc(r.label)}: ${money(r.value, { cents: false })}">${inner}</a>` : inner;
   }
-  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" class="treemap">${g}</svg>`;
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" class="treemap">${g}</svg><div class="chart-tip" hidden></div>`;
 }
 
 /* Calendar heatmap of daily spending (weeks as columns), sized to fill the width. */
@@ -2154,6 +2273,7 @@ function svgHeatmap(spec, W) {
   const q = [0.25, 0.5, 0.75, 0.92].map(x => quantile(vals, x));
   const level = v => !v ? 0 : v <= q[0] ? 1 : v <= q[1] ? 2 : v <= q[2] ? 3 : v <= q[3] ? 4 : 5;
   let g = '', lastMonth = -1;
+  const marks = spec._marks = [], DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   ['M', 'W', 'F'].forEach((l, i) => { g += `<text class="tick" x="0" y="${top + (i * 2 + 1) * (cell + gap) + cell - 2}">${l}</text>`; });
   const d = new Date(start);
   for (let w = 0; w <= weeks; w++) {
@@ -2161,13 +2281,54 @@ function svgHeatmap(spec, W) {
       if (d > end) break;
       const iso = toISO(d), v = spec.days[iso] || 0, x = left + w * (cell + gap), y = top + day * (cell + gap);
       if (day === 0 && d.getMonth() !== lastMonth && d.getDate() <= 7) { g += `<text class="tick" x="${x}" y="11">${MON[d.getMonth()]}</text>`; lastMonth = d.getMonth(); }
-      g += `<rect class="hm l${level(v)}" x="${x}" y="${y}" width="${cell}" height="${cell}" rx="2"><title>${dateLabel(iso, true)}: ${v ? money(v, { cents: false }) + ' spent' : 'no spending'}</title></rect>`;
+      const m = marks.push({ tip: `<strong>${DOW[d.getDay()]}, ${dateLabel(iso, true)}</strong><br>${v ? money(v, { cents: false }) + ' spent' : 'Nothing spent'}`, pick: v && spec.pick ? () => spec.pick(iso) : null }) - 1;
+      g += `<rect class="hm l${level(v)}" data-i="${m}" x="${x}" y="${y}" width="${cell}" height="${cell}" rx="${Math.min(4, cell / 4)}"/>`;
       d.setDate(d.getDate() + 1);
     }
   }
-  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" class="heatmap">${g}</svg>`;
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" class="heatmap">${g}</svg><div class="chart-tip" hidden></div>`;
 }
-window.addEventListener('resize', debounce(() => drawCharts(), 150));
+/* Tiles, days and bands: point at one (or tap it) and it says what it is; click, or the button on a held one, opens it. */
+function wireMarks(host, spec, W) {
+  const svg = host.querySelector('svg'), tip = host.querySelector('.chart-tip'), marks = spec._marks;
+  if (!svg || !tip || !marks) return;
+  const els = [...svg.querySelectorAll('[data-i]')];
+  let cur = -1, held = false, touched = 0;
+  const hide = () => { tip.hidden = true; cur = -1; held = false; els.forEach(e => e.classList.remove('on')); svg.classList.remove('picking'); host.classList.remove('hot', 'held'); if (CHART.unpin === hide) CHART.unpin = null; };
+  const show = (el, hold) => {
+    const i = +el.dataset.i, m = marks[i]; if (!m) return;
+    cur = i; held = !!hold;
+    els.forEach(e => e.classList.toggle('on', +e.dataset.i === i)); svg.classList.add('picking');
+    tip.innerHTML = m.tip + (held && m.pick ? `<button type="button" class="tip-go">${esc(spec.pickLabel || 'See what’s behind it')}</button>` : '');
+    tip.hidden = false;
+    const hr = host.getBoundingClientRect(), r = el.getBoundingClientRect(), tw = tip.offsetWidth, th = tip.offsetHeight;
+    const midY = spec.type === 'sankey' ? r.top + r.height / 2 - th / 2 : r.top - th - 8;
+    tip.style.left = clamp(r.left + r.width / 2 - hr.left - tw / 2, 0, Math.max(0, W - tw)) + 'px';
+    tip.style.top = Math.max(-th - 4, midY - hr.top) + 'px';
+    host.classList.add('hot'); host.classList.toggle('held', held);
+    if (held) CHART.unpin = hide;
+  };
+  host.onpointermove = e => { if (e.pointerType !== 'mouse' || held) return; const el = e.target.closest('[data-i]'); if (el) { if (+el.dataset.i !== cur) show(el); } else if (cur >= 0) hide(); };
+  host.onpointerleave = e => { if (e.pointerType === 'mouse' && !held) hide(); };
+  host.ontouchstart = host.ontouchmove = e => {
+    if (!e.touches[0] || e.target.closest('.tip-go')) return;
+    const el = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY)?.closest?.('[data-i]');
+    if (el && host.contains(el)) { touched = Date.now(); show(el, true); }
+  };
+  host.onclick = e => {
+    if (e.target.closest('.tip-go')) { const m = marks[cur]; hide(); e.preventDefault(); return m?.pick?.(); }
+    if (Date.now() - touched < 700) { e.preventDefault(); return; }   // a finger held this one; its button opens it
+    const el = e.target.closest('[data-i]'); if (!el) return;
+    const m = marks[+el.dataset.i];
+    if (m?.pick) { e.preventDefault(); hide(); m.pick(); }
+  };
+  host.onkeydown = e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { const k = clamp(cur < 0 ? (e.key === 'ArrowRight' ? 0 : marks.length - 1) : cur + (e.key === 'ArrowRight' ? 1 : -1), 0, marks.length - 1), el = els.find(x => +x.dataset.i === k); if (el) show(el, true); e.preventDefault(); }
+    else if (e.key === 'Enter' && cur >= 0 && marks[cur].pick) { const m = marks[cur]; hide(); m.pick(); e.preventDefault(); }
+    else if (e.key === 'Escape' && cur >= 0) { hide(); e.stopPropagation(); }
+  };
+}
+if (!chartRO) window.addEventListener('resize', debounce(() => { for (const host of $$('.chart-host')) drawChart(host, false); }, 150));
 
 /* ================= file parsers (pure functions) ================= */
 
@@ -4181,6 +4342,7 @@ function render() {
   paintTalk();
   if (anchor) keepPlace(anchor, keepY);
   else if (keepY) keepScroll(keepY);
+  mdRefresh();   // a Money date that is open follows the change (59-present.js)
 }
 /* How to find a box again after the page is drawn anew: its id, or its first data- attribute. */
 function fieldSel(el) {
@@ -4413,7 +4575,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = 'd304c06';
+const ORO_BUILD = '4900753';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -4649,6 +4811,193 @@ document.addEventListener('click', e => {
   for (const t of $$(`table[data-sort-id="${CSS.escape(id)}"]`)) applySort(t);
 });
 
+/* ================= What's behind a number =================
+   A headline figure opens into the transactions (or accounts) that add up to it, with the same total at the bottom as
+   the check. Anything with data-drill="kind|a|b" opens one: a tile, a row, a link; charts call these from spec.pick. */
+function drill({ title, sub, head, rows, total, href, hrefLabel, note, empty }) {
+  const shown = rows.slice(0, 150);
+  const body = `${sub ? `<p class="drill-sub">${sub}</p>` : ''}${head || ''}
+    ${rows.length ? `<div class="scroll-table tall"><table class="ledger compact drill-table"><thead><tr><th>Date</th><th>What</th><th class="num">Amount</th></tr></thead>
+      <tbody>${shown.map(r => `<tr class="drill-row" data-edit-txn="${esc(r.t.id)}" tabindex="0"><td class="nowrap muted">${dateLabel(r.t.date)}</td><th scope="row">${esc(r.t.payee)}<span class="drill-meta muted small">${esc(r.categoryId ? catName(r.categoryId) : 'Uncategorized')}, ${esc(acctById(r.t.accountId)?.name || 'an account that was removed')}</span></th><td class="num ${r.amount < 0 ? 'drill-back' : ''}">${money(r.amount)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><th colspan="2" scope="row">${rows.length > shown.length ? `The ${shown.length} largest of ${rows.length}. All ${rows.length} add up to` : `${rows.length === 1 ? 'One transaction' : `${rows.length} transactions`}, adding up to`}</th><td class="num total">${money(total)}</td></tr></tfoot></table></div>` : `<p class="muted">${empty || 'Nothing here yet.'}</p>`}
+    ${note ? `<p class="muted small drill-note">${note}</p>` : ''}`;
+  openModal({ title, body, wide: true, id: 'drill', actions: `${href ? `<a class="btn" href="${href}" data-close>${hrefLabel || 'Open in Transactions'}</a>` : ''}<button class="btn primary" data-close>Done</button>` });
+}
+/* The lines flowSummary counts as money in ('in') or as spending ('out'), each with what it adds to the figure. */
+function flowLines(txs, kind) {
+  const out = [];
+  for (const t of txs) for (const l of txLines(t)) {
+    const c = catById(l.categoryId);
+    if (c?.kind === 'transfer') continue;
+    const isIn = c ? c.kind === 'income' : l.amount >= 0;
+    if ((kind === 'in') === isIn) out.push({ t, categoryId: l.categoryId, amount: round2(isIn ? l.amount : -l.amount) });
+  }
+  return out.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+}
+const TRANSFER_NOTE = 'Card payments and moves between your own accounts are left out.';
+function drillFlow(kind, mk = thisMonth()) {
+  if (kind === 'kept') return drillKept(mk);
+  const txs = lensed(txInMonth(mk)), rows = flowLines(txs, kind), total = round2(sum(rows.map(r => r.amount))), M = monthLabel(mk);
+  drill({ title: kind === 'in' ? `Money in, ${M}` : `Spent in ${M}`, rows, total, href: `#/transactions?m=${mk}`,
+    sub: kind === 'in' ? `Everything that came in${lensActive() ? ` for ${esc(lensLabel())}` : ''}: paychecks, rent, interest and anything else filed as money in.` : `Everything that went out${lensActive() ? ` for ${esc(lensLabel())}` : ''}. Money back shows with a minus and comes off the total.`,
+    note: TRANSFER_NOTE, empty: kind === 'in' ? 'No money in recorded this month yet.' : 'No spending recorded this month yet.' });
+}
+/* Kept = money in − spent, each of which opens in turn. */
+function drillKept(mk = thisMonth()) {
+  const f = flowSummary(lensed(txInMonth(mk))), M = monthLabel(mk);
+  const row = (label, v, d, cls = '') => `<tr class="${cls}"><th scope="row">${d ? `<button class="linklike" data-drill="${d}|${mk}">${label}</button>` : label}</th><td class="num">${money(v)}</td></tr>`;
+  openModal({ title: `Kept in ${M}`, id: 'drill', body: `<p class="drill-sub">What came in, less what went out.</p>
+    <table class="ledger compact sched drill-sum"><tbody>${row('Money in', f.income, 'in')}${row('Spent', -f.spending, 'out')}${row('Kept', f.net, '', 'net')}</tbody></table>
+    <p class="muted small drill-note">${isFinite(f.rate) ? `That is ${pct(f.rate, 0)} of what came in. ` : ''}${TRANSFER_NOTE}</p>`, actions: '<button class="btn primary" data-close>Done</button>' });
+}
+/* One slice of "Where it went": the categories of a group that have spending this month. */
+function drillGroup(label, mk = thisMonth()) {
+  if (label === 'Everything else') return go(`#/reports?r=spending&p=${mk === thisMonth() ? 'm' : 'lm'}`);
+  const txs = lensed(txInMonth(mk)), acts = categoryActuals(txs), rows = [];
+  const inGroup = id => id === '_none' ? label === 'Uncategorized' : (c => !!c && c.kind === 'expense' && c.group === label)(catById(id));
+  for (const t of txs) for (const l of txLines(t)) { const id = l.categoryId || '_none'; if ((acts[id] || 0) > 0 && inGroup(id)) rows.push({ t, categoryId: l.categoryId, amount: round2(-l.amount) }); }
+  rows.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+  const cats = [...new Set(rows.map(r => r.categoryId || '_none'))].map(id => ({ id, v: acts[id] })).sort((a, b) => b.v - a.v);
+  const top = cats[0]?.v || 1;
+  drill({ title: `${label}, ${monthLabel(mk)}`, rows, total: round2(sum(rows.map(r => r.amount))), href: label === 'Uncategorized' ? `#/transactions?m=${mk}&cat=_none` : `#/transactions?m=${mk}`,
+    head: cats.length > 1 ? `<ul class="drill-bars">${cats.slice(0, 6).map(c => `<li><span>${esc(c.id === '_none' ? 'Uncategorized' : catName(c.id))}</span><div class="meter"><span style="width:${(c.v / top * 100).toFixed(1)}%"></span></div><strong class="num">${money(c.v, { cents: false })}</strong></li>`).join('')}</ul>` : '' });
+}
+function drillCat(catId, mk = thisMonth()) {
+  const c = catById(catId), txs = lensed(txInMonth(mk)), rows = [];
+  for (const t of txs) for (const l of txLines(t)) if ((l.categoryId || '_none') === catId) rows.push({ t, categoryId: l.categoryId, amount: round2(c?.kind === 'income' ? l.amount : -l.amount) });
+  rows.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+  const v = c && c.kind === 'expense' && c.budget > 0 ? budgetView(c, mk) : null;
+  drill({ title: `${c ? c.name : 'Uncategorized'}, ${monthLabel(mk)}`, rows, total: round2(sum(rows.map(r => r.amount))), href: `#/transactions?m=${mk}&cat=${encodeURIComponent(catId)}`,
+    sub: v ? (v.period === 'year' ? `${money(v.actual, { cents: false })} of ${money(v.budget, { cents: false })} for the year so far.` : `Budget ${money(v.budget + (v.carry || 0), { cents: false })}${v.carry ? ` (${money(v.budget, { cents: false })} plus ${money(v.carry, { cents: false })} carried over)` : ''}: ${v.available >= 0 ? `${money(v.available, { cents: false })} left` : `${money(-v.available, { cents: false })} over`}.`) : '' });
+}
+/* What counts as a day's spending on the Daily spending calendar: flexible spending, not the fixed bills. */
+function isDailySpend(l) { const c = catById(l.categoryId); return c ? c.kind === 'expense' && !c.rental && !/Mortgage|Auto payment|Childcare/.test(c.name) : l.amount < 0; }
+function drillDay(iso) {
+  const rows = [];
+  for (const t of lensed(state.transactions.filter(x => x.date === iso))) for (const l of txLines(t)) if (isDailySpend(l)) rows.push({ t, categoryId: l.categoryId, amount: round2(-l.amount) });
+  rows.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+  drill({ title: `Spent on ${dateLabel(iso, true)}`, rows, total: round2(sum(rows.map(r => r.amount))), href: `#/transactions?m=${iso.slice(0, 7)}`, hrefLabel: `Open ${MONTHS[+iso.slice(5, 7) - 1]} in Transactions`, note: 'Mortgage, rent and other fixed bills are left out of the daily picture.' });
+}
+/* A month in one window: in, out, kept, and where the spending went. */
+function drillMonth(mk) {
+  const txs = lensed(txInMonth(mk)), f = flowSummary(txs), groups = spendByGroup(txs), top = groups[0]?.value || 1;
+  openModal({ title: monthLabel(mk), id: 'drill', wide: true, body: `
+    <dl class="kpis three drill-kpis"><div><dt>Money in</dt><dd class="num pos">${money(f.income, { cents: false })}</dd><button class="linklike small" data-drill="in|${mk}">See each one</button></div>
+      <div><dt>Spent</dt><dd class="num">${money(f.spending, { cents: false })}</dd><button class="linklike small" data-drill="out|${mk}">See each one</button></div>
+      <div><dt>Kept</dt><dd class="num ${signClass(f.net)}">${money(f.net, { cents: false })}</dd><span class="muted small">${isFinite(f.rate) ? `${pct(f.rate, 0)} of what came in` : ''}</span></div></dl>
+    ${groups.length ? `<h3>Where it went</h3><ul class="drill-bars">${groups.slice(0, 8).map(g => `<li><button class="linklike" data-drill="group|${esc(g.label)}|${mk}">${esc(g.label)}</button><div class="meter"><span style="width:${(g.value / top * 100).toFixed(1)}%"></span></div><strong class="num">${money(g.value, { cents: false })}</strong></li>`).join('')}</ul>` : '<p class="muted">No spending recorded that month.</p>'}`,
+    actions: `<a class="btn" href="#/transactions?m=${mk}" data-close>Open in Transactions</a><button class="btn primary" data-close>Done</button>` });
+}
+/* Net worth from one month's end to the next, account by account (the same accounts the figure counts). */
+function netWorthMoves(mk) {
+  const prev = addMonths(mk, -1), a0 = state.snapshots[prev] || {}, cur = mk === thisMonth();
+  const a1 = cur ? Object.fromEntries(activeAccounts().map(a => [a.id, signedValue(a)])) : state.snapshots[mk] || {};
+  const rows = [];
+  for (const id of new Set([...Object.keys(a0), ...Object.keys(a1)])) {
+    const a = acctById(id);
+    if (a ? !nwIncludes(a, true) : lensActive()) continue;
+    const was = a0[id] || 0, now = a1[id] || 0;
+    if (Math.abs(now - was) >= 0.5) rows.push({ id, name: a ? a.name : 'An account since removed', was, now, d: round2(now - was), isNew: !(id in a0) });
+  }
+  return rows.sort((x, y) => Math.abs(y.d) - Math.abs(x.d));
+}
+function drillNetWorth(mk = thisMonth()) {
+  const prev = addMonths(mk, -1), rows = netWorthMoves(mk), total = round2(sum(rows.map(r => r.d))), P = MONTHS[+prev.slice(5) - 1];
+  if (!state.snapshots[prev]) return openModal({ title: `Net worth, ${monthLabel(mk)}`, id: 'drill', body: `<p class="muted">There’s no record of ${monthLabel(prev)} to compare with. History builds month by month; you can add past balances from each account’s History.</p>`, actions: '<button class="btn primary" data-close>Done</button>' });
+  openModal({ title: `What changed in ${monthLabel(mk)}`, id: 'drill', wide: true, body: `<p class="drill-sub">Each account from the end of ${P} to ${mk === thisMonth() ? 'today' : `the end of ${MONTHS[+mk.slice(5) - 1]}`}. What you owe counts as a minus, so paying a loan down shows as a plus.</p>
+    ${rows.length ? `<div class="scroll-table tall"><table class="ledger compact drill-table"><thead><tr><th>Account</th><th class="num">End of ${P}</th><th class="num">${mk === thisMonth() ? 'Now' : `End of ${MON[+mk.slice(5) - 1]}`}</th><th class="num">Change</th></tr></thead>
+      <tbody>${rows.map(r => `<tr class="drill-row" ${acctById(r.id) ? `data-edit-acct="${esc(r.id)}" tabindex="0"` : ''}><th scope="row">${esc(r.name)}${r.isNew ? ' <span class="tag soft">new</span>' : ''}</th><td class="num muted">${money(r.was, { cents: false })}</td><td class="num">${money(r.now, { cents: false })}</td><td class="num ${signClass(r.d)}">${money(r.d, { cents: false, sign: true })}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><th colspan="3" scope="row">Change in ${esc(nwLabel().toLowerCase())}</th><td class="num total ${signClass(total)}">${money(total, { cents: false, sign: true })}</td></tr></tfoot></table></div>` : '<p class="muted">No account changed.</p>'}`,
+    actions: `<a class="btn" href="#/reports?r=networth" data-close>Net worth report</a><button class="btn primary" data-close>Done</button>` });
+}
+const DRILLS = { in: mk => drillFlow('in', mk), out: mk => drillFlow('out', mk), kept: mk => drillKept(mk), group: (label, mk) => drillGroup(label, mk), cat: (id, mk) => drillCat(id, mk), day: iso => drillDay(iso), month: mk => drillMonth(mk), nw: mk => drillNetWorth(mk) };
+function runDrill(s) { const [k, a, b] = String(s).split('|'); DRILLS[k]?.(a || undefined, b || undefined); }
+document.addEventListener('click', e => { const el = e.target.closest?.('[data-drill]'); if (!el || e.target.closest('a[href], input, select') ) return; e.preventDefault(); runDrill(el.dataset.drill); });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const el = e.target;
+  if (el?.matches?.('[data-drill]:not(button), tr.drill-row[tabindex]')) { e.preventDefault(); el.click(); }
+});
+
+/* ================= What matters now =================
+   The few things worth seeing first, in four plain groups: what needs a decision, what's off track, what's going well
+   and what changed. Each line opens the page or the numbers behind it. It leads Overview and the Money date, so the
+   important things are in front of you without hunting. Everything is worked out on the device from your own data. */
+const BRIEF_GROUPS = [['decide', 'Needs a decision', 'Nothing is waiting on you.'], ['off', 'Off track', 'Nothing is off track.'], ['well', 'Going well', 'Nothing to call out yet.'], ['changed', 'What changed', 'No big changes.']];
+/* Spending through the same day of the month, averaged over the three months before: "usual by now". */
+function usualSpendByDay(mk, day) {
+  const xs = [1, 2, 3].map(i => { const m = addMonths(mk, -i), cut = `${m}-${pad2(Math.min(day, +monthEnd(m).slice(8)))}`; return flowSummary(lensed(txInMonth(m)).filter(t => t.date <= cut)); });
+  return xs.some(x => x.spending > 0) ? sum(xs.map(x => x.spending)) / 3 : null;
+}
+function whatMatters(mk = thisMonth()) {
+  const cur = mk === thisMonth(), prev = addMonths(mk, -1), M = MONTHS[+mk.slice(5) - 1], P = MONTHS[+prev.slice(5) - 1], sm = n => money(n, { cents: false });
+  const txs = lensed(txInMonth(mk)), f = flowSummary(txs);
+  const G = { decide: [], off: [], well: [], changed: [] };
+  const add = (k, w, text, to = {}) => G[k].push({ w, text, ...to });
+
+  // ---- needs a decision: the things only you can settle (the same list as Needs attention)
+  attentionItems().forEach((a, i) => { if (a.k !== 'off') add('decide', (a.tone === 'warn' ? 900 : 500) - i, a.text, a.act ? { act: a.act } : { go: a.go }); });
+
+  // ---- off track: budgets, goals, cash
+  const notes = insights(mk, { limit: 12 });
+  for (const n of notes) if (n.tone === 'bad' || n.tone === 'warn') add('off', (n.tone === 'bad' ? 1000 : 400) + n.w, n.text, n.drill ? { drill: n.drill } : { go: n.go || '#/budget' });
+  if (cur) for (const a of attentionItems()) if (a.k === 'off' && /Cash is projected/.test(a.text)) add('off', 5000, a.text + '.', { go: a.go });
+
+  // ---- going well
+  if (f.income > 0 && f.net > 0) {
+    const xs = [1, 2, 3].map(i => flowSummary(lensed(txInMonth(addMonths(mk, -i))))), inc = sum(xs.map(x => x.income)), usual = inc > 0 ? (inc - sum(xs.map(x => x.spending))) / inc : NaN;
+    add('well', 900, `Kept ${sm(f.net)} ${cur ? 'so far this month' : `in ${M}`}, ${pct(f.rate, 0)} of what came in${!cur && isFinite(usual) && f.rate > usual + 0.03 ? `, better than the usual ${pct(usual, 0)}` : ''}.`, { drill: `kept|${mk}` });
+  }
+  const billCats = new Set(state.recurring.map(r => r.categoryId));
+  const flex = state.categories.filter(c => c.kind === 'expense' && c.budget > 0 && c.period !== 'year' && !c.rental && !billCats.has(c.id)).map(c => budgetView(c, mk));
+  if (flex.length >= 3) {
+    const dim = +monthEnd(mk).slice(8), share = cur ? new Date().getDate() / dim : 1;
+    const ok = flex.filter(v => v.actual <= (v.budget + (v.carry || 0)) * Math.min(1, share * 1.15) + 0.5).length;
+    if (ok / flex.length >= 0.6) add('well', 600, cur ? `${ok} of ${flex.length} flexible budgets are on pace.` : `${ok} of ${flex.length} flexible budgets came in at or under.`, { go: `#/budget${cur ? '' : `?m=${mk}`}` });
+  }
+  const gp = state.goals.map(g => ({ g, p: goalProgress(g) }));
+  for (const { g } of gp.filter(x => x.p.status === 'done')) add('well', 700, `${g.name} is fully funded.`, { go: '#/planning' });
+  const onTrack = gp.filter(x => x.p.status === 'on' && x.g.monthly != null && x.g.monthly !== '');
+  if (onTrack.length) add('well', 500, onTrack.length === 1 ? `${onTrack[0].g.name} is on track.` : `${onTrack.length} goals are on track: ${onTrack.slice(0, 2).map(x => x.g.name).join(', ')}${onTrack.length > 2 ? '…' : ''}.`, { go: '#/planning' });
+  if (cur && state.recurring.length && forecastAccounts(true).length) {
+    const fc = forecast(60, true);
+    if (fc.low.y > 0 && fc.low.y >= (state.settings.lowCash || 0)) add('well', 300, `Cash on hand stays above ${sm(Math.floor(fc.low.y / 100) * 100)} for the next 60 days.`, { go: '#/cashflow' });
+  }
+  for (const n of notes) if (n.tone === 'good' && !/fully funded|^You kept/.test(n.text)) add('well', n.w, n.text, { go: n.go || '#/reports' });
+
+  // ---- what changed
+  const endNW = cur ? totals(true).netWorth : snapshotNW(mk, true), startNW = snapshotNW(prev, true);
+  if (endNW != null && startNW != null && Math.abs(endNW - startNW) >= 1) {
+    const d = endNW - startNW, top = netWorthMoves(mk).find(r => Math.sign(r.d) === Math.sign(d));
+    add('changed', 900, `${nwLabel()} is ${d > 0 ? 'up' : 'down'} ${sm(Math.abs(d))} since the end of ${P}${top && Math.abs(top.d) >= Math.abs(d) * 0.25 ? `, mostly ${top.name} (${money(top.d, { cents: false, sign: true })})` : ''}.`, { drill: `nw|${mk}` });
+  }
+  if (cur) {
+    const day = new Date().getDate(), usual = usualSpendByDay(mk, day);
+    if (usual != null && day >= 5 && Math.abs(f.spending - usual) >= Math.max(150, usual * 0.08)) add('changed', 700, `Spent ${sm(f.spending)} so far, ${sm(Math.abs(f.spending - usual))} ${f.spending > usual ? 'more' : 'less'} than usual by the ${ordinal(day)}.`, { drill: `out|${mk}` });
+  } else {
+    const avg = sum([1, 2, 3].map(i => flowSummary(lensed(txInMonth(addMonths(mk, -i)))).spending)) / 3;
+    if (avg > 0 && Math.abs(f.spending - avg) >= Math.max(150, avg * 0.08)) add('changed', 700, `Spending was ${sm(Math.abs(f.spending - avg))} ${f.spending > avg ? 'more' : 'less'} than a usual month.`, { drill: `out|${mk}` });
+  }
+  for (const n of notes) if (n.tone === 'info') add('changed', n.w, n.text, n.drill ? { drill: n.drill } : { go: n.go || '#/reports' });
+
+  for (const k in G) G[k].sort((a, b) => b.w - a.w);
+  return G;
+}
+/* One line of the brief, as a link, an action or a way into the numbers. */
+function briefLine(it, inert) {
+  const t = esc(it.text);
+  if (inert && !it.drill) return `<li><span class="brief-line still">${t}</span></li>`;
+  return `<li>${it.drill ? `<button class="brief-line" data-drill="${esc(it.drill)}">${t}</button>` : it.act ? `<button class="brief-line" data-act="${esc(it.act)}">${t}</button>` : `<a class="brief-line" href="${esc(it.go || '#/overview')}">${t}</a>`}</li>`;
+}
+const BRIEF_MORE = { decide: () => (checkinOn() ? '#/checkin' : '#/transactions?cat=_none&m=all'), off: () => '#/budget', well: () => '#/planning', changed: () => '#/reports' };
+function briefPanel(mk = thisMonth(), opts = {}) {
+  const G = whatMatters(mk), max = opts.max || 3;
+  return `<section class="brief${opts.big ? ' big' : ''}" aria-label="What matters now">
+    ${opts.head === false ? '' : `<header class="brief-head"><h2>What matters now</h2><span class="muted small">${mk === thisMonth() ? 'Worked out from your own numbers, as of today' : monthLabel(mk)}</span></header>`}
+    <div class="brief-cols">${BRIEF_GROUPS.map(([k, label, none]) => `<div class="brief-col ${k}${G[k].length ? '' : ' none'}"><h3><i class="brief-mark" aria-hidden="true"></i>${label}${G[k].length ? ` <span class="brief-n">${G[k].length}</span>` : ''}</h3>
+      ${G[k].length ? `<ul>${G[k].slice(0, max).map(it => briefLine(it, opts.inert)).join('')}</ul>${G[k].length > max && !opts.big ? `<a class="brief-more" href="${BRIEF_MORE[k]()}">and ${G[k].length - max} more</a>` : ''}` : `<p class="brief-none">${none}</p>`}</div>`).join('')}</div></section>`;
+}
+
 const VIEWS = {};
 
 /* Plain-English observations used by the Simple view and Money date. */
@@ -4662,20 +5011,20 @@ function insights(mk = thisMonth(), opts = {}) {
   for (const c of state.categories.filter(c => c.kind === 'expense' && c.budget > 0)) {
     const v = budgetView(c, mk);
     if (fixed(c) && v.period !== 'year' && v.available >= -1) continue;
-    if (v.period === 'year') { if (v.actual > v.budget) out.push({ tone: 'bad', w: v.actual - v.budget, text: `${c.name} is ${money(v.actual - v.budget, { cents: false })} over its yearly budget.` }); continue; }
-    if (v.available < -1) out.push({ tone: 'bad', w: -v.available, text: `${c.name} is ${money(-v.available, { cents: false })} over budget${isCur ? ' this month' : ''}.` });
-    else if (isCur && dayShare < 0.85 && v.actual > 100 && v.actual > (v.budget + (v.carry || 0)) * dayShare * 1.3) out.push({ tone: 'warn', w: v.actual - v.budget * dayShare, text: `${c.name} is ahead of pace: ${money(v.actual, { cents: false })} of ${money(v.budget + (v.carry || 0), { cents: false })} with ${dim - dayN} days to go.` });
+    if (v.period === 'year') { if (v.actual > v.budget) out.push({ tone: 'bad', w: v.actual - v.budget, go: '#/budget', text: `${c.name} is ${money(v.actual - v.budget, { cents: false })} over its yearly budget.` }); continue; }
+    if (v.available < -1) out.push({ tone: 'bad', w: -v.available, drill: `cat|${c.id}|${mk}`, text: `${c.name} is ${money(-v.available, { cents: false })} over budget${isCur ? ' this month' : ''}.` });
+    else if (isCur && dayShare < 0.85 && v.actual > 100 && v.actual > (v.budget + (v.carry || 0)) * dayShare * 1.3) out.push({ tone: 'warn', w: v.actual - v.budget * dayShare, drill: `cat|${c.id}|${mk}`, text: `${c.name} is ahead of pace: ${money(v.actual, { cents: false })} of ${money(v.budget + (v.carry || 0), { cents: false })} with ${dim - dayN} days to go.` });
   }
   const acts = monthActuals(mk);
   for (const c of state.categories.filter(c => c.kind === 'expense' && !c.rental)) {
     const a = acts[c.id] || 0, avg = trailingAvg(c.id, mk, 3);
-    if (!isCur && a > 150 && avg > 0 && a > avg * 1.4 && !out.some(o => o.text.startsWith(c.name))) out.push({ tone: 'info', w: (a - avg) / 2, text: `${c.name} came to ${money(a, { cents: false })}, versus a usual ${money(avg, { cents: false })}.` });
+    if (!isCur && a > 150 && avg > 0 && a > avg * 1.4 && !out.some(o => o.text.startsWith(c.name))) out.push({ tone: 'info', w: (a - avg) / 2, drill: `cat|${c.id}|${mk}`, text: `${c.name} came to ${money(a, { cents: false })}, versus a usual ${money(avg, { cents: false })}.` });
   }
-  if (isCur) for (const u of upcoming(35).filter(u => u.amount <= -1000 && !/mortgage|rent\b|card payment/i.test(u.name))) out.push({ tone: 'info', w: -u.amount / 3, text: `${u.name} of ${money(-u.amount, { cents: false })} is due ${dateLabel(u.date)}.` });
-  for (const g of state.goals) { const p = goalProgress(g); if (p.status === 'behind') out.push({ tone: 'warn', w: 400, text: `${g.name} needs ${money(p.needed, { cents: false })} a month to hit ${dateLabel(g.targetDate, true)}; you’re putting in ${money(g.monthly, { cents: false })}.` }); else if (p.status === 'done') out.push({ tone: 'good', w: 300, text: `${g.name} is fully funded. Nice work.` }); }
-  for (const d of detectRepeating().filter(d => d.isNew)) out.push({ tone: 'info', w: d.monthly * 6, text: `New subscription: ${d.payee}, ${money(d.monthly)} a month (${money(d.monthly * 12, { cents: false })} a year).` });
+  if (isCur) for (const u of upcoming(35).filter(u => u.amount <= -1000 && !/mortgage|rent\b|card payment/i.test(u.name))) out.push({ tone: 'info', w: -u.amount / 3, go: '#/cashflow', text: `${u.name} of ${money(-u.amount, { cents: false })} is due ${dateLabel(u.date)}.` });
+  for (const g of state.goals) { const p = goalProgress(g); if (p.status === 'behind') out.push({ tone: 'warn', w: 400, go: '#/planning', text: `${g.name} needs ${money(p.needed, { cents: false })} a month to hit ${dateLabel(g.targetDate, true)}; you’re putting in ${money(g.monthly, { cents: false })}.` }); else if (p.status === 'done') out.push({ tone: 'good', w: 300, go: '#/planning', text: `${g.name} is fully funded. Nice work.` }); }
+  for (const d of detectRepeating().filter(d => d.isNew)) out.push({ tone: 'info', w: d.monthly * 6, go: '#/cashflow', text: `New subscription: ${d.payee}, ${money(d.monthly)} a month (${money(d.monthly * 12, { cents: false })} a year).` });
   const f = flowSummary(txInMonth(mk)), avgRate = (() => { const xs = [1, 2, 3].map(i => flowSummary(txInMonth(addMonths(mk, -i)))); const inc = sum(xs.map(x => x.income)), sp = sum(xs.map(x => x.spending)); return inc ? (inc - sp) / inc : NaN; })();
-  if (!isCur && isFinite(f.rate) && isFinite(avgRate) && Math.abs(f.rate - avgRate) > 0.05) out.push({ tone: f.rate > avgRate ? 'good' : 'warn', w: 500, text: `You kept ${pct(f.rate, 0)} of income, ${f.rate > avgRate ? 'better than' : 'below'} the recent ${pct(avgRate, 0)}.` });
+  if (!isCur && isFinite(f.rate) && isFinite(avgRate) && Math.abs(f.rate - avgRate) > 0.05) out.push({ tone: f.rate > avgRate ? 'good' : 'warn', w: 500, drill: `kept|${mk}`, text: `You kept ${pct(f.rate, 0)} of income, ${f.rate > avgRate ? 'better than' : 'below'} the recent ${pct(avgRate, 0)}.` });
   return out.sort((a, b) => b.w - a.w).slice(0, opts.limit || 5);
 }
 
@@ -4722,7 +5071,8 @@ function overviewDetailed(sub) {
   const t = totals(true), mk = thisMonth(), prev = addMonths(mk, -1);
   const prevNW = snapshotNW(prev, true);
   const series = netWorthSeries(true);
-  const shown = UI.nwRange === 'all' ? series : series.slice(-13);
+  const nwN = { 6: 7, 12: 13, 36: 37 }[UI.nwRange], shown = nwN ? series.slice(-nwN) : series;
+  const nwRanges = [['6', '6M', 8], ['12', '1Y', 0], ['36', '3Y', 38], ['all', 'All', 14]].filter(r => series.length >= r[2]);
   const txs = lensed(txInMonth(mk));
   const f = flowSummary(txs);
   const groups = spendByGroup(txs), items = donutItems(groups), spendTotal = sum(groups.map(g => g.value));
@@ -4740,7 +5090,7 @@ function overviewDetailed(sub) {
   const invSeries = monthlySeries(m => { const s = state.snapshots[m] || {}; return sum(Object.entries(s).filter(([id]) => inNW(id) && ['invest'].includes(ACCOUNT_TYPES[acctById(id)?.type]?.bucket)).map(([, v]) => v)); });
   const fc = forecast(60, true);
   const days = {};
-  for (const tx of lensed(txInRange(addDays(today(), -53 * 7), today()))) for (const l of txLines(tx)) { const c = catById(l.categoryId); if ((c && c.kind === 'expense' && !c.rental && !/Mortgage|Auto payment|Childcare/.test(c.name)) || (!c && l.amount < 0)) days[tx.date] = (days[tx.date] || 0) - l.amount; }
+  for (const tx of lensed(txInRange(addDays(today(), -53 * 7), today()))) for (const l of txLines(tx)) if (isDailySpend(l)) days[tx.date] = (days[tx.date] || 0) - l.amount;
   const goals = state.goals.slice(0, 4);
 
   return pageHead('Overview', sub, `${ciButton()}${bankButton()}<button class="btn" data-act="import">Import</button><button class="btn primary" data-act="add-txn">Add transaction</button>`) + lensNote() + `
@@ -4757,24 +5107,28 @@ function overviewDetailed(sub) {
       ${outEstateLine(t)}
     </div>
     <div class="hero-chart">
-      <div class="seg small" role="group" aria-label="Range"><button class="${UI.nwRange === '12' ? 'on' : ''}" data-nwrange="12">1Y</button><button class="${UI.nwRange === 'all' ? 'on' : ''}" data-nwrange="all">All</button></div>
-      ${chartHost({ h: 220, label: 'Net worth by month', series: [{ points: shown, color: 'var(--ink-accent)', area: true }], xFmt: x => monthLabel(x, true),
-        tip: i => { const p = shown[i], q = shown[i - 1]; return `<strong>${monthLabel(p.x)}</strong><br>${money(p.y, { cents: false })}${q ? `<br><span class="${signClass(p.y - q.y)}">${money(p.y - q.y, { cents: false, sign: true })}</span>` : ''}`; } })}
+      <div class="seg small" role="group" aria-label="Range">${nwRanges.map(([k, l]) => `<button class="${UI.nwRange === k ? 'on' : ''}" data-nwrange="${k}">${l}</button>`).join('')}</div>
+      ${chartHost({ h: 220, label: 'Net worth by month', series: [{ points: shown, color: 'var(--ink-accent)', area: true }], xFmt: x => monthLabel(x, true), pick: i => drillNetWorth(shown[i].x), pickLabel: 'See what changed',
+        tip: i => { const p = shown[i], q = shown[i - 1]; return `<strong>${monthLabel(p.x)}</strong><br><span class="num">${money(p.y, { cents: false })}</span>${q ? `<br><span class="num ${signClass(p.y - q.y)}">${money(p.y - q.y, { cents: false, sign: true })}</span> <span class="muted">in the month</span>` : ''}`; } })}
     </div>
   </section>
 
+  ${briefPanel(mk)}
+
   <section class="kpis-row">
-    <div class="kpi kpi-in"><span class="kpi-label">Money in this month</span><span class="kpi-value num ${f.income > 0 ? 'pos' : ''}">${money(f.income, { cents: false })}</span><span class="kpi-sub">${lastIn ? `${money(lastIn, { cents: false })} in ${MONTHS[+prev.slice(5) - 1]}` : 'Paychecks and other money coming in'}</span>${sparkline(inSeries, { color: 'var(--pos)' })}</div>
-    <div class="kpi kpi-out"><span class="kpi-label">Spent in ${MONTHS[new Date().getMonth()]}</span><span class="kpi-value num">${money(f.spending, { cents: false })}</span><span class="kpi-sub">${planned ? `of ${money(planned, { cents: false })} planned · ${pct(f.spending / planned, 0)}` : 'No budget set'}</span>${sparkline(spendSeries, { color: 'var(--c4)' })}</div>
-    <div class="kpi kpi-kept"><span class="kpi-label">Kept this month</span><span class="kpi-value num ${signClass(f.net)}">${money(f.net, { cents: false })}</span><span class="kpi-sub">${isFinite(f.rate) ? `${pct(f.rate, 0)} of income` : 'No income yet'}</span>${sparkline(keptSeries, { color: 'var(--pos)' })}</div>
-    <div class="kpi kpi-bal"><span class="kpi-label">Cash on hand</span><span class="kpi-value num">${money(t.cash, { cents: false })}</span><span class="kpi-sub">${state.recurring.length ? `Low of ${money(fc.low.y, { cents: false })} on ${dateLabel(fc.low.x)}` : 'Add bills to forecast'}</span>${sparkline(cashSeries, { color: 'var(--c2)' })}</div>
-    <div class="kpi kpi-bal"><span class="kpi-label">Investments</span><span class="kpi-value num">${money(t.invest, { cents: false })}</span><span class="kpi-sub">${(() => { const p = invSeries[invSeries.length - 2]; return p ? `${money(t.invest - p, { cents: false, sign: true })} this month` : '&nbsp;'; })()}</span>${sparkline(invSeries, { color: 'var(--c1)' })}</div>
+    <div class="month-strip" role="group" aria-label="This month: money in, less what was spent, is what was kept">
+    <div class="kpi kpi-in" data-drill="in|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Money in this month</span><span class="kpi-value num ${f.income > 0 ? 'pos' : ''}">${money(f.income, { cents: false })}</span><span class="kpi-sub">${lastIn ? `${money(lastIn, { cents: false })} in ${MONTHS[+prev.slice(5) - 1]}` : 'Paychecks and other money coming in'}</span>${sparkline(inSeries, { color: 'var(--pos)' })}</div>
+    <div class="kpi kpi-out" data-drill="out|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Spent in ${MONTHS[new Date().getMonth()]}</span><span class="kpi-value num">${money(f.spending, { cents: false })}</span><span class="kpi-sub">${planned ? `of ${money(planned, { cents: false })} planned · ${pct(f.spending / planned, 0)}` : 'No budget set'}</span>${sparkline(spendSeries, { color: 'var(--c4)' })}</div>
+    <div class="kpi kpi-kept" data-drill="kept|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Kept this month</span><span class="kpi-value num ${signClass(f.net)}">${money(f.net, { cents: false })}</span><span class="kpi-sub">${isFinite(f.rate) ? `${pct(f.rate, 0)} of income` : 'No income yet'}</span>${sparkline(keptSeries, { color: 'var(--pos)' })}</div>
+    </div>
+    <a class="kpi kpi-bal" href="#/cashflow"><span class="kpi-label">Cash on hand</span><span class="kpi-value num">${money(t.cash, { cents: false })}</span><span class="kpi-sub">${state.recurring.length ? `Low of ${money(fc.low.y, { cents: false })} on ${dateLabel(fc.low.x)}` : 'Add bills to forecast'}</span>${sparkline(cashSeries, { color: 'var(--c2)' })}</a>
+    <a class="kpi kpi-bal" href="#/investments"><span class="kpi-label">Investments</span><span class="kpi-value num">${money(t.invest, { cents: false })}</span><span class="kpi-sub">${(() => { const p = invSeries[invSeries.length - 2]; return p ? `${money(t.invest - p, { cents: false, sign: true })} this month` : '&nbsp;'; })()}</span>${sparkline(invSeries, { color: 'var(--c1)' })}</a>
   </section>
 
   <div class="cols">
     <section class="panel">
       <header class="panel-head"><h2>Where it went</h2><a href="#/reports?r=spending&p=m">Breakdown</a></header>
-      ${items.length ? `<div class="donut-wrap">${chartHost({ type: 'donut', h: 200, items, center: { value: money(spendTotal, { cents: false }), label: 'spent so far' } })}${legendList(items, spendTotal)}</div>` : '<p class="muted">No spending recorded this month yet.</p>'}
+      ${items.length ? `<div class="donut-wrap">${chartHost({ type: 'donut', h: 200, label: 'Where the money went this month', items, center: { value: money(spendTotal, { cents: false }), label: 'spent so far' }, pick: it => drillGroup(it.label, mk) })}${legendList(items, spendTotal)}</div>` : '<p class="muted">No spending recorded this month yet.</p>'}
     </section>
     <section class="panel">
       <header class="panel-head"><h2>Flexible spending</h2><a href="#/budget">Budget</a></header>
@@ -4786,7 +5140,7 @@ function overviewDetailed(sub) {
 
   <section class="panel">
     <header class="panel-head"><h2>Daily spending</h2><span class="muted small">Darker days mean more spending. Mortgage, rent and other fixed bills are left out.</span></header>
-    ${chartHost({ type: 'heatmap', days, weeks: 52 })}
+    ${chartHost({ type: 'heatmap', label: 'Daily spending', days, weeks: 52, pick: iso => drillDay(iso) })}
   </section>
 
   <div class="cols">
@@ -4816,7 +5170,6 @@ function overviewSimple(sub) {
   const txs = lensed(txInMonth(mk)), f = flowSummary(txs);
   const planned = sum(state.categories.filter(c => c.kind === 'expense').map(c => c.period === 'year' ? (c.budget || 0) / 12 : (c.budget || 0)));
   const groups = spendByGroup(txs), items = donutItems(groups, 5), total = sum(groups.map(g => g.value));
-  const notes = insights(mk, { limit: 4 });
   const up = upcoming(21, true).filter(u => Math.abs(u.amount) >= 100).slice(0, 5);
   const series = netWorthSeries(true).slice(-13);
   return `<header class="page-head simple-head"><div><p class="sub">${sub}</p><h1 class="big-sentence">${who} spent <span class="num">${money(f.spending, { cents: false })}</span>${!lensActive() && planned ? ` of the <span class="num">${money(planned, { cents: false })}</span> we planned` : ''} this month.</h1></div>${checkinOn() ? `<div class="actions">${ciButton()}</div>` : ''}</header>
@@ -4825,28 +5178,23 @@ function overviewSimple(sub) {
     <div class="s-card"><span class="s-label">Went out</span><span class="s-value num">${money(f.spending, { cents: false })}</span><span class="s-sub">${planned ? `${pct(Math.min(9.99, f.spending / planned), 0)} of the plan` : '&nbsp;'}</span></div>
     <div class="s-card accent"><span class="s-label">Kept</span><span class="s-value num ${signClass(f.net)}">${money(f.net, { cents: false })}</span><span class="s-sub">${isFinite(f.rate) ? `${pct(f.rate, 0)} of what came in` : '&nbsp;'}</span></div>
   </section>
+  ${briefPanel(mk)}
   <div class="cols">
     <section class="panel">
       <header class="panel-head"><h2>Where it went</h2></header>
-      ${items.length ? `<div class="donut-wrap big">${chartHost({ type: 'donut', h: 230, items, center: { value: money(total, { cents: false }), label: 'this month' } })}${legendList(items, total)}</div>` : '<p class="muted">Nothing spent yet this month.</p>'}
-    </section>
-    <section class="panel">
-      <header class="panel-head"><h2>Worth a look</h2></header>
-      ${notes.length ? `<ul class="insights">${notes.map(n => `<li class="${n.tone}">${esc(n.text)}</li>`).join('')}</ul>` : '<p class="muted">Nothing stands out. Everything is on track.</p>'}
-    </section>
-  </div>
-  <div class="cols">
-    <section class="panel nw-simple">
-      <header class="panel-head"><h2>${lensSingleOut() ? `${esc(memberName(UI.lens))}’s accounts` : 'What we own, minus what we owe'}</h2></header>
-      <span class="s-value num">${money(t.netWorth, { cents: false })}</span>
-      <p class="muted">${prevNW == null ? 'History builds month by month.' : `${t.netWorth >= prevNW ? 'Up' : 'Down'} ${money(Math.abs(t.netWorth - prevNW), { cents: false })} since the end of ${MONTHS[+prev.slice(5) - 1]}.`}</p>
-      ${chartHost({ h: 150, padL: 50, label: 'Net worth', series: [{ points: series, color: 'var(--ink-accent)', area: true, nodots: true }], xFmt: x => MON[+x.slice(5) - 1], tip: i => `<strong>${monthLabel(series[i].x)}</strong><br>${money(series[i].y, { cents: false })}` })}
+      ${items.length ? `<div class="donut-wrap big">${chartHost({ type: 'donut', h: 230, label: 'Where the money went this month', items, center: { value: money(total, { cents: false }), label: 'this month' }, pick: it => drillGroup(it.label, mk) })}${legendList(items, total)}</div>` : '<p class="muted">Nothing spent yet this month.</p>'}
     </section>
     <section class="panel">
       <header class="panel-head"><h2>Coming up</h2></header>
       ${up.length ? `<ul class="simple-list">${up.map(u => `<li><span class="date-chip">${dateLabel(u.date)}</span><span>${esc(u.name)}</span><span class="num ${signClass(u.amount)}">${money(u.amount, { cents: false })}</span></li>`).join('')}</ul>` : '<p class="muted">No big bills in the next three weeks.</p>'}
     </section>
   </div>
+    <section class="panel nw-simple">
+      <header class="panel-head"><h2>${lensSingleOut() ? `${esc(memberName(UI.lens))}’s accounts` : 'What we own, minus what we owe'}</h2></header>
+      <span class="s-value num">${money(t.netWorth, { cents: false })}</span>
+      <p class="muted">${prevNW == null ? 'History builds month by month.' : `${t.netWorth >= prevNW ? 'Up' : 'Down'} ${money(Math.abs(t.netWorth - prevNW), { cents: false })} since the end of ${MONTHS[+prev.slice(5) - 1]}.`}</p>
+      ${chartHost({ h: 150, padL: 50, label: 'Net worth', series: [{ points: series, color: 'var(--ink-accent)', area: true, nodots: true }], xFmt: x => MON[+x.slice(5) - 1], tip: i => `<strong>${monthLabel(series[i].x)}</strong><br>${money(series[i].y, { cents: false })}` })}
+    </section>
   ${state.goals.length ? `<section class="panel"><header class="panel-head"><h2>Our goals</h2></header><div class="goal-strip">${state.goals.map(goalTile).join('')}</div></section>` : ''}`;
 }
 
@@ -5199,7 +5547,7 @@ VIEWS.cashflow = () => {
     `<button class="btn primary" data-act="add-recurring">Add a bill or paycheck</button>`) + lensNote() + `
   <section class="panel">
     <header class="panel-head"><h2>Next ${days} days</h2><span class="muted small">Lowest point ${money(f.low.y, { cents: false })} on ${dateLabel(f.low.x)}. ${money(f.end, { cents: false })} on ${dateLabel(addDays(today(), days))}.</span></header>
-    ${recs.length ? chartHost({ h: 230, label: 'Projected cash balance', series: [{ points: f.series, color: 'var(--ink-accent)', area: true }], threshold: low || null, thresholdLabel: low ? `Cushion ${moneyCompact(low)}` : '', zero: true,
+    ${recs.length ? chartHost({ h: 230, label: 'Projected cash balance', ranges: [['30 days', 31], ['60 days', 61], ['90 days', 0]], rangeFrom: 'start', rangeKey: 'cf-forecast', series: [{ points: f.series, color: 'var(--ink-accent)', area: true }], threshold: low || null, thresholdLabel: low ? `Cushion ${moneyCompact(low)}` : '', zero: true,
       xFmt: x => dateLabel(x), markers: lowIdx > 0 ? [{ i: lowIdx, y: f.low.y, label: `Low ${moneyCompact(f.low.y)}`, below: true }] : [],
       tip: i => { const p = f.series[i]; const ev = f.events.filter(e => e.date === p.x); return `<strong>${dateLabel(p.x)}</strong><br>${money(p.y, { cents: false })}${ev.map(e => `<br><span class="muted">${esc(e.name)} ${money(e.amount, { cents: false, sign: true })}</span>`).join('')}`; } })
       : `<p class="muted">Add your paychecks, mortgage or rent, and other regular bills to project your cash balance day by day.</p>`}
@@ -5227,7 +5575,7 @@ VIEWS.cashflow = () => {
 
   <section class="panel">
     <header class="panel-head"><h2>Money in and out, by month</h2></header>
-    ${chartHost({ type: 'bars', h: 200, label: 'Income and spending by month', labels: months.map(m => MON[+m.slice(5) - 1]), series: [{ values: flows.map(x => x.income), color: 'var(--c1)' }, { values: flows.map(x => x.spending), color: 'var(--c4)' }],
+    ${chartHost({ type: 'bars', h: 200, label: 'Income and spending by month', labels: months.map(m => MON[+m.slice(5) - 1]), series: [{ name: 'Money in', values: flows.map(x => x.income), color: 'var(--c1)' }, { name: 'Money out', values: flows.map(x => x.spending), color: 'var(--c4)' }], pick: i => drillMonth(months[i]), pickLabel: 'Open the month', ranges: months.length > 6 ? [['6 months', 6], ['A year', 0]] : null, rangeKey: 'cf-months',
       tip: i => `<strong>${monthLabel(months[i])}</strong><br>In ${money(flows[i].income, { cents: false })}<br>Out ${money(flows[i].spending, { cents: false })}<br>Left over <span class="${signClass(flows[i].net)}">${money(flows[i].net, { cents: false })}</span>` })}
     <p class="legend"><span><i style="background:var(--c1)"></i>Money in</span><span><i style="background:var(--c4)"></i>Money out</span></p>
   </section>`;
@@ -5576,7 +5924,8 @@ VIEWS.reports = p => {
     <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Left over</th><th class="num">Savings rate</th></tr></thead>
       <tbody><tr><th scope="row">${esc(R.label)}</th><td class="num">${money(f.income, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td><td class="num ${signClass(f.net)}">${money(f.net, { cents: false })}</td><td class="num">${pct(f.rate, 0)}</td></tr></tbody></table></section>
     <section class="panel"><header class="panel-head"><h2>Where the money came from and went</h2><span class="muted small">${isTouch() ? 'Tap' : 'Hover over'} a band for the amount</span></header>
-      ${chartHost({ type: 'sankey', left: sk.left, right: sk.right, total: Math.max(sk.income, sk.spending), empty: 'No income or spending in this period.' })}</section>`;
+      ${chartHost({ type: 'sankey', label: 'Where the money came from and went', left: sk.left, right: sk.right, total: Math.max(sk.income, sk.spending), empty: 'No income or spending in this period.',
+        pick: R.from.slice(0, 7) === R.to.slice(0, 7) ? (n, side) => { const m = R.from.slice(0, 7); if (n.saved) drillKept(m); else if (side === 'r') drillGroup(n.name, m); else drillFlow('in', m); } : null })}</section>`;
   }
 
   if (tab === 'spending') {
@@ -5674,7 +6023,7 @@ VIEWS.reports = p => {
   const ago = ms[Math.max(0, ms.length - 13)];
   return head + `
   <section class="panel"><header class="panel-head"><h2>Net worth over time</h2><span class="muted small">Areas show what you own by type; debt sits below zero. The line is net worth.</span></header>
-    ${chartHost({ type: 'stack', h: 300, labels: ms.map(m => monthLabel(m, true)), series: [['cash', 'Cash', 'var(--c2)'], ['invest', 'Investments', 'var(--c1)'], ['illiquid', 'Property and private', 'var(--c4)'], ['debt', 'Debt', 'var(--neg)']].map(([b, name, color]) => ({ name, color, values: bucketVals(b) })), line: { values: nw, color: 'var(--ink)' },
+    ${chartHost({ type: 'stack', h: 300, labels: ms.map(m => monthLabel(m, true)), series: [['cash', 'Cash', 'var(--c2)'], ['invest', 'Investments', 'var(--c1)'], ['illiquid', 'Property and private', 'var(--c4)'], ['debt', 'Debt', 'var(--neg)']].map(([b, name, color]) => ({ name, color, values: bucketVals(b) })), line: { values: nw, color: 'var(--ink)' }, pick: i => drillNetWorth(ms[i]), pickLabel: 'See what changed',
       tip: i => `<strong>${monthLabel(ms[i])}</strong><br>Net worth ${money(nw[i], { cents: false })}` })}
     <p class="legend"><span><i style="background:var(--c2)"></i>Cash</span><span><i style="background:var(--c1)"></i>Investments</span><span><i style="background:var(--c4)"></i>Property and private</span><span><i style="background:var(--neg)"></i>Debt</span><span><i style="background:var(--ink);height:2px"></i>Net worth</span></p></section>
   <table class="ledger" data-sort-id="rep-nw"><thead><tr><th>Account</th><th class="num">${ago ? monthLabel(ago, true) : ''}</th><th class="num">Now</th><th class="num">Change</th><th class="spark-cell hide-sm" data-nosort>Trend</th></tr></thead><tbody>
@@ -6770,110 +7119,150 @@ function ruleModal(id, preset = {}) {
   if (r) $('#del').onclick = () => { state.rules = state.rules.filter(x => x.id !== r.id); closeModal(); commit(); };
 }
 
-/* ================= Money date: a month, one screen at a time ================= */
-const MD = { i: 0, mk: null, slides: [] };
+/* ================= Money date: the month, one page at a time, for the two of you =================
+   It has an evening look of its own (deep forest, with the àdìrẹ field), a strip of cloth that is woven as you go, the few
+   things that matter up front, and every chart and figure opens into what's behind it without leaving the date. */
+const MD = { i: 0, mk: null, slides: [], dir: 1, lens: '' };
+/* A Yoruba proverb for the first page: it is with the hands gathered together that we beat the chest. */
+const MD_PROVERB = ['Àgbájọ ọwọ́ la fi ń sọ̀yà.', 'We are strongest with our hands together.'];
 function startMoneyDate(mk) {
   const lm = addMonths(thisMonth(), -1);
   MD.mk = mk || (state.transactions.some(t => t.date.startsWith(lm)) ? lm : thisMonth());
-  MD.i = 0;
+  MD.i = 0; MD.dir = 1;
+  if (!$('#present')) { MD.lens = UI.lens; UI.lens = ''; }   // a Money date is about the whole household
   MD.slides = buildSlides(MD.mk);
   let el = $('#present');
   if (!el) { el = document.createElement('div'); el.id = 'present'; el.className = 'present'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Money date'); document.body.appendChild(el); }
   document.body.classList.add('presenting');
   paintSlide();
 }
-/* Swipe left or right between slides on a phone or iPad */
+/* Swipe left or right between pages on a phone or iPad (a finger on a chart reads the chart instead) */
 document.addEventListener('touchstart', e => {
-  const el = e.target.closest?.('#present .slide'); if (!el || e.touches.length !== 1 || e.target.closest('textarea, input, select, button')) { MD.swipe = null; return; }
+  const el = e.target.closest?.('#present .slide'); if (!el || e.touches.length !== 1 || e.target.closest('textarea, input, select, button, .chart-host')) { MD.swipe = null; return; }
   MD.swipe = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
 }, { passive: true });
 document.addEventListener('touchend', e => {
-  const s = MD.swipe; MD.swipe = null; if (!s || !$('#present')) return;
+  const s = MD.swipe; MD.swipe = null; if (!s || !$('#present') || $('#modal')) return;
   const t = e.changedTouches[0], dx = t.clientX - s.x, dy = t.clientY - s.y;
   if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && Date.now() - s.t < 700) { if (dx > 0) mdAction('prev'); else if (MD.i < MD.slides.length - 1) mdAction('next'); }
 }, { passive: true });
-function endMoneyDate() { $('#present')?.remove(); document.body.classList.remove('presenting'); render(); }
+function endMoneyDate() {
+  if (!$('#present')) return;
+  $('#present').remove(); document.body.classList.remove('presenting');
+  if (document.fullscreenElement) document.exitFullscreen?.().catch?.(() => {});
+  UI.lens = MD.lens || '';
+  render();
+}
 function paintSlide() {
   const el = $('#present'); if (!el) return;
   for (const k in ChartSpecs) delete ChartSpecs[k];
-  const n = MD.slides.length, s = MD.slides[MD.i];
+  const n = MD.slides.length, s = MD.slides[MD.i], last = MD.i === n - 1;
+  el.dataset.kind = s.kind || '';
   el.innerHTML = `
     <header class="present-top"><span class="brand" title="Ọrọ̀ is Yoruba for wealth">${BRAND_MARK}</span><span class="present-title">Money date · ${monthLabel(MD.mk)}</span>
-      <span class="present-prog">${MD.slides.map((_, k) => `<i class="${k === MD.i ? 'on' : k < MD.i ? 'done' : ''}"></i>`).join('')}</span>
+      <div class="present-prog" role="group" aria-label="Pages">${MD.slides.map((x, k) => `<button type="button" class="${k === MD.i ? 'on' : k < MD.i ? 'done' : ''}" data-md="go:${k}" aria-label="Page ${k + 1}: ${esc(x.title)}"${k === MD.i ? ' aria-current="step"' : ''}></button>`).join('')}</div>
+      ${document.fullscreenEnabled && !isTouch() ? '<button class="icon-btn present-full" data-md="full" aria-label="Full screen" title="Full screen"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>' : ''}
       <button class="icon-btn" data-md="close" aria-label="Exit Money date">×</button></header>
-    <section class="slide" aria-live="polite">${s.html()}</section>
-    <footer class="present-nav"><button class="btn ghost" data-md="prev" ${MD.i ? '' : 'disabled'}>Back</button><span class="muted">${MD.i + 1} of ${n} · ${esc(s.title)}</span><button class="btn primary" data-md="next">${MD.i === n - 1 ? 'Finish' : 'Next'}</button></footer>`;
+    <section class="slide ${MD.dir < 0 ? 'back' : MD.dir > 0 ? 'fwd' : 'still'}" aria-live="polite"><div class="slide-in">${s.html()}</div></section>
+    <footer class="present-nav"><button class="btn ghost" data-md="prev" ${MD.i ? '' : 'disabled'}>Back</button><span class="muted">${MD.i + 1} of ${n} · ${esc(s.title)}</span><button class="btn primary" data-md="next">${last ? 'Finish' : MD.i === 0 ? 'Begin' : 'Next'}</button></footer>`;
+  if (MD.dir) CHART.page = null;   // a new page's charts draw themselves in
   drawCharts(el);
 }
+/* Something changed underneath (a transaction filed from a page of the date): work the pages out again, in place. */
+function mdRefresh() {
+  const el = $('#present'); if (!el || el.querySelector('textarea:focus')) return;
+  MD.slides = buildSlides(MD.mk); MD.i = Math.min(MD.i, MD.slides.length - 1); MD.dir = 0;
+  const y = el.querySelector('.slide')?.scrollTop || 0;
+  paintSlide();
+  if (y) el.querySelector('.slide').scrollTop = y;
+}
 function buildSlides(mk) {
-  const prev = addMonths(mk, -1);
+  const prev = addMonths(mk, -1), cur = mk === thisMonth(), sm = n => money(n, { cents: false });
   const txs = txInMonth(mk), f = flowSummary(txs);
   const avg = [1, 2, 3].map(i => flowSummary(txInMonth(addMonths(mk, -i))));
   const avgSpend = sum(avg.map(x => x.spending)) / 3;
-  const endNW = mk === thisMonth() ? totals().netWorth : snapshotNW(mk), startNW = snapshotNW(prev);
+  const endNW = cur ? totals().netWorth : snapshotNW(mk), startNW = snapshotNW(prev);
   const nwChange = endNW != null && startNW != null ? endNW - startNW : null;
-  const M = MONTHS[+mk.slice(5) - 1];
+  const M = MONTHS[+mk.slice(5) - 1], P = MONTHS[+prev.slice(5) - 1];
   const groups = spendByGroup(txs), items = donutItems(groups, 6), spendTotal = sum(groups.map(g => g.value));
-  const acts = monthActuals(mk);
   const exp = state.categories.filter(c => c.kind === 'expense' && c.period !== 'year' && c.budget > 0).map(c => ({ c, v: budgetView(c, mk) }));
   const wins = exp.filter(x => x.v.actual < x.v.budget).sort((a, b) => (b.v.budget - b.v.actual) - (a.v.budget - a.v.actual)).slice(0, 4);
   const misses = exp.filter(x => x.v.actual > x.v.budget).sort((a, b) => (b.v.actual - b.v.budget) - (a.v.actual - a.v.budget)).slice(0, 4);
   const notes = insights(mk, { limit: 4 });
+  const adults = people().filter(m => roleOf(m.id) === 'adult').map(m => m.name);
+  const who = adults.length === 2 ? `${adults[0]} and ${adults[1]}` : adults.length === 1 ? adults[0] : '';
   const slides = [];
-  slides.push({ title: 'The big picture', html: () => `<div class="slide-center">
+  slides.push({ title: 'Welcome', kind: 'cover', html: () => `<div class="md-cover">
+      <p class="md-kicker">Money date</p>
+      <h1 class="md-month">${M} <span>${mk.slice(0, 4)}</span></h1>
+      <div class="md-band" aria-hidden="true"></div>
+      <p class="slide-lede">${who ? `${esc(who)}: the` : 'The'} month in ${slides.length} short pages. Tap any chart or figure to see what’s behind it.</p>
+      <p class="md-proverb"><span lang="yo">${MD_PROVERB[0]}</span> ${MD_PROVERB[1]}</p></div>` });
+  slides.push({ title: 'The big picture', kind: 'big', html: () => `<div class="slide-center">
       <p class="eyebrow-plain">${monthLabel(mk)}</p>
-      <h1 class="slide-h">${f.net >= 0 ? `We kept <span class="num pos">${money(f.net, { cents: false })}</span> this month.` : `We spent <span class="num neg">${money(-f.net, { cents: false })}</span> more than came in.`}</h1>
-      <p class="slide-lede">${money(f.income, { cents: false })} came in and ${money(f.spending, { cents: false })} went out${nwChange != null ? `, and our net worth ${nwChange >= 0 ? 'grew' : 'fell'} by ${money(Math.abs(nwChange), { cents: false })}` : ''}.</p></div>` });
+      <h1 class="slide-h">${f.net >= 0 ? `We kept <span class="num pos">${sm(f.net)}</span> ${cur ? 'so far this month' : 'this month'}.` : `We spent <span class="num neg">${sm(-f.net)}</span> more than came in.`}</h1>
+      <p class="slide-lede">${sm(f.income)} came in and ${sm(f.spending)} went out${nwChange != null ? `, and our net worth ${nwChange >= 0 ? 'grew' : 'fell'} by ${sm(Math.abs(nwChange))}` : ''}.</p>
+      <div class="md-trio">
+        <button class="md-fig" data-drill="in|${mk}"><span>Came in</span><strong class="num">${sm(f.income)}</strong></button>
+        <button class="md-fig" data-drill="out|${mk}"><span>Went out</span><strong class="num">${sm(f.spending)}</strong></button>
+        <button class="md-fig" data-drill="kept|${mk}"><span>Kept</span><strong class="num ${signClass(f.net)}">${sm(f.net)}</strong></button></div></div>` });
+  slides.push({ title: 'What matters', kind: 'matters', html: () => `<h2 class="slide-h2">What matters ${cur ? 'now' : `from ${M}`}</h2>${briefPanel(mk, { head: false, big: true, inert: true, max: 3 })}` });
   if (endNW != null) {
     const series = netWorthSeries().filter(p => p.x <= mk).slice(-13);
-    const bk = BUCKETS.map(b => { const s = mk === thisMonth() ? null : state.snapshots[mk] || {}; const v = s ? sum(Object.entries(s).filter(([id]) => ACCOUNT_TYPES[acctById(id)?.type]?.bucket === b.id).map(([, x]) => x)) : (b.id === 'debt' ? -totals().debt : totals()[b.id]); return { b, v }; });
-    slides.push({ title: 'Net worth', html: () => `<div class="slide-split">
-      <div><p class="eyebrow-plain">What we own, minus what we owe</p><p class="slide-num num">${money(endNW, { cents: false })}</p>${startNW != null ? `<p class="slide-lede">${deltaChip(endNW, startNW, { pct: true })} since the end of ${MONTHS[+prev.slice(5) - 1]}</p>` : ''}
-        <ul class="slide-bars">${bk.map(({ b, v }) => `<li><span>${esc(b.label)}</span><span class="num ${v < 0 ? 'neg' : ''}">${money(v, { cents: false })}</span></li>`).join('')}</ul></div>
-      <div>${chartHost({ h: 300, series: [{ points: series, color: 'var(--ink-accent)', area: true }], xFmt: x => MON[+x.slice(5) - 1], tip: i => `<strong>${monthLabel(series[i].x)}</strong><br>${money(series[i].y, { cents: false })}` })}</div></div>` });
+    const bk = BUCKETS.map(b => { const s = cur ? null : state.snapshots[mk] || {}; const v = s ? sum(Object.entries(s).filter(([id]) => ACCOUNT_TYPES[acctById(id)?.type]?.bucket === b.id && acctInEstate(acctById(id))).map(([, x]) => x)) : (b.id === 'debt' ? -totals().debt : totals()[b.id]); return { b, v }; });
+    const moves = startNW != null ? netWorthMoves(mk).slice(0, 3) : [];
+    slides.push({ title: 'Net worth', kind: 'nw', html: () => `<div class="slide-split">
+      <div><p class="eyebrow-plain">What we own, minus what we owe</p><p class="slide-num num">${sm(endNW)}</p>${startNW != null ? `<p class="slide-lede">${deltaChip(endNW, startNW, { pct: true })} since the end of ${P}</p>` : ''}
+        <ul class="slide-bars">${bk.map(({ b, v }) => `<li><span>${esc(b.label)}</span><span class="num ${v < 0 ? 'neg' : ''}">${sm(v)}</span></li>`).join('')}</ul></div>
+      <div>${chartHost({ h: 280, label: 'Net worth by month', series: [{ points: series, color: 'var(--ink-accent)', area: true }], xFmt: x => MON[+x.slice(5) - 1], pick: i => drillNetWorth(series[i].x), pickLabel: 'See what changed', tip: i => `<strong>${monthLabel(series[i].x)}</strong><br>${sm(series[i].y)}` })}
+        ${moves.length ? `<div class="md-moves"><h3>What moved it most</h3><ul class="simple-list">${moves.map(r => `<li><span>${esc(r.name)}</span><span></span><span class="num ${signClass(r.d)}">${money(r.d, { cents: false, sign: true })}</span></li>`).join('')}</ul><button class="linklike md-more" data-drill="nw|${mk}">See every account</button></div>` : ''}</div></div>` });
   }
-  slides.push({ title: 'Money in and out', html: () => {
-    const mx = Math.max(f.income, f.spending, 1);
+  slides.push({ title: 'Money in and out', kind: 'io', html: () => {
+    const mx = Math.max(f.income, f.spending, 1), ms = Array.from({ length: 6 }, (_, i) => addMonths(mk, i - 5)), kept = ms.map(m => flowSummary(txInMonth(m)).net);
     return `<div class="slide-split">
       <div><h2 class="slide-h2">In and out</h2>
-        <div class="io-bars"><div><span>Came in</span><div class="io-track"><span style="width:${f.income / mx * 100}%;background:var(--pos)"></span></div><strong class="num">${money(f.income, { cents: false })}</strong></div>
-        <div><span>Went out</span><div class="io-track"><span style="width:${f.spending / mx * 100}%;background:var(--c4)"></span></div><strong class="num">${money(f.spending, { cents: false })}</strong></div></div>
-        <p class="slide-lede">Spending was ${avgSpend ? `${money(Math.abs(f.spending - avgSpend), { cents: false })} ${f.spending > avgSpend ? 'more' : 'less'} than` : 'compared with'} our usual month.</p></div>
+        <div class="io-bars"><button class="io-row" data-drill="in|${mk}"><span>Came in</span><div class="io-track"><span style="width:${f.income / mx * 100}%;background:var(--pos)"></span></div><strong class="num">${sm(f.income)}</strong></button>
+        <button class="io-row" data-drill="out|${mk}"><span>Went out</span><div class="io-track"><span style="width:${f.spending / mx * 100}%;background:var(--c4)"></span></div><strong class="num">${sm(f.spending)}</strong></button></div>
+        <p class="slide-lede">Spending was ${avgSpend ? `${sm(Math.abs(f.spending - avgSpend))} ${f.spending > avgSpend ? 'more' : 'less'} than` : 'compared with'} our usual month.</p>
+        <div class="md-mini"><h3>Kept, the last six months</h3>${chartHost({ type: 'bars', h: 150, label: 'Kept by month', labels: ms.map(m => MON[+m.slice(5) - 1]), series: [{ name: 'Kept', values: kept, color: 'var(--ink-accent)' }], pick: i => drillMonth(ms[i]), pickLabel: 'Open the month', tip: i => `<strong>${monthLabel(ms[i])}</strong><br>Kept ${money(kept[i], { cents: false })}` })}</div></div>
       <div class="slide-center">${ring(isFinite(f.rate) ? Math.max(0, f.rate) : 0, { size: 220, width: 20, label: isFinite(f.rate) ? pct(f.rate, 0) : '—', color: f.rate >= 0.2 ? 'var(--pos)' : f.rate >= 0 ? 'var(--ink-accent)' : 'var(--neg)' })}<p class="slide-lede">of what came in, we kept</p></div></div>`;
   } });
-  if (items.length) slides.push({ title: 'Where it went', html: () => `<div class="slide-split">
-      <div>${chartHost({ type: 'donut', h: 330, items, center: { value: money(spendTotal, { cents: false }), label: 'spent' } })}</div>
+  if (items.length) slides.push({ title: 'Where it went', kind: 'where', html: () => `<div class="slide-split">
+      <div>${chartHost({ type: 'donut', h: 330, label: 'Where the money went', items, center: { value: sm(spendTotal), label: 'spent' }, pick: it => drillGroup(it.label, mk) })}</div>
       <div><h2 class="slide-h2">Where it went</h2>${legendList(items, spendTotal)}
       <p class="slide-lede">${groups[0] ? `${esc(groups[0].label)} was the biggest piece at ${pct(groups[0].value / spendTotal, 0)}.` : ''}</p></div></div>` });
-  if (wins.length || misses.length) slides.push({ title: 'Budget', html: () => `<h2 class="slide-h2 center">How the budget did</h2><div class="slide-split">
-      <div class="wins"><h3>Under budget</h3>${wins.length ? wins.map(x => `<div class="wm good"><span>${esc(x.c.name)}</span><strong class="num">${money(x.v.budget - x.v.actual, { cents: false })} under</strong>${bar(x.v.actual, x.v.budget)}</div>`).join('') : '<p class="muted">Nothing came in under.</p>'}</div>
-      <div class="misses"><h3>Over budget</h3>${misses.length ? misses.map(x => `<div class="wm bad"><span>${esc(x.c.name)}</span><strong class="num">${money(x.v.actual - x.v.budget, { cents: false })} over</strong>${bar(x.v.actual, x.v.budget)}</div>`).join('') : '<p class="slide-lede pos">Every category stayed within budget.</p>'}</div></div>` });
+  if (wins.length || misses.length) slides.push({ title: 'Budget', kind: 'budget', html: () => `<h2 class="slide-h2 center">How the budget did</h2><div class="slide-split top">
+      <div class="wins"><h3>Under budget</h3>${wins.length ? wins.map(x => `<button class="wm good" data-drill="cat|${x.c.id}|${mk}"><span>${esc(x.c.name)}</span><strong class="num">${sm(x.v.budget - x.v.actual)} under</strong>${bar(x.v.actual, x.v.budget)}</button>`).join('') : '<p class="muted">Nothing came in under.</p>'}</div>
+      <div class="misses"><h3>Over budget</h3>${misses.length ? misses.map(x => `<button class="wm bad" data-drill="cat|${x.c.id}|${mk}"><span>${esc(x.c.name)}</span><strong class="num">${sm(x.v.actual - x.v.budget)} over</strong>${bar(x.v.actual, x.v.budget)}</button>`).join('') : '<p class="slide-lede pos">Every category stayed within budget.</p>'}</div></div>` });
   if (people().length > 1) {
     const per = people().map(m => ({ m, f: flowSummary(txs.filter(t => personOf(t) === m.id)), a: categoryActuals(txs.filter(t => personOf(t) === m.id)) })).filter(x => x.f.spending > 0);
     const tot = sum(per.map(x => x.f.spending)) || 1;
-    if (per.length > 1) slides.push({ title: 'Who spent what', html: () => `<h2 class="slide-h2 center">Who spent what</h2>
+    if (per.length > 1) slides.push({ title: 'Who spent what', kind: 'who', html: () => `<h2 class="slide-h2 center">Who spent what</h2>
       <div class="stack huge">${per.map(x => `<span style="width:${x.f.spending / tot * 100}%;background:${memberColor(x.m.id)}"></span>`).join('')}</div>
-      <div class="people-cards">${per.map(x => `<div class="person-card" style="--pc:${memberColor(x.m.id)}"><span class="person-name">${esc(x.m.name)}</span><span class="s-value num">${money(x.f.spending, { cents: false })}</span><span class="muted">${pct(x.f.spending / tot, 0)}</span><ul>${Object.entries(x.a).filter(([id, v]) => v > 0 && catById(id)?.kind === 'expense').sort((p, q) => q[1] - p[1]).slice(0, 3).map(([id, v]) => `<li><span>${esc(catName(id))}</span><span class="num">${money(v, { cents: false })}</span></li>`).join('')}</ul></div>`).join('')}</div>` });
+      <div class="people-cards">${per.map(x => `<div class="person-card" style="--pc:${memberColor(x.m.id)}"><span class="person-name">${esc(x.m.name)}</span><span class="s-value num">${sm(x.f.spending)}</span><span class="muted">${pct(x.f.spending / tot, 0)}</span><ul>${Object.entries(x.a).filter(([id, v]) => v > 0 && catById(id)?.kind === 'expense').sort((p, q) => q[1] - p[1]).slice(0, 3).map(([id, v]) => `<li><span>${esc(catName(id))}</span><span class="num">${sm(v)}</span></li>`).join('')}</ul></div>`).join('')}</div>` });
   }
-  if (state.goals.length) slides.push({ title: 'Goals', html: () => `<h2 class="slide-h2 center">Our goals</h2><div class="goal-strip big">${state.goals.map(goalTile).join('')}</div>` });
-  const nextFrom = mk === thisMonth() ? today() : `${addMonths(mk, 1)}-01`;
+  if (state.goals.length) slides.push({ title: 'Goals', kind: 'goals', html: () => `<h2 class="slide-h2 center">Our goals</h2><div class="goal-strip big">${state.goals.map(goalTile).join('')}</div>` });
+  const nextFrom = cur ? today() : `${addMonths(mk, 1)}-01`;
   const ahead = []; for (const r of state.recurring) for (const d of occurrences(r, nextFrom, addDays(nextFrom, 40))) ahead.push({ d, r });
   ahead.sort((a, b) => a.d.localeCompare(b.d));
-  slides.push({ title: 'Looking ahead', html: () => `<div class="slide-split">
+  slides.push({ title: 'Looking ahead', kind: 'ahead', html: () => `<div class="slide-split top">
       <div><h2 class="slide-h2">Looking ahead</h2>
         ${notes.length ? `<ul class="insights big">${notes.map(n => `<li class="${n.tone}">${esc(n.text)}</li>`).join('')}</ul>` : '<p class="slide-lede">Nothing unusual to flag.</p>'}</div>
-      <div><h3>Bills in the next few weeks</h3><ul class="simple-list">${ahead.filter(x => Math.abs(x.r.amount) >= 50).slice(0, 8).map(x => `<li><span class="date-chip">${dateLabel(x.d)}</span><span>${esc(x.r.name)}</span><span class="num ${signClass(x.r.amount)}">${money(x.r.amount, { cents: false })}</span></li>`).join('') || '<li class="muted">None scheduled.</li>'}</ul></div></div>` });
-  slides.push({ title: 'Decisions', html: () => `<div class="slide-narrow"><h2 class="slide-h2">What we decided</h2>
+      <div><h3>Bills in the next few weeks</h3><ul class="simple-list">${ahead.filter(x => Math.abs(x.r.amount) >= 50).slice(0, 8).map(x => `<li><span class="date-chip">${dateLabel(x.d)}</span><span>${esc(x.r.name)}</span><span class="num ${signClass(x.r.amount)}">${sm(x.r.amount)}</span></li>`).join('') || '<li class="muted">None scheduled.</li>'}</ul></div></div>` });
+  slides.push({ title: 'Decisions', kind: 'decide', html: () => { const open = whatMatters(mk).decide.slice(0, 4); return `<div class="slide-narrow"><h2 class="slide-h2">What we decided</h2>
+      ${open.length ? `<div class="md-settle"><h3>Still to settle</h3><ul>${open.map(o => `<li>${esc(o.text)}</li>`).join('')}</ul></div>` : ''}
       <p class="slide-lede">Write down anything you agreed to change. It’s saved with ${M}’s review.</p>
-      <textarea data-review-notes="${mk}" rows="7" placeholder="e.g. Move $300 a month from dining out to the roof fund">${esc(state.reviews[mk]?.notes || '')}</textarea>
+      <textarea data-review-notes="${mk}" rows="6" placeholder="e.g. Move $300 a month from dining out to the roof fund">${esc(state.reviews[mk]?.notes || '')}</textarea>
       <div class="actions"><button class="btn primary" data-md="done">Mark ${M} as reviewed</button></div>
-      <p class="slide-sign"><span class="wordmark">Ọrọ̀</span> · ${ORO_TAGLINE}</p></div>` });
+      <p class="slide-sign"><span class="wordmark">Ọrọ̀</span> · ${ORO_TAGLINE}</p></div>`; } });
   return slides;
 }
 function mdAction(a) {
   if (a === 'close') return endMoneyDate();
-  if (a === 'prev' && MD.i > 0) { MD.i--; return paintSlide(); }
-  if (a === 'next') { if (MD.i < MD.slides.length - 1) { MD.i++; return paintSlide(); } return endMoneyDate(); }
+  if (a === 'full') { if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.().catch(() => {}); return; }
+  if (a.startsWith('go:')) { const k = clamp(+a.slice(3), 0, MD.slides.length - 1); if (k !== MD.i) { MD.dir = k > MD.i ? 1 : -1; MD.i = k; paintSlide(); } return; }
+  if (a === 'prev' && MD.i > 0) { MD.i--; MD.dir = -1; return paintSlide(); }
+  if (a === 'next') { if (MD.i < MD.slides.length - 1) { MD.i++; MD.dir = 1; return paintSlide(); } return endMoneyDate(); }
   if (a === 'done') { (state.reviews[MD.mk] = state.reviews[MD.mk] || {}).completedAt = today(); commit({ silent: true }); toast(`${monthLabel(MD.mk)} marked as reviewed.`); return endMoneyDate(); }
 }
 
@@ -7375,7 +7764,7 @@ document.addEventListener('keydown', e => {
   const mod = e.metaKey || e.ctrlKey;
   if (document.body.classList.contains('locked')) return;
   if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); return openPalette(); }
-  if ($('#present') && !typing) {
+  if ($('#present') && !typing && !$('#modal') && !e.target.closest?.('.chart-host')) {
     if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); return mdAction('next'); }
     if (e.key === 'ArrowLeft') { e.preventDefault(); return mdAction('prev'); }
     if (e.key === 'Escape') return mdAction('close');
