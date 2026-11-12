@@ -203,7 +203,7 @@ function loadPdfJs() {
 async function pdfToLines(buffer) {
   const pdfjs = await loadPdfJs();
   const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer), isEvalSupported: false, disableFontFace: true, useSystemFonts: false }).promise;
-  const lines = [];
+  const lines = [], pos = [];   // pos: for each line, its runs of text and where they sit (pay stubs' columns, 29-paystubs.js)
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
     const tc = await page.getTextContent();
@@ -223,9 +223,10 @@ async function pdfToLines(buffer) {
         if (prevEnd != null) text += (it.x - prevEnd > it.fs * 1.2) ? '   ' : (it.x - prevEnd > it.fs * 0.15 ? ' ' : '');
         text += it.s; prevEnd = it.x + it.w;
       }
-      lines.push(text.replace(/\s+$/, ''));
+      lines.push(text.replace(/\s+$/, '')); pos.push(r.items.map(it => ({ x: it.x, w: it.w, s: it.s })));
     }
   }
+  lines.pos = pos;
   return lines;
 }
 function statementPeriod(text) {

@@ -1351,3 +1351,81 @@ body.talk-open .main-wrap { margin-right: 390px; }
 .bank-sec { margin: 0 0 18px; }
 .bank-sec h3 { font-size: 16px; margin: 0 0 4px; }
 .bank-bal { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
+
+/* ===== Pay stubs and tax what-if ===== */
+.m-short { display: none; }   /* an amount's whole-dollar form, shown instead of the cents on a narrow screen */
+.aftertax-est h3, .whatif h3, .paystubs h3, .taxdue h3 { margin: 18px 0 10px; font-size: 16px; }
+.aftertax-est .aftertax-table, .aftertax-est .tax-how .sched { max-width: 560px; margin: 12px 0; }
+.aftertax-est .tax-how { margin: 6px 0 4px; }
+.wi-person { border: 0; padding: 0; margin: 0; min-width: 0; }
+.wi-person legend { padding: 0; margin-bottom: 6px; font-weight: 600; }
+.whatif-table, .taxdue-table, .stub-year, .stub-table { max-width: 720px; margin: 12px 0; }
+.whatif-table th, .taxdue-table th, .stub-year th, .stub-table th { font-weight: 400; }
+.whatif-table thead th, .taxdue-table thead th, .stub-year thead th, .stub-table thead th { font-weight: 500; }
+.whatif-says, .taxdue-says { margin: 4px 0 14px; }
+ul.whatif-says li, ul.taxdue-says li { padding: 4px 0 4px 12px; border-left: 3px solid var(--ok-bg); margin-bottom: 4px; }
+.stub-notes { margin: 0 0 12px; }
+.stub-person { border-top: 1px solid var(--rule); margin-top: 16px; }
+.stub-er td { font-size: 13px; }
+.stub-info { margin-top: 4px; align-items: start; }
+.stub-list { display: grid; gap: 8px; margin: 12px 0; }
+details.stub { border: 1px solid var(--rule); border-radius: 10px; background: var(--pad); min-width: 0; }
+details.stub > summary { display: grid; grid-template-columns: 76px minmax(0, 1.1fr) minmax(0, 2.2fr) minmax(0, 1.2fr); gap: 2px 12px; align-items: baseline; padding: 9px 12px; cursor: pointer; list-style: none; }
+details.stub > summary::-webkit-details-marker, .stub-more > summary::-webkit-details-marker { display: none; }
+details.stub[open] > summary { border-bottom: 1px solid var(--rule); }
+.stub-when { font-weight: 600; white-space: nowrap; }
+.stub-emp, .stub-nums, .stub-land { min-width: 0; overflow-wrap: anywhere; }
+.stub-emp .tag { margin-left: 0; }
+.stub-land { text-align: right; }
+.stub-land.none, .stub-landed.none > span { color: var(--warn); }
+.stub-body { padding: 12px; background: var(--sheet); border-radius: 0 0 10px 10px; }
+.stub-more { display: grid; gap: 8px; }
+.stub-more > summary { cursor: pointer; color: var(--ink-accent); font-size: 13.5px; padding: 4px 2px; list-style: none; }
+.stub-more > summary::before { content: "Show "; }
+.stub-more[open] > summary::before { content: "Hide "; }
+.stub-steps { display: grid; gap: 7px; max-width: 720px; margin: 2px 0 12px; }
+.stub-step { display: grid; grid-template-columns: 190px minmax(0, 1fr) 108px; gap: 12px; align-items: center; font-size: 14px; }
+.stub-step-bar { position: relative; height: 16px; border-radius: 4px; background: var(--rule); }
+.stub-step-bar i { position: absolute; top: 0; bottom: 0; min-width: 2px; border-radius: 4px; background: var(--muted-2); }
+.stub-step.pay .stub-step-bar i { background: var(--ink-accent); }
+.stub-step.pre .stub-step-bar i { background: var(--c3); }
+.stub-step.tax .stub-step-bar i { background: var(--c5); }
+.stub-step.post .stub-step-bar i { background: var(--c6); }
+.stub-step.net .stub-step-bar i { background: var(--pos); }
+.stub-step.pay, .stub-step.net { font-weight: 600; }
+.stub-landed { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; margin: 10px 0; }
+.stub-adds { margin: 8px 0; padding: 8px 12px; border-radius: 8px; background: var(--pad); font-size: 14px; }
+.stub-adds:empty { display: none; }
+.stub-adds.ok { background: var(--ok-bg); }
+.stub-adds.bad { background: var(--bad-bg); }
+.stub-form h3 { margin: 16px 0 8px; font-size: 15px; }
+.stub-form .btn.small.ghost { margin-top: 2px; }
+.stub-pdf { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 14px; padding: 10px 12px; border-radius: 8px; background: var(--pad); }
+.stub-pdf > span { flex: 1 1 240px; }
+.stub-row { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr) 32px; gap: 8px; align-items: start; margin-bottom: 6px; }
+.stub-row input, .stub-row select { width: 100%; }
+.stub-row.stub-cols { color: var(--muted); font-size: 12.5px; margin: 6px 0 -10px; }
+.stub-fixed { display: block; padding-top: 7px; font-size: 14px; color: var(--ink); }
+.stub-as { display: block; margin-top: 2px; }
+.stub-kind { display: flex; flex-wrap: wrap; gap: 6px 14px; min-height: 34px; align-items: center; }
+input.from-pdf { background: var(--warn-bg); border-color: var(--margin); }
+.from-pdf-key { display: inline-block; width: 12px; height: 12px; border-radius: 3px; background: var(--warn-bg); border: 1px solid var(--margin); vertical-align: -1px; }
+.stub-pick { display: grid; max-height: 46vh; overflow-y: auto; margin-bottom: 8px; }
+.stub-pick-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 10px; padding: 8px 4px; border-bottom: 1px solid var(--rule); align-items: start; }
+.stub-pick-what { min-width: 0; overflow-wrap: anywhere; }
+.stub-pick-what small { display: block; }
+.pay-saved { margin: 8px 0 0; }
+p.stub-from { margin: 0; }
+@media (max-width: 640px) {
+  .m-full { display: none; }
+  .m-short { display: inline; }
+  details.stub > summary { grid-template-columns: auto minmax(0, 1fr); }
+  .stub-nums, .stub-land { grid-column: 1 / -1; text-align: left; }
+  .stub-body { padding: 10px 8px; }
+  .stub-step { grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; }
+  .stub-step-bar { grid-column: 1 / -1; grid-row: 2; height: 12px; }
+  .stub-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px; }
+  .stub-row .stub-what { grid-column: 1 / -1; }
+  .stub-row.stub-cols { display: none; }
+  .stub-fixed { padding-top: 2px; }
+}

@@ -217,6 +217,26 @@ function buildSampleState() {
   Object.assign(s.plan, { age: 41, retireAge: 60, payrollSavings: 23000, otherIncome: 42000, otherIncomeAge: 67 });
   const yr = +T.slice(0, 4);
   s.tax = { 'a-rent': { [yr - 1]: { interest: 13480 }, [yr]: { interest: 13050 } } };
+  /* ---- pay stubs: one for each Acme paycheck (Alex's; each ties to its $4,850.00 deposit to the cent) and for the
+     one-time payment in March (Sam's). Year to date counts the paydays so far that year on the same two-week rhythm.
+     Alex's pay stays under the Social Security wage base all year, so every paycheck is the same. ---- */
+  const stubRow = n => (kind, label, cur) => ({ kind, label, cur, ytd: round2(cur * n) });
+  for (const t of [...s.transactions].reverse()) {
+    if (/ACME CORP PAYROLL/.test(t.rawPayee)) {
+      const n = Math.floor(daysBetween(`${yearOf(t.date)}-01-01`, t.date) / 14) + 1, R = stubRow(n);
+      s.paystubs.push({ id: `ps-you-${t.date}`, person: 'you', employer: 'Acme Corp', date: t.date, from: addDays(t.date, -18), to: addDays(t.date, -5), bonus: false,
+        gross: 7115.38, grossYtd: round2(7115.38 * n),
+        pre: [R('retire', '401(k)', 426.92), R('hsa', 'HSA', 125), R('premium', 'Medical', 185), R('premium', 'Dental', 28), R('premium', 'Vision', 7.38)],
+        tax: [R('federal', 'Federal income tax', 660.33), R('ss', 'Social Security', 419.74), R('medicare', 'Medicare', 98.17), R('state', 'Illinois income tax', 302.84)],
+        post: [R('life', 'Life insurance', 12)], net: 4850, netYtd: round2(4850 * n), er: [R('retire', '401(k) match', 213.46)], added: t.date });
+    } else if (/ACME CORP ANNUAL BONUS/.test(t.rawPayee)) {
+      const R = stubRow(1);
+      s.paystubs.push({ id: `ps-partner-${t.date}`, person: 'partner', employer: 'Acme Corp', date: t.date, from: '', to: '', bonus: true, gross: 18348.62, grossYtd: 18348.62, pre: [],
+        tax: [R('federal', 'Federal income tax', 4036.70), R('ss', 'Social Security', 1137.61), R('medicare', 'Medicare', 266.05), R('state', 'Illinois income tax', 908.26)],
+        post: [], net: 12000, netYtd: 12000, er: [], added: t.date });
+    }
+  }
+  s.tax.payInfo = { you: { born: yr - 41 } };
   s.meta.sample = true;
   return s;
 }

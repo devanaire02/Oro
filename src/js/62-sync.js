@@ -72,11 +72,11 @@ function diffInto(ops, b, c, path) {
 function opLabel(o, target) {
   if (o.path[0] === 'settings' && (o.path[1] === 'checkinQuiet' || o.k === 'checkinQuiet')) return 'check-in: a bill or charge you set aside';
   const v = o.v || (o.op === 'del' ? null : undefined);
-  const where = { transactions: 'transaction', accounts: 'account', categories: 'category', goals: 'goal', holdings: 'holding', recurring: 'recurring item', rules: 'rule' }[o.path[0]] || o.path.join(' › ');
+  const where = { transactions: 'transaction', accounts: 'account', categories: 'category', goals: 'goal', holdings: 'holding', recurring: 'recurring item', rules: 'rule', paystubs: 'pay stub' }[o.path[0]] || o.path.join(' › ');
   if (o.op === 'put' || o.op === 'del') {
     const list = walkPath(target, o.path);
     const item = (Array.isArray(list) ? list.find(x => x.id === o.id) : null) || v || {};   // name it as it stands where it was kept
-    const name = item.payee || item.name || item.text || item.symbol || o.id;
+    const name = (o.path[0] === 'paystubs' && item.date ? stubName(item) : '') || item.payee || item.name || item.text || item.symbol || o.id;   // "Acme, Nov 20"
     return `${where} “${name}”`;
   }
   return o.path.join(' › ');
@@ -169,7 +169,10 @@ async function syncLoad() {
   try {
     if (p.encrypted) { if (!Store.pass) return; p = (await Vault.open(p, Store.pass)).data; }
     SYNC.rec = p.sync || null; SYNC.cacheKey = null;
-    if (SYNC.rec) { tidyPayees(SYNC.rec.base); tidyPayees(SYNC.rec.sentSnap); }   // match the tidy-up migrate() does, so it isn't counted as a change
+    if (SYNC.rec) for (const copy of [SYNC.rec.base, SYNC.rec.sentSnap]) {   // match what migrate() does, so it isn't counted as a change
+      tidyPayees(copy);
+      if (copy && !Array.isArray(copy.paystubs)) copy.paystubs = [];   // a copy from before pay stubs: a stub added here is then sent as one item
+    }
   } catch (e) { SYNC.rec = null; }
 }
 /* Edits made here since the last send (or since the Mac's data was opened). */
@@ -370,7 +373,9 @@ function mergeNote(lm, dev) {
 }
 
 /* What's waiting to be sent, in words: "Account “Chase checking”: name", "Transaction “Jewel Osco”: category". */
-const FIELD_WORDS = { categoryId: 'category', payee: 'payee', amount: 'amount', memo: 'memo', name: 'name', flag: 'flag', tags: 'tags', person: 'person', date: 'date', balance: 'balance', balanceDate: 'balance date', owner: 'owner', budget: 'budget', mortgageId: 'mortgage', amort: 'payment tracking', rate: 'rate', minPayment: 'payment', splits: 'split', institution: 'institution', last4: 'last 4 digits', pp: 'PayPal details', rawPayee: 'bank description', card: 'card', cards: 'cards', ids: 'linked IDs', importId: 'import ID' };
+const FIELD_WORDS = { categoryId: 'category', payee: 'payee', amount: 'amount', memo: 'memo', name: 'name', flag: 'flag', tags: 'tags', person: 'person', date: 'date', balance: 'balance', balanceDate: 'balance date', owner: 'owner', budget: 'budget', mortgageId: 'mortgage', amort: 'payment tracking', rate: 'rate', minPayment: 'payment', splits: 'split', institution: 'institution', last4: 'last 4 digits', pp: 'PayPal details', rawPayee: 'bank description', card: 'card', cards: 'cards', ids: 'linked IDs', importId: 'import ID',
+  gross: 'pay before tax', grossYtd: 'pay before tax, year to date', net: 'take-home pay', netYtd: 'take-home pay, year to date', pre: 'saved or paid before tax', tax: 'taxes taken out', post: 'other things taken out', er: 'what your employer put in',
+  employer: 'employer', bonus: 'regular or bonus', from: 'pay period', to: 'pay period', txIds: 'the deposit it’s tied to', deposit: 'deposit account' };
 function pendingLabels() {
   const rec = SYNC.rec; if (!rec?.base) return [];
   return syncPending().map(o => {

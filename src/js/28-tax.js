@@ -5,7 +5,14 @@
    Organized for the CPA; not tax advice. Not modeled: capital gains and qualified dividend rates, self-employment
    tax, the 65-and-older deductions, tips and overtime, AMT, other credits.
    Sources: IRS Rev. Proc. 2024-40 with the One Big Beautiful Bill Act's 2025 changes (standard deduction, child tax
-   credit, SALT cap); IRS Rev. Proc. 2025-32 (2026); SSA wage base; Illinois Department of Revenue and Comptroller. */
+   credit, SALT cap); IRS Rev. Proc. 2025-32 (2026); SSA wage base; Illinois Department of Revenue and Comptroller.
+   Saving limits (`save`, used by the pay stub projection and What if… in 29-paystubs.js), each read from the IRS's own text:
+     401(k), 403(b) and 457 pay deferrals: $23,500 for 2025 (Notice 2024-80) and $24,500 for 2026 (Notice 2025-67);
+     the extra at 50 or older: $7,500 for 2025 and $8,000 for 2026; the extra for those who turn 60, 61, 62 or 63 in the
+     year: $11,250 in both years (same notices, section 414(v)(2)(B)(i) and (E)(i)).
+     HSA: $4,300 self-only and $8,550 family for 2025 (Rev. Proc. 2024-25); $4,400 and $8,750 for 2026 (Rev. Proc.
+     2025-19); $1,000 more at 55 or older by the end of the year (section 223(b)(3)(B); IRS Publication 969).
+   A year without its own `save` entry has no limits here, so nothing is capped for it. */
 const TAX_TABLES = {
   2025: {
     brackets: {
@@ -16,6 +23,7 @@ const TAX_TABLES = {
     },
     std: { mfj: 31500, single: 15750, hoh: 23625, mfs: 15750 },
     ctc: 2200, ctcRefund: 1700, ssBase: 176100, saltCap: 40000, saltPhase: 500000, ilExempt: 2850,
+    save: { deferral: 23500, catch50: 7500, catch60: 11250, hsaSelf: 4300, hsaFamily: 8550, hsa55: 1000 },
   },
   2026: {
     brackets: {
@@ -26,6 +34,7 @@ const TAX_TABLES = {
     },
     std: { mfj: 32200, single: 16100, hoh: 24150, mfs: 16100 },
     ctc: 2200, ctcRefund: 1700, ssBase: 184500, saltCap: 40400, saltPhase: 505000, ilExempt: 2925,
+    save: { deferral: 24500, catch50: 8000, catch60: 11250, hsaSelf: 4400, hsaFamily: 8750, hsa55: 1000 },
   },
 };
 const FILING = { mfj: 'Married filing jointly', single: 'Single', hoh: 'Head of household', mfs: 'Married filing separately' };
@@ -52,17 +61,30 @@ const topBracket = (income, brackets) => (brackets.find(([hi]) => income < hi) |
 
 /* Who earns pay: the adults in Settings › Household. */
 const taxEarners = () => people().filter(m => roleOf(m.id) === 'adult');
-/* What's typed for a year (Taxes page), with the defaults filled in. */
+/* What's typed for a year (Taxes page), with the defaults filled in. Where a person's pay, saving before tax, health
+   through pay or tax taken out isn't typed and they have pay stubs for that year, the year projected from the stubs is
+   used (29-paystubs.js): `typed` holds what was typed, `stubs` says which figures came from pay stubs. */
 function taxHousehold(year) {
   const H = state.tax?.household?.[year] || {};
   const kids = members().filter(m => roleOf(m.id) === 'kid').length;
   const n = v => (v === '' || v == null || !isFinite(+v) ? null : +v);
+  const people = {}, typed = {}, stubs = {};
+  for (const m of taxEarners()) {
+    const p = H.people?.[m.id] || {}, S = stubPlan(m.id, year);
+    const t = typed[m.id] = { gross: n(p.gross), retire: n(p.retire), health: n(p.health), hsa: n(p.hsa), fedWh: n(p.fedWh), stateWh: n(p.stateWh) };
+    const e = people[m.id] = { gross: t.gross, retire: t.retire, health: t.health }, from = stubs[m.id] = {};
+    if (S) for (const k of ['gross', 'retire', 'health']) if (e[k] == null && S[k] != null) { e[k] = S[k]; from[k] = true; }
+    for (const k of ['fedWh', 'stateWh']) { e[k] = t[k] ?? S?.[k] ?? null; if (t[k] == null && S?.[k] != null) from[k] = true; }
+    e.hsa = Math.max(0, Math.min(e.health || 0, t.hsa ?? S?.hsa ?? 0));   // the HSA's part of health through pay
+  }
   return {
     status: FILING[H.status] ? H.status : taxEarners().length >= 2 ? 'mfj' : 'single',
-    people: Object.fromEntries(taxEarners().map(m => { const p = H.people?.[m.id] || {}; return [m.id, { gross: n(p.gross), retire: n(p.retire), health: n(p.health) }]; })),
-    other: n(H.other), deps: n(H.deps) ?? kids, kids: n(H.kids) ?? kids, propertyTax: n(H.propertyTax),
+    people, typed, stubs,
+    other: n(H.other), deps: n(H.deps) ?? kids, kids: n(H.kids) ?? kids, propertyTax: n(H.propertyTax), charity: n(H.charity), interest: n(H.interest),
     actual: { federal: n(H.actual?.federal), state: n(H.actual?.state), fica: n(H.actual?.fica) },
-    entered: taxEarners().some(m => n(H.people?.[m.id]?.gross) > 0),
+    paid: { federal: n(H.paidFed), state: n(H.paidState) },   // other payments sent in (estimated tax)
+    typedPay: taxEarners().some(m => typed[m.id].gross > 0),
+    entered: taxEarners().some(m => people[m.id].gross > 0),
   };
 }
 
@@ -92,12 +114,13 @@ function scheduleA(year, agi, stateTax, H, T, tableYear) {
   const saltCap = Math.max(10000 * half, T.saltCap * half - 0.3 * Math.max(0, agi - T.saltPhase * half));
   const saltPaid = round2(stateTax + propertyTax), salt = round2(Math.min(saltCap, saltPaid));
   const loans = homeLoansForTax().map(x => ({ ...x, ...mortgageInterestFor(x.key, x.loan, year) }));
-  const interest = round2(sum(loans.map(x => x.amount)));
-  const charityPaid = round2(by['Charitable'] || 0), charity = round2(tableYear >= 2026 ? Math.max(0, charityPaid - 0.005 * agi) : charityPaid);
+  const interest = H.interest != null ? round2(H.interest) : round2(sum(loans.map(x => x.amount)));
+  const charityPaid = round2(H.charity != null ? H.charity : by['Charitable'] || 0), charity = round2(tableYear >= 2026 ? Math.max(0, charityPaid - 0.005 * agi) : charityPaid);
   return { medicalPaid, medical, propertyTax, saltPaid, saltCap: round2(saltCap), salt, loans, interest, charityPaid, charity, total: round2(medical + salt + interest + charity) };
 }
 
-/* The estimate. `over` replaces typed values (used to see what the year would have cost without saving before tax). */
+/* The estimate. `over` replaces typed values (used to see what the year would have cost without saving before tax, and
+   by What if…: people, other, status, kids, deps, propertyTax, charity, interest, paid, actual). */
 function taxEstimate(year, over = {}) {
   const H = { ...taxHousehold(year), ...over }, { T, tableYear } = taxTables(year), st = H.status;
   const earners = taxEarners().map(m => { const p = H.people[m.id] || {}; return { id: m.id, name: m.name, gross: p.gross || 0, retire: p.retire || 0, health: p.health || 0 }; });
@@ -126,6 +149,11 @@ function taxEstimate(year, over = {}) {
   const ficaEst = round2(ss + medicare);
   const federal = H.actual.federal ?? fedEst, fica = H.actual.fica ?? ficaEst;
   const taxes = round2(federal + stateTax + fica), kept = round2(income - pretax - taxes);
+  // Income tax taken out of pay and other payments sent in, against the tax: what's still owed (+) or coming back (−)
+  const wh = k => round2(sum(earners.map(e => H.people[e.id]?.[k] || 0)));
+  const withheld = { federal: wh('fedWh'), state: wh('stateWh') }, paid = { federal: round2(H.paid?.federal || 0), state: round2(H.paid?.state || 0) };
+  const due = { federal: round2(federal - withheld.federal - paid.federal), state: round2(stateTax - withheld.state - paid.state) };
+  due.all = round2(due.federal + due.state);
   // The top rate on another dollar of pay (the highest earner's): bracket, plus the credit and SALT phase-outs where they apply
   const top = earners.slice().sort((a, b) => b.gross - a.gross)[0];
   let fedTop = taxable > 0 ? topBracket(taxable, T.brackets[st]) : 0;
@@ -141,7 +169,7 @@ function taxEstimate(year, over = {}) {
     federal: round2(federal), state: round2(stateTax), fica: round2(fica), taxes, kept,
     average: income > 0 ? taxes / income : 0, averageIncomeTax: income > 0 ? (federal + stateTax) / income : 0,
     top: { federal: fedTop, state: ilTop, fica: ficaTop, all: fedTop + ilTop + ficaTop, who: top?.name || '', ctcPhase, saltPhase },
-    actual: H.actual,
+    actual: H.actual, withheld, paid, due,
   };
 }
 
