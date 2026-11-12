@@ -153,7 +153,7 @@ VIEWS.planning = p => {
     const P = state.plan, debts = debtList();
     if (!debts.length) return head + emptyState('No debt to pay off', P.includeMortgages ? 'There are no liabilities with a balance.' : 'No cards or loans have a balance. Mortgages are left out unless you include them.', `<label class="check"><input type="checkbox" data-plan="includeMortgages" ${P.includeMortgages ? 'checked' : ''}> Include mortgages</label>`);
     const plan = payoffPlan(debts, P.debtExtra, P.debtMethod), other = payoffPlan(debts, P.debtExtra, P.debtMethod === 'avalanche' ? 'snowball' : 'avalanche'), min = payoffPlan(debts, 0, 'avalanche');
-    const dateAt = m => { const d = new Date(); d.setMonth(d.getMonth() + m); return MONTHS[d.getMonth()] + ' ' + d.getFullYear(); };
+    const dateAt = m => monthLabel(addMonths(thisMonth(), m));   // counted in whole months, so the 31st doesn't skip a short month
     const len = Math.max(plan.series.length, min.series.length);
     const pad = (s) => Array.from({ length: len }, (_, i) => ({ x: i, y: s[i] ? s[i].y : 0 }));
     return head + `
