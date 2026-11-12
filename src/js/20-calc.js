@@ -213,23 +213,27 @@ function investableAllocation(includePrivate = true, accts) {
 }
 
 /* ---------- recurring + forecast ---------- */
-function nextOccurrence(date, freq) {
-  const d = fromISO(date);
+/* The next date for something that repeats. A day a shorter month doesn't have falls on that month's last day and goes
+   back to its own day afterwards (the 31st: Jan 31, Feb 28, Mar 31), so `day` is the day of the month it started on.
+   Twice a month is that day and 15 days later (the 1st and 16th, the 15th and 30th). */
+function nextOccurrence(date, freq, day = +date.slice(8)) {
+  const [y, m, d] = date.split('-').map(Number);
+  const on = (months, dd) => { const k = addMonths(`${y}-${pad2(m)}`, months); return `${k}-${pad2(Math.min(dd, +monthEnd(k).slice(8)))}`; };
   switch (freq) {
-    case 'weekly': d.setDate(d.getDate() + 7); break;
-    case 'biweekly': d.setDate(d.getDate() + 14); break;
-    case 'semimonthly': if (d.getDate() < 15) d.setDate(d.getDate() + 15); else { d.setMonth(d.getMonth() + 1); d.setDate(Math.max(1, d.getDate() - 15)); } break;
-    case 'quarterly': d.setMonth(d.getMonth() + 3); break;
-    case 'semiannual': d.setMonth(d.getMonth() + 6); break;
-    case 'annual': d.setFullYear(d.getFullYear() + 1); break;
-    default: d.setMonth(d.getMonth() + 1);
+    case 'weekly': return addDays(date, 7);
+    case 'biweekly': return addDays(date, 14);
+    case 'semimonthly': { const lo = day <= 15 ? day : day - 15; return d === lo ? on(0, lo + 15) : on(1, lo); }
+    case 'quarterly': return on(3, day);
+    case 'semiannual': return on(6, day);
+    case 'annual': return on(12, day);
+    default: return on(1, day);
   }
-  return toISO(d);
 }
 function occurrences(r, from, to) {
   const out = []; let d = r.nextDate, guard = 0;
-  while (d && d < from && guard++ < 800) d = nextOccurrence(d, r.freq);
-  while (d && d <= to && guard++ < 1600) { out.push(d); d = nextOccurrence(d, r.freq); }
+  const day = d ? +d.slice(8) : 0;
+  while (d && d < from && guard++ < 800) d = nextOccurrence(d, r.freq, day);
+  while (d && d <= to && guard++ < 1600) { out.push(d); d = nextOccurrence(d, r.freq, day); }
   return out;
 }
 function forecastAccounts(useLens = false) { return (useLens ? lensAccounts() : activeAccounts()).filter(a => a.forecast ?? ACCOUNT_TYPES[a.type]?.forecast); }

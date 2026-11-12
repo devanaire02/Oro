@@ -180,7 +180,7 @@ function ciLastDue(r, now = today()) {
   let d = r.nextDate, guard = 0;
   if (!d) return null;
   if (d > hi) while (d > hi && guard++ < 400) d = prevOccurrence(d, r.freq);
-  else while (guard++ < 1600) { const n = nextOccurrence(d, r.freq); if (n > hi) break; d = n; }
+  else while (guard++ < 1600) { const n = nextOccurrence(d, r.freq, +r.nextDate.slice(8)); if (n > hi) break; d = n; }
   return d >= lo && d <= hi ? d : null;
 }
 function ciQuiet(key, last) {
