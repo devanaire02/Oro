@@ -217,6 +217,7 @@ function defaultState() {
     settings: { theme: 'auto', look: 'ng', lowCash: 2500, staleDays: 35, targets: {}, privacy: false, autoLock: 15, keepBackups: 30, checkin: true, checkinQuiet: {}, members: [{ id: 'joint', name: 'Joint' }, { id: 'you', name: 'You' }, { id: 'partner', name: 'Partner' }] },
     accounts: [], transactions: [], categories: defaultCategories(), rules: [],
     holdings: [], recurring: [], snapshots: {}, reviews: {}, goals: [], plan: defaultPlan(), tax: {}, banks: { items: [], price: null },
+    paystubs: [],   // pay stubs typed in or read from a PDF (29-paystubs.js); numbers and row labels only
   };
 }
 function migrate(s) {
@@ -225,7 +226,8 @@ function migrate(s) {
   s = Object.assign(d, s || {});
   s.settings = Object.assign(defaultState().settings, s.settings || {});
   s.plan = Object.assign(defaultPlan(), s.plan || {});
-  for (const k of ['accounts', 'transactions', 'categories', 'rules', 'holdings', 'recurring', 'goals']) if (!Array.isArray(s[k])) s[k] = [];
+  for (const k of ['accounts', 'transactions', 'categories', 'rules', 'holdings', 'recurring', 'goals', 'paystubs']) if (!Array.isArray(s[k])) s[k] = [];
+  s.paystubs = s.paystubs.filter((x, i, all) => x && typeof x === 'object' && typeof x.id === 'string' && x.id && all.findIndex(y => y && y.id === x.id) === i);   // pay stubs (29-paystubs.js): each a whole item with its own id
   for (const k of ['snapshots', 'reviews', 'tax']) if (!s[k] || typeof s[k] !== 'object') s[k] = {};
   if (!s.banks || typeof s.banks !== 'object' || !Array.isArray(s.banks.items)) s.banks = { items: [], price: s.banks?.price ?? null };
   if (!s.categories.length) s.categories = defaultCategories();
@@ -851,6 +853,26 @@ function buildSampleState() {
   Object.assign(s.plan, { age: 41, retireAge: 60, payrollSavings: 23000, otherIncome: 42000, otherIncomeAge: 67 });
   const yr = +T.slice(0, 4);
   s.tax = { 'a-rent': { [yr - 1]: { interest: 13480 }, [yr]: { interest: 13050 } } };
+  /* ---- pay stubs: one for each Acme paycheck (Alex's; each ties to its $4,850.00 deposit to the cent) and for the
+     one-time payment in March (Sam's). Year to date counts the paydays so far that year on the same two-week rhythm.
+     Alex's pay stays under the Social Security wage base all year, so every paycheck is the same. ---- */
+  const stubRow = n => (kind, label, cur) => ({ kind, label, cur, ytd: round2(cur * n) });
+  for (const t of [...s.transactions].reverse()) {
+    if (/ACME CORP PAYROLL/.test(t.rawPayee)) {
+      const n = Math.floor(daysBetween(`${yearOf(t.date)}-01-01`, t.date) / 14) + 1, R = stubRow(n);
+      s.paystubs.push({ id: `ps-you-${t.date}`, person: 'you', employer: 'Acme Corp', date: t.date, from: addDays(t.date, -18), to: addDays(t.date, -5), bonus: false,
+        gross: 7115.38, grossYtd: round2(7115.38 * n),
+        pre: [R('retire', '401(k)', 426.92), R('hsa', 'HSA', 125), R('premium', 'Medical', 185), R('premium', 'Dental', 28), R('premium', 'Vision', 7.38)],
+        tax: [R('federal', 'Federal income tax', 660.33), R('ss', 'Social Security', 419.74), R('medicare', 'Medicare', 98.17), R('state', 'Illinois income tax', 302.84)],
+        post: [R('life', 'Life insurance', 12)], net: 4850, netYtd: round2(4850 * n), er: [R('retire', '401(k) match', 213.46)], added: t.date });
+    } else if (/ACME CORP ANNUAL BONUS/.test(t.rawPayee)) {
+      const R = stubRow(1);
+      s.paystubs.push({ id: `ps-partner-${t.date}`, person: 'partner', employer: 'Acme Corp', date: t.date, from: '', to: '', bonus: true, gross: 18348.62, grossYtd: 18348.62, pre: [],
+        tax: [R('federal', 'Federal income tax', 4036.70), R('ss', 'Social Security', 1137.61), R('medicare', 'Medicare', 266.05), R('state', 'Illinois income tax', 908.26)],
+        post: [], net: 12000, netYtd: 12000, er: [], added: t.date });
+    }
+  }
+  s.tax.payInfo = { you: { born: yr - 41 } };
   s.meta.sample = true;
   return s;
 }
@@ -1769,7 +1791,14 @@ function coinEffects(sym, price) {
    Organized for the CPA; not tax advice. Not modeled: capital gains and qualified dividend rates, self-employment
    tax, the 65-and-older deductions, tips and overtime, AMT, other credits.
    Sources: IRS Rev. Proc. 2024-40 with the One Big Beautiful Bill Act's 2025 changes (standard deduction, child tax
-   credit, SALT cap); IRS Rev. Proc. 2025-32 (2026); SSA wage base; Illinois Department of Revenue and Comptroller. */
+   credit, SALT cap); IRS Rev. Proc. 2025-32 (2026); SSA wage base; Illinois Department of Revenue and Comptroller.
+   Saving limits (`save`, used by the pay stub projection and What if… in 29-paystubs.js), each read from the IRS's own text:
+     401(k), 403(b) and 457 pay deferrals: $23,500 for 2025 (Notice 2024-80) and $24,500 for 2026 (Notice 2025-67);
+     the extra at 50 or older: $7,500 for 2025 and $8,000 for 2026; the extra for those who turn 60, 61, 62 or 63 in the
+     year: $11,250 in both years (same notices, section 414(v)(2)(B)(i) and (E)(i)).
+     HSA: $4,300 self-only and $8,550 family for 2025 (Rev. Proc. 2024-25); $4,400 and $8,750 for 2026 (Rev. Proc.
+     2025-19); $1,000 more at 55 or older by the end of the year (section 223(b)(3)(B); IRS Publication 969).
+   A year without its own `save` entry has no limits here, so nothing is capped for it. */
 const TAX_TABLES = {
   2025: {
     brackets: {
@@ -1780,6 +1809,7 @@ const TAX_TABLES = {
     },
     std: { mfj: 31500, single: 15750, hoh: 23625, mfs: 15750 },
     ctc: 2200, ctcRefund: 1700, ssBase: 176100, saltCap: 40000, saltPhase: 500000, ilExempt: 2850,
+    save: { deferral: 23500, catch50: 7500, catch60: 11250, hsaSelf: 4300, hsaFamily: 8550, hsa55: 1000 },
   },
   2026: {
     brackets: {
@@ -1790,6 +1820,7 @@ const TAX_TABLES = {
     },
     std: { mfj: 32200, single: 16100, hoh: 24150, mfs: 16100 },
     ctc: 2200, ctcRefund: 1700, ssBase: 184500, saltCap: 40400, saltPhase: 505000, ilExempt: 2925,
+    save: { deferral: 24500, catch50: 8000, catch60: 11250, hsaSelf: 4400, hsaFamily: 8750, hsa55: 1000 },
   },
 };
 const FILING = { mfj: 'Married filing jointly', single: 'Single', hoh: 'Head of household', mfs: 'Married filing separately' };
@@ -1816,17 +1847,30 @@ const topBracket = (income, brackets) => (brackets.find(([hi]) => income < hi) |
 
 /* Who earns pay: the adults in Settings › Household. */
 const taxEarners = () => people().filter(m => roleOf(m.id) === 'adult');
-/* What's typed for a year (Taxes page), with the defaults filled in. */
+/* What's typed for a year (Taxes page), with the defaults filled in. Where a person's pay, saving before tax, health
+   through pay or tax taken out isn't typed and they have pay stubs for that year, the year projected from the stubs is
+   used (29-paystubs.js): `typed` holds what was typed, `stubs` says which figures came from pay stubs. */
 function taxHousehold(year) {
   const H = state.tax?.household?.[year] || {};
   const kids = members().filter(m => roleOf(m.id) === 'kid').length;
   const n = v => (v === '' || v == null || !isFinite(+v) ? null : +v);
+  const people = {}, typed = {}, stubs = {};
+  for (const m of taxEarners()) {
+    const p = H.people?.[m.id] || {}, S = stubPlan(m.id, year);
+    const t = typed[m.id] = { gross: n(p.gross), retire: n(p.retire), health: n(p.health), hsa: n(p.hsa), fedWh: n(p.fedWh), stateWh: n(p.stateWh) };
+    const e = people[m.id] = { gross: t.gross, retire: t.retire, health: t.health }, from = stubs[m.id] = {};
+    if (S) for (const k of ['gross', 'retire', 'health']) if (e[k] == null && S[k] != null) { e[k] = S[k]; from[k] = true; }
+    for (const k of ['fedWh', 'stateWh']) { e[k] = t[k] ?? S?.[k] ?? null; if (t[k] == null && S?.[k] != null) from[k] = true; }
+    e.hsa = Math.max(0, Math.min(e.health || 0, t.hsa ?? S?.hsa ?? 0));   // the HSA's part of health through pay
+  }
   return {
     status: FILING[H.status] ? H.status : taxEarners().length >= 2 ? 'mfj' : 'single',
-    people: Object.fromEntries(taxEarners().map(m => { const p = H.people?.[m.id] || {}; return [m.id, { gross: n(p.gross), retire: n(p.retire), health: n(p.health) }]; })),
-    other: n(H.other), deps: n(H.deps) ?? kids, kids: n(H.kids) ?? kids, propertyTax: n(H.propertyTax),
+    people, typed, stubs,
+    other: n(H.other), deps: n(H.deps) ?? kids, kids: n(H.kids) ?? kids, propertyTax: n(H.propertyTax), charity: n(H.charity), interest: n(H.interest),
     actual: { federal: n(H.actual?.federal), state: n(H.actual?.state), fica: n(H.actual?.fica) },
-    entered: taxEarners().some(m => n(H.people?.[m.id]?.gross) > 0),
+    paid: { federal: n(H.paidFed), state: n(H.paidState) },   // other payments sent in (estimated tax)
+    typedPay: taxEarners().some(m => typed[m.id].gross > 0),
+    entered: taxEarners().some(m => people[m.id].gross > 0),
   };
 }
 
@@ -1857,12 +1901,13 @@ function scheduleA(year, agi, stateTax, H, T, tableYear) {
   const saltCap = half * Math.max(10000, T.saltCap - 0.3 * Math.max(0, agi - T.saltPhase * half));
   const saltPaid = round2(stateTax + propertyTax), salt = round2(Math.min(saltCap, saltPaid));
   const loans = homeLoansForTax().map(x => ({ ...x, ...mortgageInterestFor(x.key, x.loan, year) }));
-  const interest = round2(sum(loans.map(x => x.amount)));
-  const charityPaid = round2(by['Charitable'] || 0), charity = round2(tableYear >= 2026 ? Math.max(0, charityPaid - 0.005 * agi) : charityPaid);
+  const interest = H.interest != null ? round2(H.interest) : round2(sum(loans.map(x => x.amount)));
+  const charityPaid = round2(H.charity != null ? H.charity : by['Charitable'] || 0), charity = round2(tableYear >= 2026 ? Math.max(0, charityPaid - 0.005 * agi) : charityPaid);
   return { medicalPaid, medical, propertyTax, saltPaid, saltCap: round2(saltCap), salt, loans, interest, charityPaid, charity, total: round2(medical + salt + interest + charity) };
 }
 
-/* The estimate. `over` replaces typed values (used to see what the year would have cost without saving before tax). */
+/* The estimate. `over` replaces typed values (used to see what the year would have cost without saving before tax, and
+   by What if…: people, other, status, kids, deps, propertyTax, charity, interest, paid, actual). */
 function taxEstimate(year, over = {}) {
   const H = { ...taxHousehold(year), ...over }, { T, tableYear } = taxTables(year), st = H.status;
   const earners = taxEarners().map(m => { const p = H.people[m.id] || {}; return { id: m.id, name: m.name, gross: p.gross || 0, retire: p.retire || 0, health: p.health || 0 }; });
@@ -1891,6 +1936,11 @@ function taxEstimate(year, over = {}) {
   const ficaEst = round2(ss + medicare);
   const federal = H.actual.federal ?? fedEst, fica = H.actual.fica ?? ficaEst;
   const taxes = round2(federal + stateTax + fica), kept = round2(income - pretax - taxes);
+  // Income tax taken out of pay and other payments sent in, against the tax: what's still owed (+) or coming back (−)
+  const wh = k => round2(sum(earners.map(e => H.people[e.id]?.[k] || 0)));
+  const withheld = { federal: wh('fedWh'), state: wh('stateWh') }, paid = { federal: round2(H.paid?.federal || 0), state: round2(H.paid?.state || 0) };
+  const due = { federal: round2(federal - withheld.federal - paid.federal), state: round2(stateTax - withheld.state - paid.state) };
+  due.all = round2(due.federal + due.state);
   // The top rate on another dollar of pay (the highest earner's): bracket, plus the credit and SALT phase-outs where they apply
   const top = earners.slice().sort((a, b) => b.gross - a.gross)[0];
   let fedTop = taxable > 0 ? topBracket(taxable, T.brackets[st]) : 0;
@@ -1906,7 +1956,7 @@ function taxEstimate(year, over = {}) {
     federal: round2(federal), state: round2(stateTax), fica: round2(fica), taxes, kept,
     average: income > 0 ? taxes / income : 0, averageIncomeTax: income > 0 ? (federal + stateTax) / income : 0,
     top: { federal: fedTop, state: ilTop, fica: ficaTop, all: fedTop + ilTop + ficaTop, who: top?.name || '', ctcPhase, saltPhase },
-    actual: H.actual,
+    actual: H.actual, withheld, paid, due,
   };
 }
 
@@ -1926,6 +1976,692 @@ function paychecksIn(year) {
   let total = 0;
   for (const t of txInRange(`${year}-01-01`, `${year}-12-31`)) for (const l of txLines(t)) if (l.amount > 0 && isPay(catById(l.categoryId))) total += l.amount;
   return round2(total);
+}
+
+/* ================= Pay stubs: from pay before tax to the paycheck, the year so far, and What if… =================
+   A pay stub is kept as numbers and row labels only (state.paystubs): whose it is, the employer, the pay date and
+   period, pay before tax, what was saved or paid before tax, the taxes taken out, anything else taken out, take-home pay
+   and what the employer put in, each for this paycheck and year to date. Never the stub's text, a Social Security
+   number or an account number (a deposit account is kept as "ending 1234" at most).
+   From the stubs Ọrọ̀ works out: the path from pay before tax to take-home and the deposit it landed as; where the
+   year stands and where it will end (the latest year-to-date plus the regular paychecks left); the likely tax bill or
+   refund; and what was saved through pay, which never reaches the bank and so isn't in Money in or Kept.
+   The limits used when projecting are in 28-tax.js (TAX_TABLES[year].save, with their IRS sources): Social Security
+   stops at the wage base; 401(k), 403(b) and 457 deferrals (before tax and Roth together) stop at the year's limit, with
+   the extra at 50 and at 60 to 63 once a birth year is given; an HSA (yours plus your employer's) stops at its limit.
+   A what-if bonus counts the usual flat 22% federal withholding on bonuses (IRS Publication 15 (2026): "the withholding
+   rate on supplemental wages remains 22%"; the 37% above $1 million in a year isn't modeled) and Illinois's 4.95%.
+   Not modeled: a 457 plan's separate limit, an HSA limit for part of a year, the extra 0.9% Medicare withholding above
+   $200,000 in what's projected as taken out, withholding rising after a 401(k) limit is reached, a payday moved across
+   New Year's by a holiday, Social Security taken out twice by two employers. */
+const STUB_PRE = { retire: '401(k), 403(b) or 457', hsa: 'HSA', fsa: 'FSA', premium: 'Health, dental or vision', other: 'Something else before tax' };
+const STUB_TAX = { federal: 'Federal income tax', ss: 'Social Security', medicare: 'Medicare', state: 'Illinois income tax', other: 'Another tax' };
+const STUB_POST = { roth: 'Roth 401(k)', stock: 'Stock or savings plan', life: 'Life or disability insurance', other: 'Something else' };
+const STUB_ER = { retire: '401(k) match', hsa: 'HSA', other: 'Something else' };
+const STUB_BLOCKS = { pre: STUB_PRE, tax: STUB_TAX, post: STUB_POST, er: STUB_ER };
+const PAY_FREQS = ['weekly', 'biweekly', 'semimonthly', 'monthly'];   // labels in FREQS (10-store.js)
+const STUB_LINES = ['gross', ...Object.entries(STUB_BLOCKS).flatMap(([b, kinds]) => Object.keys(kinds).map(k => `${b}.${k}`)), 'net'];
+const BONUS_FED_WH = 0.22;
+
+const stubsAll = () => state.paystubs || [];
+const cents = n => Math.round((Number(n) || 0) * 100);
+const stubById = id => stubsAll().find(s => s.id === id);
+const stubNum = v => { if (v === '' || v == null) return null; const n = typeof v === 'number' ? v : parseAmount(String(v).replace(/\*+$/, '')); return isFinite(n) ? round2(Math.abs(n)) : null; };
+/* One employer, however its name was typed: "ACME CORP, INC." and "Acme" are the same job (year-to-date is per employer,
+   so two spellings must not be counted twice). */
+const stubEmpKey = s => String(s.employer || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(' ').filter(w => w && !/^(the|inc|incorporated|llc|corp|corporation|co|company|ltd|lp|llp|pllc|pc)$/.test(w)).join(' ');
+/* "Acme Corp, Nov 20": how a stub is named in lists and in what's waiting to go to the Mac */
+const stubName = s => `${s.employer || memberName(s.person)}, ${dateLabel(s.date)}`;
+const isPayCat = c => !!c && c.kind === 'income' && !c.rental && /pay|salary|wage|bonus/i.test(c.name);
+
+/* Labels and employer names: nothing that looks like a Social Security number, no run of 5 or more digits, no long
+   dashed or masked numbers. */
+function stubScrub(text) {
+  return String(text ?? '').replace(/\b\d{3}[-\s.]?\d{2}[-\s.]?\d{4}\b/g, ' ').replace(/[x*•#]{2,}[-\s]?\d*/gi, ' ')
+    .replace(/\d[\d\s-]{5,}\d/g, m => (m.replace(/\D/g, '').length >= 5 ? ' ' : m)).replace(/\d{5,}/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+}
+/* A deposit account from a stub: "ending 1234" at most. */
+function stubEnding(text) {
+  const d = String(text ?? '').replace(/\D/g, '');
+  return d.length >= 4 ? `ending ${d.slice(-4)}` : '';
+}
+/* A stub as it is stored: known fields only, amounts as positive dollars and cents, labels scrubbed, empty rows dropped. */
+function stubTidy(raw) {
+  const day = v => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? v : '');
+  const rows = (list, kinds) => (Array.isArray(list) ? list : []).map(r => {
+    const kind = kinds[r?.kind] ? r.kind : 'other', cur = stubNum(r?.cur), ytd = stubNum(r?.ytd);
+    return cur == null && ytd == null ? null : { kind, label: stubScrub(r.label) || kinds[kind], cur: cur ?? 0, ytd };
+  }).filter(Boolean);
+  const s = {
+    id: raw.id || 'ps' + uid(), person: raw.person, employer: stubScrub(raw.employer), date: day(raw.date), from: day(raw.from), to: day(raw.to), bonus: !!raw.bonus,
+    gross: stubNum(raw.gross) ?? 0, grossYtd: stubNum(raw.grossYtd),
+    pre: rows(raw.pre, STUB_PRE), tax: rows(raw.tax, STUB_TAX), post: rows(raw.post, STUB_POST),
+    net: stubNum(raw.net) ?? 0, netYtd: stubNum(raw.netYtd), er: rows(raw.er, STUB_ER), added: raw.added || today(),
+  };
+  if (Array.isArray(raw.txIds) && raw.txIds.length) s.txIds = [...new Set(raw.txIds.filter(x => typeof x === 'string' && x))];
+  if (raw.deposit && stubEnding(raw.deposit)) s.deposit = stubEnding(raw.deposit);
+  if (raw.src === 'pdf') s.src = 'pdf';
+  if (s.from && s.to && s.from > s.to) [s.from, s.to] = [s.to, s.from];
+  return s;
+}
+
+/* ---------- one stub: pay before tax down to take-home ---------- */
+const stubSum = (rows, f = 'cur', kind) => round2(sum((rows || []).filter(r => !kind || r.kind === kind).map(r => Number(r[f]) || 0)));
+/* The steps, and whether they add up to the take-home to the cent. `f` is 'cur' (this paycheck) or 'ytd'. */
+function stubPath(s, f = 'cur') {
+  const gross = round2(f === 'ytd' ? s.grossYtd : s.gross), net = round2(f === 'ytd' ? s.netYtd : s.net);
+  const pre = stubSum(s.pre, f), tax = stubSum(s.tax, f), post = stubSum(s.post, f);
+  const afterPre = round2(gross - pre), afterTax = round2(afterPre - tax), expected = round2(afterTax - post);
+  return { gross, pre, tax, post, net, afterPre, afterTax, expected, off: round2(expected - net), ok: cents(expected) === cents(net) };
+}
+/* "These add up." or "Off by $12.40: check the rows." */
+function stubAddsUp(s) {
+  const p = stubPath(s);
+  if (!(p.gross > 0) && !(p.net > 0)) return { ok: null, text: 'Type the pay before tax and the take-home pay, and Ọrọ̀ checks that the rows add up.' };
+  const cur = p.ok ? 'These add up.' : `Off by ${money(Math.abs(p.off))}: check the rows.`;
+  let ytd = '', yOk = null;
+  if (s.grossYtd != null && s.netYtd != null) { const y = stubPath(s, 'ytd'); yOk = y.ok; ytd = y.ok ? ' Year to date adds up too.' : ` Year to date is off by ${money(Math.abs(y.off))}.`; }
+  return { ok: p.ok, ytdOk: yOk, off: p.off, text: cur + ytd, detail: `${money(p.gross)} − ${money(p.pre)} − ${money(p.tax)} − ${money(p.post)} = ${money(p.expected)}${p.ok ? '' : `, and the take-home says ${money(p.net)}`}` };
+}
+/* Every line of a stub by kind, as one flat list of numbers ("pre.retire", "tax.federal"…). A year-to-date figure is
+   null when a row of that kind has none. */
+function stubLines(s, f = 'cur') {
+  const out = {};
+  for (const k of STUB_LINES) out[k] = f === 'cur' ? 0 : null;
+  out.gross = f === 'cur' ? round2(s.gross) : s.grossYtd ?? null;
+  out.net = f === 'cur' ? round2(s.net) : s.netYtd ?? null;
+  for (const b of Object.keys(STUB_BLOCKS)) {
+    const by = groupBy(s[b] || [], r => (STUB_BLOCKS[b][r.kind] ? r.kind : 'other'));
+    for (const [kind, rows] of Object.entries(by)) out[`${b}.${kind}`] = f === 'cur' ? stubSum(rows) : rows.every(r => r.ytd != null) ? stubSum(rows, 'ytd') : null;
+  }
+  return out;
+}
+const linesPart = (L, b) => round2(sum(Object.keys(STUB_BLOCKS[b]).map(k => L[`${b}.${k}`] || 0)));
+/* What a set of lines saved: 401(k) and the like, Roth, HSA, a stock or savings plan. Premiums and an FSA aren't saving. */
+const linesSaved = L => ({ retire: L['pre.retire'] || 0, roth: L['post.roth'] || 0, hsa: L['pre.hsa'] || 0, other: L['post.stock'] || 0 });
+
+/* ---------- the paycheck it landed as ---------- */
+/* Each stub's deposit: the ones picked by hand, else the money-in transaction with the same amount to the cent, dated
+   from a day before to five days after the pay date (one filed under a pay category first, then an uncategorized one,
+   then other income; the nearest date), each transaction used for one stub only. */
+function stubTies() {
+  return memo('stubties', () => {
+    const byStub = {}, byTx = {}, txs = new Map(state.transactions.map(t => [t.id, t]));
+    const stubs = stubsAll().slice().sort((a, b) => a.date.localeCompare(b.date));
+    const take = (s, list, how) => { byStub[s.id] = { txs: list, how }; for (const t of list) byTx[t.id] = s.id; };
+    for (const s of stubs) { const list = (s.txIds || []).map(id => txs.get(id)).filter(Boolean); if (list.length) take(s, list, 'picked'); }
+    const rank = t => { const ls = txLines(t); return ls.some(l => isPayCat(catById(l.categoryId))) ? 0 : isUncat(t) ? 1 : ls.some(l => catById(l.categoryId)?.kind === 'income') ? 2 : -1; };
+    const ins = state.transactions.filter(t => t.amount > 0);
+    for (const s of stubs) {
+      if (byStub[s.id] || !(s.net > 0) || !s.date) continue;
+      const lo = addDays(s.date, -1), hi = addDays(s.date, 5), want = cents(s.net);
+      let best = null, bk = null;
+      for (const t of ins) {
+        if (t.date < lo || t.date > hi || cents(t.amount) !== want || byTx[t.id]) continue;
+        const r = rank(t); if (r < 0) continue;
+        const k = [r, Math.abs(daysBetween(s.date, t.date)), t.date];
+        if (!best || k[0] < bk[0] || (k[0] === bk[0] && (k[1] < bk[1] || (k[1] === bk[1] && k[2] < bk[2])))) { best = t; bk = k; }
+      }
+      if (best) take(s, [best], 'matched');
+    }
+    return { byStub, byTx };
+  });
+}
+/* { txs, how: 'picked' | 'matched' | null, total, short } for a stub; short is what the deposits fall short of take-home by */
+function stubDeposits(s) {
+  const d = stubTies().byStub[s.id] || { txs: [], how: null };
+  const total = round2(sum(d.txs.map(t => t.amount)));
+  return { ...d, total, short: d.txs.length ? round2(s.net - total) : 0 };
+}
+/* The stub a transaction is the paycheck of, if any */
+function stubForTxn(id) { const sid = stubTies().byTx[id]; return sid ? stubById(sid) : null; }
+/* "Landed in Everyday checking on Nov 20: $4,850.00" (plain text) */
+function stubLandedText(s) {
+  const d = stubDeposits(s);
+  if (!d.txs.length) return 'Not in your transactions yet';
+  return 'Landed in ' + d.txs.map(t => `${acctById(t.accountId)?.name || 'an account'} on ${dateLabel(t.date)}: ${money(t.amount)}`).join(' and ');
+}
+
+/* ---------- how often, and how many paychecks are left ---------- */
+const payInfo = id => state.tax?.payInfo?.[id] || {};
+/* Worked out from the regular stubs: the pay period's length, or else the gap between pay dates. null = can't tell. */
+function stubFreqGuess(regs) {
+  const last = regs[regs.length - 1]; if (!last) return null;
+  if (last.from && last.to) {
+    const len = daysBetween(last.from, last.to) + 1, f = +last.from.slice(8), t = +last.to.slice(8), eom = last.to === monthEnd(last.to.slice(0, 7));
+    if (len >= 6 && len <= 8) return 'weekly';
+    if (len >= 28 && len <= 31) return 'monthly';
+    if (len >= 13 && len <= 16 && len !== 14) return 'semimonthly';
+    if (len === 14 && !((f === 1 && t === 15) || (f === 16 && eom))) return 'biweekly';   // 14 days on the 16th to month's end happens in a leap February: the pay dates decide
+  }
+  const dates = [...new Set(regs.map(s => s.date))].sort();
+  if (dates.length < 2) return last.from && last.to && daysBetween(last.from, last.to) === 13 ? 'biweekly' : null;
+  const gaps = dates.slice(1).map((d, i) => daysBetween(dates[i], d)), g = Math.min(...gaps);
+  const days = dates.map(d => +d.slice(8)), sameDay = days.every(d => d === days[0]) || dates.every(d => d === monthEnd(d.slice(0, 7)));
+  if (g >= 6 && g <= 8) return 'weekly';
+  if (g >= 13 && g <= 17) return gaps.filter(x => x % 14 === 0).length * 2 >= gaps.length ? 'biweekly' : 'semimonthly';   // every 2 weeks lands 14 days apart; twice a month mostly 15 or 16
+  if (g >= 27 && g <= 32) return sameDay || g % 14 ? 'monthly' : 'biweekly';
+  if (g % 14 === 0) return 'biweekly';
+  if (g % 7 === 0) return 'weekly';
+  return null;
+}
+/* Regular pay dates after `last` through December 31 of that year. */
+function payDatesLeft(last, freq, year, regs = []) {
+  if (!last || yearOf(last) !== year) return 0;
+  const days = daysBetween(last, `${year}-12-31`);
+  if (freq === 'weekly') return Math.floor(days / 7);
+  if (freq === 'biweekly') return Math.floor(days / 14);
+  if (freq === 'monthly') return 12 - +last.slice(5, 7);
+  if (freq !== 'semimonthly') return 0;
+  // the two pay days of the month: from the stubs' own dates when they show both, else 15 days apart
+  const seen = regs.map(s => +s.date.slice(8)), lo = seen.filter(d => d <= 15).pop(), hi = seen.filter(d => d > 15).pop(), d = +last.slice(8);
+  const pair = lo && hi ? [lo, hi] : d <= 15 ? [d, d + 15 >= 30 ? 31 : d + 15] : [Math.max(1, d - 15), d >= 28 ? 31 : d];
+  let n = 0;
+  for (let m = +last.slice(5, 7); m <= 12; m++) for (const day of pair) {
+    const mk = `${year}-${pad2(m)}`, iso = `${mk}-${pad2(Math.min(day, +monthEnd(mk).slice(8)))}`;
+    if (daysBetween(last, iso) >= 7) n++;
+  }
+  return n;
+}
+
+/* ---------- the saving limits ---------- */
+const saveLimits = year => TAX_TABLES[year]?.save || null;
+const ageIn = (id, year) => { const b = +payInfo(id).born; return b > 1900 && b <= year ? year - b : null; };
+/* A year's limit on 401(k), 403(b) and 457 pay deferrals (before tax and Roth together) for someone that age at the
+   end of the year; null when Ọrọ̀ doesn't have that year's limits. */
+function deferralLimit(year, age) {
+  const L = saveLimits(year); if (!L) return null;
+  return L.deferral + (age == null || age < 50 ? 0 : age >= 60 && age <= 63 ? L.catch60 : L.catch50);
+}
+/* A year's HSA limit: 'self' or 'family' coverage (family unless told otherwise), $1,000 more at 55 or older. */
+function hsaLimit(year, cover, age) {
+  const L = saveLimits(year); if (!L) return null;
+  return (cover === 'self' ? L.hsaSelf : L.hsaFamily) + (age != null && age >= 55 ? L.hsa55 : 0);
+}
+
+/* ---------- where the year stands, and where it will end ---------- */
+/* One person's year from their stubs, per employer and together: so far (the latest stub's year-to-date; the stubs
+   added up when those boxes were left blank) and projected (so far plus the regular paychecks left times the latest
+   regular paycheck, stopped at the Social Security wage base and the 401(k) and HSA limits). null with no stubs. */
+function stubYear(personId, year) {
+  return memo(`stubyr:${personId}:${year}`, () => {
+    const all = stubsAll().filter(s => s.person === personId && s.date && yearOf(s.date) === year).sort((a, b) => a.date.localeCompare(b.date));
+    if (!all.length) return null;
+    const { T } = taxTables(year), info = payInfo(personId), age = ageIn(personId, year);
+    const lastDate = all[all.length - 1].date;
+    // A stub with no employer named belongs with one that has a name: the only one there is, else the one with the same
+    // regular paycheck, else the one with the nearest pay date.
+    const withName = all.filter(stubEmpKey), named = [...new Set(withName.map(stubEmpKey))];
+    const jobOf = s => stubEmpKey(s) || (named.length < 2 ? named[0] || '' : stubEmpKey(withName.filter(x => !x.bonus && !s.bonus && cents(x.gross) === cents(s.gross)).pop()
+      || withName.slice().sort((x, y) => Math.abs(daysBetween(x.date, s.date)) - Math.abs(daysBetween(y.date, s.date)))[0]));
+    const jobs = Object.entries(groupBy(all, jobOf)).map(([key, list]) => {
+      const latest = list[list.length - 1], regs = list.filter(s => !s.bonus), regular = regs[regs.length - 1] || null;
+      const sums = {}; for (const k of STUB_LINES) sums[k] = round2(sum(list.map(s => stubLines(s)[k])));
+      const ytdMode = latest.grossYtd != null, sofar = {};
+      for (const k of STUB_LINES) {
+        let v = null;
+        if (ytdMode) for (let i = list.length - 1; i >= 0 && v == null; i--) v = stubLines(list[i], 'ytd')[k];   // the newest stub that gives it
+        sofar[k] = v != null ? v : sums[k];
+      }
+      if (ytdMode && latest.netYtd == null) sofar.net = round2(sofar.gross - linesPart(sofar, 'pre') - linesPart(sofar, 'tax') - linesPart(sofar, 'post'));
+      const typed = info.freq?.[key], guess = stubFreqGuess(regs), freq = PAY_FREQS.includes(typed) ? typed : guess;
+      const active = !!regular && daysBetween(regular.date, lastDate) <= Math.max(35, freq === 'monthly' ? 62 : 0);
+      const left = active && freq ? payDatesLeft(regular.date, freq, year, regs) : 0;
+      return { key, employer: list.map(s => s.employer).filter(Boolean).pop() || '', n: list.length, latest, regular, ytdMode, sofar, freq, guess, typedFreq: PAY_FREQS.includes(typed) ? typed : '', ask: !!regular && !freq, active, left, cur: regular ? stubLines(regular) : null };
+    });
+    const sofar = {}, projected = {}, capped = {};
+    for (const k of STUB_LINES) sofar[k] = round2(sum(jobs.map(j => j.sofar[k])));
+    // deferrals stop at the year's limit (before tax and Roth together, across employers); an HSA at its limit (with the employer's part)
+    const factor = (keys, limit) => {
+      if (limit == null) return 1;
+      const had = sum(keys.map(k => sofar[k])), plan = sum(jobs.map(j => (j.cur ? j.left * sum(keys.map(k => j.cur[k])) : 0)));
+      return plan > 0 && had + plan > limit ? Math.max(0, limit - had) / plan : 1;
+    };
+    const lim = { deferral: deferralLimit(year, age), hsa: hsaLimit(year, info.hsa, age) };
+    const fR = factor(['pre.retire', 'post.roth'], lim.deferral), fH = factor(['pre.hsa', 'er.hsa'], lim.hsa);
+    if (fR < 1) capped.retire = true;
+    if (fH < 1) capped.hsa = true;
+    const ssMax = round2(0.062 * T.ssBase);
+    for (const j of jobs) {
+      j.projected = {};
+      for (const k of STUB_LINES) j.projected[k] = round2(j.sofar[k] + (j.cur ? j.left * j.cur[k] * (k === 'pre.retire' || k === 'post.roth' ? fR : k === 'pre.hsa' || k === 'er.hsa' ? fH : 1) : 0));
+      const ss = Math.min(j.projected['tax.ss'], Math.max(j.sofar['tax.ss'], ssMax));   // each employer stops at the wage base
+      if (ss < j.projected['tax.ss'] || (j.sofar['tax.ss'] >= ssMax && j.left > 0)) capped.ss = true;
+      j.projected['tax.ss'] = round2(ss);
+      j.projected.net = round2(j.projected.gross - linesPart(j.projected, 'pre') - linesPart(j.projected, 'tax') - linesPart(j.projected, 'post'));
+    }
+    for (const k of STUB_LINES) projected[k] = round2(sum(jobs.map(j => j.projected[k])));
+    const main = jobs.filter(j => j.regular).sort((a, b) => b.regular.date.localeCompare(a.regular.date))[0] || jobs[jobs.length - 1];
+    return {
+      person: personId, year, n: all.length, jobs, main, latest: all[all.length - 1], sofar, projected, capped, limits: lim, age,
+      left: sum(jobs.map(j => j.left)), ask: jobs.some(j => j.ask && j.active !== false), summed: jobs.some(j => !j.ytdMode), ssMax,
+      room: {
+        retire: lim.deferral == null ? null : round2(Math.max(0, lim.deferral - projected['pre.retire'] - projected['post.roth'])),
+        hsa: lim.hsa == null ? null : round2(Math.max(0, lim.hsa - projected['pre.hsa'] - projected['er.hsa'])),
+      },
+    };
+  });
+}
+/* What the Taxes page uses for a person when a box is blank: the projected year. Health through pay is the HSA, FSA and
+   premiums (and anything else before tax), which skip Social Security and Medicare too; a 401(k) doesn't. */
+function stubPlan(personId, year) {
+  const Y = stubYear(personId, year); if (!Y) return null;
+  const P = Y.projected;
+  return { gross: P.gross, retire: P['pre.retire'], health: round2(P['pre.hsa'] + P['pre.fsa'] + P['pre.premium'] + P['pre.other']), hsa: P['pre.hsa'], fedWh: P['tax.federal'], stateWh: P['tax.state'] };
+}
+/* The adults with stubs that year, and the household's totals. */
+function stubHousehold(year) {
+  const people = taxEarners().map(m => stubYear(m.id, year)).filter(Boolean), sofar = {}, projected = {};
+  for (const k of STUB_LINES) { sofar[k] = round2(sum(people.map(p => p.sofar[k]))); projected[k] = round2(sum(people.map(p => p.projected[k]))); }
+  return { year, people, sofar, projected, n: sum(people.map(p => p.n)) };
+}
+
+/* ---------- saved through pay: saving, not spending ---------- */
+/* What went into a 401(k), 403(b) or 457, a Roth 401(k), an HSA or a stock or savings plan straight from pay, on stubs
+   dated from..to (this-paycheck amounts). It never reaches the bank, so Money in and Kept don't have it. Follows the
+   whose-money menu by the stub's person unless { lens: false }. `employer` is what the employer added (401(k) and HSA). */
+function payrollSaving(from, to, opts = {}) {
+  const useLens = opts.lens !== false;
+  return memo(`paysave:${from}:${to}:${useLens ? UI.lens : '*'}`, () => {
+    const out = { total: 0, byKind: { retire: 0, roth: 0, hsa: 0, other: 0 }, employer: 0, stubs: 0, ids: [] };
+    for (const s of stubsAll()) {
+      if (!s.date || s.date < from || s.date > to || (useLens && !inLens(s.person))) continue;
+      const L = stubLines(s), sv = linesSaved(L);
+      for (const k of Object.keys(out.byKind)) out.byKind[k] += sv[k];
+      out.employer += L['er.retire'] + L['er.hsa']; out.stubs++; out.ids.push(s.id);
+    }
+    for (const k of Object.keys(out.byKind)) out.byKind[k] = round2(out.byKind[k]);
+    out.total = round2(sum(Object.values(out.byKind))); out.employer = round2(out.employer);
+    return out;
+  });
+}
+/* Money in, spent and what was kept over a stretch, counting what was saved through pay:
+   kept = left over + saved through pay; rate = kept ÷ (money in + saved through pay). */
+function keptWithPayrollRange(from, to, opts = {}) {
+  const useLens = opts.lens !== false, txs = txInRange(from, to), f = flowSummary(useLens ? lensed(txs) : txs), p = payrollSaving(from, to, opts);
+  const kept = round2(f.net + p.total), base = f.income + p.total;
+  return { moneyIn: f.income, spent: f.spending, leftOver: f.net, savedThroughPay: p.total, kept, rate: base > 0 ? kept / base : NaN, byKind: p.byKind, employer: p.employer, stubs: p.stubs };
+}
+const keptWithPayroll = (mk, opts) => keptWithPayrollRange(`${mk}-01`, monthEnd(mk), opts);
+/* "401(k) $854, HSA $250" */
+function payrollKindsText(byKind) {
+  const names = { retire: '401(k)', roth: 'Roth 401(k)', hsa: 'HSA', other: 'stock or savings plan' };
+  return Object.keys(names).filter(k => byKind[k] > 0).map(k => `${names[k]} ${money(byKind[k], { cents: false })}`).join(', ');
+}
+/* A year's saving through pay, projected from the stubs (for Planning › Retirement): yours, and with your employer's part. */
+function payrollSavingForYear(year) {
+  const H = stubHousehold(year), sv = linesSaved(H.projected), mine = round2(sum(Object.values(sv))), employer = round2(H.projected['er.retire'] + H.projected['er.hsa']);
+  return { mine, employer, total: round2(mine + employer), byKind: sv, people: H.people.length };
+}
+
+/* ---------- the likely tax bill or refund ---------- */
+/* The estimate for the year (typed numbers, or the stub projection where a box is blank) set against what will have
+   been taken out of pay and any other payments sent in. due > 0 is owed, < 0 is coming back. Also what saving in the
+   401(k) and HSA keeps out of taxes, and, for this year or a later one, the room left under the limits. */
+function taxDue(year) {
+  const none = { federal: null, state: null, fica: null };
+  const X = taxEstimate(year), E = taxEstimate(year, { actual: none });
+  const people = E.earners.map(e => ({ ...e, hsa: E.H.people[e.id]?.hsa || 0, stub: stubYear(e.id, year), age: ageIn(e.id, year) }));
+  const saved = round2(sum(people.map(p => (p.retire || 0) + (p.hsa || 0))));
+  let keeps = 0;
+  if (saved > 0) {
+    const without = Object.fromEntries(people.map(p => [p.id, { ...E.H.people[p.id], retire: 0, health: round2((p.health || 0) - (p.hsa || 0)), hsa: 0 }]));
+    keeps = round2(taxEstimate(year, { people: without, actual: none }).taxes - E.taxes);
+  }
+  // Room left under the limits: a 401(k) for someone already putting pay into one, and no more than the pay still to
+  // come this year; an HSA for someone who has one (a couple filing together with family coverage shares one family limit)
+  let room = null;
+  if (saveLimits(year) && year >= new Date().getFullYear()) {
+    const L = saveLimits(year), more = {}, list = [];
+    const defer = p => (p.retire || 0) + (p.stub ? p.stub.projected['post.roth'] : 0), hsaHas = p => (p.hsa || 0) + (p.stub ? p.stub.projected['er.hsa'] : 0);
+    const hsaPeople = people.filter(p => hsaHas(p) > 0);
+    const shared = E.status === 'mfj' && hsaPeople.length > 1 && hsaPeople.every(p => payInfo(p.id).hsa !== 'self');
+    let sharedLeft = shared ? Math.max(0, L.hsaFamily - sum(hsaPeople.map(hsaHas))) : 0;
+    for (const p of people) {
+      if (!(p.gross > 0)) continue;
+      const Y = p.stub;
+      let r = defer(p) > 0 ? Math.max(0, deferralLimit(year, p.age) - defer(p)) : 0;
+      r = Math.min(r, Math.max(0, Y ? (Y.projected.gross - Y.sofar.gross) - (linesPart(Y.projected, 'pre') - linesPart(Y.sofar, 'pre')) : p.gross - (p.retire || 0) - (p.health || 0)));
+      let h = 0;
+      if (hsaPeople.includes(p)) {
+        if (shared) { h = sharedLeft + (p.age != null && p.age >= 55 ? L.hsa55 : 0); sharedLeft = 0; }
+        else h = Math.max(0, hsaLimit(year, payInfo(p.id).hsa, p.age) - hsaHas(p));
+      }
+      const rr = round2(r), hh = round2(h);
+      more[p.id] = { ...E.H.people[p.id], retire: round2((p.retire || 0) + rr), health: round2((p.health || 0) + hh), hsa: round2((p.hsa || 0) + hh) };
+      if (rr > 0 || hh > 0) list.push({ id: p.id, name: p.name, retire: rr, hsa: hh, ageKnown: p.age != null });
+    }
+    const retire = round2(sum(list.map(x => x.retire))), hsa = round2(sum(list.map(x => x.hsa)));
+    room = { retire, hsa, people: list, saves: retire + hsa > 0 ? round2(E.taxes - taxEstimate(year, { people: { ...E.H.people, ...more }, actual: none }).taxes) : 0 };
+  }
+  const line = (tax, wh, paid) => ({ tax, withheld: wh, paid, due: round2(tax - wh - paid) });
+  const federal = line(X.federal, X.withheld.federal, X.paid.federal), state = line(X.state, X.withheld.state, X.paid.state);
+  return { year, X, federal, state, all: round2(federal.due + state.due), withheldAny: X.withheld.federal + X.withheld.state + X.paid.federal + X.paid.state > 0, saved, keeps, room, people };
+}
+/* "a refund of $1,240" / "$860 owed" / "even" */
+const dueWords = (due, o = {}) => (Math.abs(due) < 0.005 ? 'even' : due < 0 ? `a refund of ${money(-due, o)}` : `${money(due, o)} owed`);
+
+/* ---------- What if… ---------- */
+const WI_PERSON = ['gross', 'bonus', 'retire', 'hsa', 'health', 'fedWh', 'stateWh'];
+const WI_HOUSE = ['other', 'status', 'kids', 'charity', 'propertyTax', 'interest'];
+const wiNum = v => (v === '' || v == null || !isFinite(+v) ? null : +v);
+/* What the plan uses for each what-if box (the placeholders). */
+function whatIfPlan(year) {
+  const P = taxEstimate(year, { actual: { federal: null, state: null, fica: null } });
+  const people = Object.fromEntries(P.earners.map(e => {
+    const p = P.H.people[e.id];
+    return [e.id, { gross: p.gross || 0, bonus: 0, retire: p.retire || 0, hsa: p.hsa || 0, health: round2((p.health || 0) - (p.hsa || 0)), fedWh: p.fedWh || 0, stateWh: p.stateWh || 0 }];
+  }));
+  return { P, people, house: { other: P.other, status: P.status, kids: P.H.kids || 0, charity: P.A.charityPaid, propertyTax: P.A.propertyTax, interest: P.A.interest } };
+}
+/* The changes as taxEstimate takes them. `only` = [personId or 'h', field] keeps just that one change. A bonus adds to
+   the year's pay and to what's taken out (22% federal, 4.95% Illinois); children also count as dependents for Illinois. */
+function whatIfOver(year, W, plan = whatIfPlan(year), only = null) {
+  const on = (who, f) => !only || (only[0] === who && only[1] === f);
+  const people = {};
+  for (const [id, p] of Object.entries(plan.people)) {
+    const w = W?.people?.[id] || {}, v = f => (on(id, f) ? wiNum(w[f]) : null);
+    const bonus = Math.max(0, v('bonus') || 0), hsa = v('hsa') ?? p.hsa;
+    people[id] = { gross: round2((v('gross') ?? p.gross) + bonus), retire: v('retire') ?? p.retire, health: round2(hsa + (v('health') ?? p.health)), hsa,
+      fedWh: round2((v('fedWh') ?? p.fedWh) + bonus * BONUS_FED_WH), stateWh: round2((v('stateWh') ?? p.stateWh) + bonus * IL_RATE) };
+  }
+  const over = { people, actual: { federal: null, state: null, fica: null } }, h = f => (on('h', f) ? W?.[f] : null);
+  if (wiNum(h('other')) != null) over.other = wiNum(h('other'));
+  if (FILING[h('status')]) over.status = h('status');
+  if (wiNum(h('kids')) != null) { over.kids = Math.max(0, Math.round(wiNum(h('kids')))); over.deps = Math.max(0, (plan.P.H.deps || 0) + over.kids - (plan.P.H.kids || 0)); }
+  for (const f of ['charity', 'propertyTax', 'interest']) if (wiNum(h(f)) != null) over[f] = Math.max(0, wiNum(h(f)));
+  return over;
+}
+/* Which boxes differ from the plan: [[personId or 'h', field, plan's figure, what-if figure]…] */
+function whatIfChanges(year, W = state.tax?.whatif?.[year], plan = whatIfPlan(year)) {
+  const out = [];
+  for (const [id, p] of Object.entries(plan.people)) for (const f of WI_PERSON) {
+    const v = wiNum(W?.people?.[id]?.[f]);
+    if (v != null && Math.abs(v - p[f]) > 0.004) out.push([id, f, p[f], v]);
+  }
+  for (const f of WI_HOUSE) {
+    const v = f === 'status' ? (FILING[W?.[f]] ? W[f] : null) : wiNum(W?.[f]);
+    if (v != null && (f === 'status' ? v !== plan.house.status : Math.abs(v - plan.house[f]) > 0.004)) out.push(['h', f, plan.house[f], v]);
+  }
+  return out;
+}
+/* The figures a column shows. Refund is what comes back (+) or is owed (−). */
+function whatIfFigures(X) {
+  return { income: X.income, pretax: X.pretax, taxable: X.taxable, federal: X.federal, state: X.state, fica: X.fica, taxes: X.taxes,
+    withheld: round2(X.withheld.federal + X.withheld.state), refund: round2(-X.due.all), kept: X.kept, keptSaved: round2(X.kept + X.pretax), average: X.average, top: X.top.all };
+}
+const WI_ROWS = [['income', 'Income'], ['pretax', 'Saved before tax'], ['taxable', 'Taxable income'], ['federal', 'Federal income tax'], ['state', 'Illinois income tax'], ['fica', 'Social Security and Medicare'],
+  ['taxes', 'All taxes'], ['withheld', 'Taken out of pay'], ['refund', 'Refund or owed'], ['kept', 'Kept after tax'], ['keptSaved', 'Kept, counting what you saved'], ['average', 'Average rate'], ['top', 'Top rate']];
+/* Both columns, the difference, and each change on its own in plain words. */
+function whatIf(year) {
+  const W = state.tax?.whatif?.[year], plan = whatIfPlan(year), changes = whatIfChanges(year, W, plan);
+  const base = whatIfFigures(plan.P), X = changes.length ? taxEstimate(year, whatIfOver(year, W, plan)) : plan.P, what = whatIfFigures(X);
+  const rows = WI_ROWS.map(([key, label]) => ({ key, label, plan: base[key], what: what[key], diff: key === 'average' || key === 'top' ? what[key] - base[key] : round2(what[key] - base[key]), rate: key === 'average' || key === 'top' }));
+  const says = changes.map(c => whatIfSentence(year, W, plan, c)).filter(Boolean);
+  if (changes.length > 1) {
+    const d = k => round2(what[k] - base[k]);
+    says.push(`All together: ${d('taxes') === 0 ? 'the same tax' : `${money(Math.abs(d('taxes')), { cents: false })} ${d('taxes') < 0 ? 'less' : 'more'} tax`}, ${d('kept') === 0 ? 'the same kept after tax' : `${money(Math.abs(d('kept')), { cents: false })} ${d('kept') < 0 ? 'less' : 'more'} kept after tax`}, and ${refundWords(base.refund, what.refund)}. Each line above is that change on its own.`);
+  }
+  return { year, W: W || null, plan, changes, changed: changes.length > 0, X, base, what, rows, says };
+}
+const refundSay = r => (Math.abs(r) < 0.5 ? 'coming out even' : r > 0 ? `a ${money(r, { cents: false })} refund` : `${money(-r, { cents: false })} owed`);
+function refundWords(a, b) {
+  if (Math.abs(a - b) < 0.5) return `still ${refundSay(b)}`;
+  return `${refundSay(b)} instead of ${refundSay(a)}`;
+}
+/* One change by itself: "Putting $4,000 more in Alex’s 401(k) lowers this year’s tax by $1,158 and take-home by $2,842." */
+function whatIfSentence(year, W, plan, [who, f, was, now]) {
+  const A = whatIfFigures(plan.P), B = whatIfFigures(taxEstimate(year, whatIfOver(year, W, plan, [who, f])));
+  const m = n => money(Math.abs(n), { cents: false }), d = round2(now - was), tax = round2(B.taxes - A.taxes), kept = round2(B.kept - A.kept);
+  const name = who === 'h' ? '' : memberName(who), solo = Object.keys(plan.people).length < 2, whose = solo ? 'the' : `${name}’s`;
+  const taxSay = Math.abs(tax) < 0.5 ? 'doesn’t change this year’s tax' : `${tax < 0 ? 'lowers' : 'raises'} this year’s tax by ${m(tax)}`;
+  const keptSay = Math.abs(kept) < 0.5 ? '' : ` and take-home by ${m(kept)}`;
+  const moreLess = d > 0 ? 'more' : 'less';
+  if (f === 'retire') return `Putting ${m(d)} ${moreLess} in ${whose} 401(k) ${taxSay}${keptSay}.`;
+  if (f === 'hsa') return `Putting ${m(d)} ${moreLess} in ${whose} HSA ${taxSay}${keptSay}. An HSA skips Social Security and Medicare too.`;
+  if (f === 'health') return `Paying ${m(d)} ${moreLess} before tax for ${solo ? 'an' : `${name}’s`} FSA and premiums ${taxSay}${keptSay}.`;
+  if (f === 'gross') return `${solo ? 'Pay' : `${name}’s pay`} of ${money(now, { cents: false })} for the year (${m(d)} ${moreLess}) ${taxSay}, and you keep ${m(kept)} ${kept < 0 ? 'less' : 'more'}.`;
+  if (f === 'bonus') return `A ${m(now)} bonus${solo ? '' : ` for ${name}`} adds ${m(tax)} of tax (${m(B.federal - A.federal)} federal, ${m(B.state - A.state)} Illinois, ${m(B.fica - A.fica)} Social Security and Medicare), so you keep ${m(kept)} of it. Ọrọ̀ counts ${m(now * BONUS_FED_WH)} federal and ${m(now * IL_RATE)} Illinois as taken out of the bonus itself.`;
+  if (f === 'fedWh' || f === 'stateWh') return `Having ${m(d)} ${moreLess} ${f === 'fedWh' ? 'federal' : 'Illinois'} tax taken out of ${solo ? 'your' : `${name}’s`} pay doesn’t change the tax: it means ${refundWords(A.refund, B.refund)}.`;
+  if (f === 'other') return `Other income of ${money(now, { cents: false })} (${m(d)} ${moreLess}) ${taxSay}.`;
+  if (f === 'status') return `Filing as ${FILING[now].toLowerCase()} instead of ${FILING[was].toLowerCase()} ${taxSay}.`;
+  if (f === 'kids') return `${now} ${now === 1 ? 'child' : 'children'} under 17 instead of ${was} ${taxSay}.`;
+  const itemNote = Math.abs(tax) < 0.5 && !taxEstimate(year, whatIfOver(year, W, plan, [who, f])).itemize ? ': the standard deduction is still larger' : '';
+  if (f === 'charity') return `Giving ${money(now, { cents: false })} to charity (${m(d)} ${moreLess}) ${taxSay}${itemNote}.`;
+  if (f === 'propertyTax') return `Property tax of ${money(now, { cents: false })} (${m(d)} ${moreLess}) ${taxSay}${itemNote}.`;
+  if (f === 'interest') return `Mortgage interest of ${money(now, { cents: false })} (${m(d)} ${moreLess}) ${taxSay}${itemNote}.`;
+  return '';
+}
+/* Drop a year's what-if (and the holder itself once it's empty, so nothing is left behind to sync). */
+function whatIfForget(year) {
+  if (!state.tax?.whatif) return;
+  delete state.tax.whatif[year];
+  if (!Object.keys(state.tax.whatif).length) delete state.tax.whatif;
+}
+/* Copy the what-if into the typed numbers and empty it. One commit, so one Undo puts everything back. */
+function whatIfMakePlan(year) {
+  const W = state.tax?.whatif?.[year], plan = whatIfPlan(year), changes = whatIfChanges(year, W, plan);
+  if (!changes.length) return 0;
+  const over = whatIfOver(year, W, plan), H = ((state.tax.household = state.tax.household || {})[year] = state.tax.household[year] || {});
+  const touched = (id, fs) => changes.some(c => c[0] === id && fs.includes(c[1]));
+  for (const [id, o] of Object.entries(over.people)) {
+    if (!touched(id, WI_PERSON)) continue;
+    const p = ((H.people = H.people || {})[id] = H.people[id] || {});
+    if (touched(id, ['gross', 'bonus'])) p.gross = o.gross;
+    if (touched(id, ['retire'])) p.retire = o.retire;
+    if (touched(id, ['hsa', 'health'])) { p.health = o.health; p.hsa = o.hsa; }
+    if (touched(id, ['fedWh', 'bonus'])) p.fedWh = o.fedWh;
+    if (touched(id, ['stateWh', 'bonus'])) p.stateWh = o.stateWh;
+  }
+  if (touched('h', ['other'])) H.other = over.other;
+  if (touched('h', ['status'])) H.status = over.status;
+  if (touched('h', ['kids'])) { H.kids = over.kids; H.deps = over.deps; }
+  if (touched('h', ['charity'])) H.charity = over.charity;
+  if (touched('h', ['propertyTax'])) H.propertyTax = over.propertyTax;
+  if (touched('h', ['interest'])) {
+    const loans = homeLoansForTax();   // one home loan: its Form 1098 box; otherwise the total for the year
+    if (loans.length === 1) { ((state.tax[loans[0].key] = state.tax[loans[0].key] || {})[year] = state.tax[loans[0].key][year] || {}).interest = over.interest; delete H.interest; }
+    else H.interest = over.interest;
+  }
+  whatIfForget(year);
+  commit();
+  return changes.length;
+}
+
+/* ---------- reading a pay stub from a PDF's text (best effort; nothing but numbers and labels is kept) ---------- */
+const STUB_AMT = /^[($-]*\$?\d{1,3}(?:,\d{3})*\.\d{2}\)?-?\*{0,2}$|^[($-]*\$?\d+\.\d{2}\)?-?\*{0,2}$/;
+const STUB_DATE = /(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.? \d{1,2},? \d{4})/i;
+const STUB_DATE_ALL = new RegExp(STUB_DATE.source, 'gi');
+const STUB_LABELS = {
+  gross: /\bgross (pay|earnings|wages)\b|\btotal (gross|earnings|pay)\b|\bgross$|^gross\b|\bcurrent gross\b/,
+  net: /\bnet (pay|check|amount)\b|\bnet$|\btake.?home\b|\bcheck amount\b/,
+  deposit: /\bdirect deposit\b|\bnet (pay )?distribution\b|\bdeposit(ed)? (to|into)\b/,
+};
+/* What a row's label is: [block, kind] or a single field name; null when Ọrọ̀ doesn't know it. */
+function stubClassify(label, section, starred) {
+  const l = ' ' + String(label).toLowerCase().replace(/[^a-z0-9()/&+ ]+/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
+  if (/taxable|\bwages?\b|allowance|exemption|filing|marital|\bhours?\b|\brate\b|balance|accru|available|\bpto\b|vacation|sick/.test(l) && !/\bgross (pay|earnings|wages)\b/.test(l)) return null;
+  const er = /\b(employer|company|er|match|matching)\b/.test(l) || section === 'er';
+  if (/\b(oasdi|social security|soc sec|ss tax|fica ss|fica oasdi|ee social security)\b/.test(l) || /\bfica\b(?!.*med)/.test(l)) return er ? null : ['tax', 'ss'];
+  if (/\b(medicare|fica med|fica hi|med tax|fed med|medi)\b/.test(l)) return er ? null : ['tax', 'medicare'];
+  if (/\b(futa|suta|sui|unemployment)\b/.test(l)) return section === 'er' ? null : ['tax', 'other'];
+  if (/\b(fed(eral)?)\b.*\b(income|w ?\/ ?h|with ?holding|withhold|tax)\b|\b(fitw?|fwt|fit)\b|\bfed ?w ?h\b/.test(l)) return ['tax', 'federal'];
+  if (/\b(state|illinois|il)\b.*\b(income|w ?\/ ?h|with ?holding|withhold|tax)\b|\b(sitw?|swt|sit)\b|\bstate ?w ?h\b|^ [a-z]{2} (state )?(income tax|with ?holding|w ?\/ ?h)\b/.test(l) && !/\b(sdi|disability|unemployment)\b/.test(l)) return ['tax', 'state'];
+  if (/\b(local|city|county|sdi|pfl|pfml|occupational|school district|disability)\b.*\btax\b|\b(sdi|pfml)\b/.test(l)) return ['tax', 'other'];
+  if (STUB_LABELS.net.test(l.trim())) return 'net';
+  if (STUB_LABELS.gross.test(l.trim())) return 'gross';
+  if (/\broth\b/.test(l)) return er ? ['er', 'retire'] : ['post', 'roth'];
+  if (/\b(401 ?\(?k\)?|403 ?\(?b\)?|457 ?\(?b?\)?|tsp|retirement|pension|deferred comp)/.test(l)) {
+    if (/\bloan\b/.test(l)) return ['post', 'other'];
+    if (er) return ['er', 'retire'];
+    return /after.?tax|post.?tax/.test(l) ? ['post', 'stock'] : ['pre', 'retire'];
+  }
+  if (/\bhsa\b|health savings/.test(l)) return er ? ['er', 'hsa'] : ['pre', 'hsa'];
+  if (/\bfsa\b|flex(ible)? spend|dependent care|\bdcap\b|\bdcfsa\b|limited purpose/.test(l)) return ['pre', 'fsa'];
+  if (/\b(espp|essp)\b|stock (purchase|plan)|savings plan|savings bond/.test(l)) return ['post', 'stock'];
+  if (/\b(medical|dental|vision|health)\b/.test(l)) return er && section === 'er' ? ['er', 'other'] : /after.?tax|post.?tax/.test(l) || section === 'post' ? ['post', 'other'] : ['pre', 'premium'];
+  if (/\b(life|ad&d|add|ltd|std|disability|accident|critical illness|legal|hospital)\b/.test(l)) return er && section === 'er' ? ['er', 'other'] : /pre.?tax/.test(l) || section === 'pre' || starred ? ['pre', 'other'] : ['post', 'life'];
+  if (/^ (total|subtotal|ytd|year|current|this period|amount|description|earnings|deductions|taxes|withholdings?|net|gross|regular|salary|overtime|bonus|holiday|commission|page)\b/.test(l)) return null;
+  if (section === 'pre') return ['pre', 'other'];
+  if (section === 'post') return ['post', 'other'];
+  if (section === 'tax' && /\btax\b/.test(l)) return ['tax', 'other'];
+  if (section === 'ded') return starred || /pre.?tax|pretax|\bs125\b|section 125/.test(l) ? ['pre', 'other'] : ['post', 'other'];
+  return null;
+}
+/* A heading that says which part of the stub the next rows are in */
+function stubSection(text) {
+  const l = text.toLowerCase();
+  if (/employer (paid|contribution|benefit|match)|company (paid|contribution)|other benefits and/.test(l)) return 'er';
+  if (/pre.?tax (deduction|benefit)|before.?tax deduction/.test(l)) return 'pre';
+  if (/post.?tax deduction|after.?tax deduction/.test(l)) return 'post';
+  if (/^(employee )?tax(es)?( withheld| deductions?)?$|withholdings?|statutory|employee taxes/.test(l.trim())) return 'tax';
+  if (/^(employee |voluntary |other )?deductions?( from gross)?$|^other$/.test(l.trim())) return 'ded';
+  if (/^(earnings|hours and earnings|pay|employee gross earnings)$/.test(l.trim())) return 'earn';
+  if (/net pay distribution|payment information|direct deposit (distribution|information)/.test(l)) return 'dist';
+  return null;
+}
+/* Do these lines look like a pay stub? Pay before tax, take-home pay and a tax taken out. */
+function isPayStubLines(lines) {
+  const t = lines.join('\n').toLowerCase();
+  return /\bgross (pay|earnings|wages)\b|\btotal earnings\b|\btotal gross\b/.test(t) && /\bnet (pay|check|amount)\b/.test(t)
+    && /federal income tax|fed(eral)? (w ?\/ ?h|with ?holding|tax)|\bfitw?\b|social security|\boasdi\b|\bmedicare\b|fica/.test(t);
+}
+/* Lines from the PDF reader (40-parse.js; each with its words and where they sit across the page) → the boxes of a
+   stub. Amounts go to "this paycheck" or "year to date" by the column heading they sit under when the stub has them
+   (Current, This Period, YTD…); otherwise the first amount after a label is this paycheck and the next is year to date. */
+function parsePayStub(lines) {
+  const text = lines.join('\n');
+  const out = { gross: {}, net: {}, pre: [], tax: [], post: [], er: [], employer: '', date: '', from: '', to: '', deposit: '', found: 0, noText: text.replace(/\s/g, '').length < 20 };
+  if (out.noText) return out;
+  const pos = lines.pos || [];
+  // each line as words and amounts with where they sit; a text run is split on spaces, each word placed by its share of the run
+  const rows = lines.map((line, i) => {
+    const toks = [], items = [];
+    for (const it of pos[i] && pos[i].length ? pos[i] : [{ x: 0, w: line.length, s: line }]) {   // pieces that touch are one run (some PDFs draw a number a few characters at a time)
+      const last = items[items.length - 1];
+      if (last && it.x - (last.x + last.w) <= (it.fs || 10) * 0.15) { last.s += it.s; last.w = Math.max(last.w, it.x + (it.w || 0) - last.x); }
+      else items.push({ x: it.x, w: it.w || 0, s: String(it.s) });
+    }
+    for (const it of items) {
+      // "6 6 0 . 3 3" (an amount drawn one character at a time) is put back together
+      const str = String(it.s).replace(/(?:^|(?<=\s))[-$(]?\d(?: [\d,.)*-]){3,}(?=\s|$)/g, m => (STUB_AMT.test(m.replace(/ /g, '')) ? m.replace(/ /g, '') : m)), per = str.length ? (it.w || 0) / str.length : 0;
+      for (const m of str.matchAll(/\S+/g)) toks.push({ s: m[0], x0: it.x + m.index * per, x1: it.x + (m.index + m[0].length) * per });
+    }
+    return toks.filter(t => t.s !== '$').map(t => (STUB_AMT.test(t.s) ? { ...t, amt: stubNum(t.s), star: /\*$/.test(t.s) } : t));
+  });
+  // Column headings: where "this paycheck" and "year to date" amounts sit. Each table has its own, so an amount goes
+  // by the headings on the nearest heading line above it (a line of two blocks side by side carries both blocks').
+  const word = t => (t?.s || '').toLowerCase().replace(/[^a-z/-]/g, '');
+  const lineHeads = rows.map(toks => {
+    const hs = [];
+    if (toks.some(t => t.amt != null)) return hs;
+    for (let i = 0; i < toks.length; i++) {
+      const one = word(toks[i]), next = word(toks[i + 1]), three = `${one} ${next} ${word(toks[i + 2])}`;
+      if (/^(hours?|hrs|units?|hrs\/units|rate|qty)$/.test(one)) hs.push({ col: 'x', x0: (/^(ytd|current)$/.test(word(toks[i - 1])) ? toks[i - 1] : toks[i]).x0, x1: toks[i].x1 });   // hours and rates: not money
+      else if (/^(ytd|y-t-d|year-to-date|current)$/.test(one) && /^(hours?|hrs|units?)$/.test(next)) continue;   // "YTD Hours": taken with the next word
+      else if (/^(ytd|y-t-d|year-to-date)$/.test(one)) hs.push({ col: 'ytd', x0: toks[i].x0, x1: toks[i].x1 });
+      else if (three === 'year to date' || three === 'total to date') hs.push({ col: 'ytd', x0: toks[i].x0, x1: toks[i + 2].x1 });
+      else if (one === 'current' || one === 'amount') hs.push({ col: 'cur', x0: toks[i].x0, x1: toks[i].x1 });
+      else if (`${one} ${next}` === 'this period') hs.push({ col: 'cur', x0: toks[i].x0, x1: toks[i + 1].x1 });
+    }
+    return hs.some(h => h.col !== 'x') ? hs : [];
+  });
+  let heads = [], useCols = false;
+  const colOf = t => {   // the heading an amount sits under (right edges line up, or it overlaps the heading)
+    let best = null, bd = 1e9;
+    for (const h of heads) { const d = Math.min(Math.abs(h.x1 - t.x1), Math.abs((h.x0 + h.x1) / 2 - (t.x0 + t.x1) / 2)); if (d < bd) { bd = d; best = h; } }
+    return best && bd <= 40 ? best.col : null;   // 'cur', 'ytd', or 'x' for a column of hours or rates
+  };
+  const seen = {};
+  const put = (what, label, cur, ytd) => {
+    if (cur == null && ytd == null) return;
+    if (typeof what === 'string') { const g = out[what]; if (g.cur == null && cur != null) g.cur = cur; if (g.ytd == null && ytd != null) g.ytd = ytd; return; }
+    const [block, kind] = what, clean = stubScrub(label), key = `${block}:${kind}:${clean.toLowerCase()}`;
+    const single = block === 'tax' && kind !== 'other';   // one row each for federal, Social Security, Medicare and state
+    const row = seen[single ? `${block}:${kind}` : key];
+    if (row) { if (row.cur == null && cur != null) row.cur = cur; if (row.ytd == null && ytd != null) row.ytd = ytd; return; }
+    const r = { kind, label: clean || STUB_BLOCKS[block][kind], cur: cur ?? null, ytd: ytd ?? null };
+    out[block].push(r); seen[single ? `${block}:${kind}` : key] = r;
+  };
+  let section = null, deposited = null, alone = null, aloneLabel = '';
+  rows.forEach((toks, li) => {
+    const line = lines[li].trim(); if (!line) return;
+    if (lineHeads[li].length) { heads = lineHeads[li]; useCols = !!lines.pos && heads.some(h => h.col === 'cur') && heads.some(h => h.col === 'ytd'); }
+    if (!toks.some(t => t.amt != null)) {
+      const s = stubSection(line.replace(/\s{2,}.*$/, '')) || (line.length < 40 ? stubSection(line) : null); if (s) section = s;
+    }
+    // a summary across the page: "Gross Pay  Pre Tax Deductions  Employee Taxes  Post Tax Deductions  Net Pay" over "Current …" and "YTD …"
+    if (/gross/i.test(line) && /net pay/i.test(line) && !toks.some(t => t.amt != null)) {
+      const at = re => { const i = toks.findIndex((t, j) => re.test(`${t.s} ${toks[j + 1]?.s || ''}`)); return i < 0 ? null : toks[i + 1].x1; };
+      const gx = lines.pos ? at(/^gross (pay|earnings|wages)$/i) : null, nx2 = lines.pos ? at(/^net pay$/i) : null;
+      const near = (am, x) => am.slice().sort((a, b) => Math.abs(a.x1 - x) - Math.abs(b.x1 - x))[0];
+      for (const [k, f] of [[1, 'cur'], [2, 'ytd'], [3, 'ytd']]) {
+        const nx = rows[li + k] || [], first = (lines[li + k] || '').trim().toLowerCase(), am = nx.filter(t => t.amt != null);
+        if (am.length >= 2 && (f === 'cur' ? /^(current|this period)/.test(first) : /^(ytd|year)/.test(first))) {
+          if (out.gross[f] == null) out.gross[f] = (gx != null ? near(am, gx) : am[0]).amt;
+          if (out.net[f] == null) out.net[f] = (nx2 != null ? near(am, nx2) : am[am.length - 1]).amt;
+        }
+      }
+      return;
+    }
+    if (/^(current|this period|ytd|year to date)\b/i.test(line) && /gross/i.test((lines[li - 1] || '') + (lines[li - 2] || '')) && /net pay/i.test((lines[li - 1] || '') + (lines[li - 2] || ''))) return;
+    // label, then its amounts; a line can hold two blocks side by side. A line of amounts alone belongs to the pay
+    // before tax or take-home named alone on the line above ("NET PAY" over "3,045.61   56,866.59").
+    let words = toks.length && toks.every(t => t.amt != null) && ['gross', 'net'].includes(alone) ? [aloneLabel] : [];
+    if (toks.some(t => t.amt != null)) alone = null;
+    else if (!lineHeads[li].length) { alone = stubClassify(line.replace(/[:.\s]+$/, ''), null, false); aloneLabel = line; }   // a line of column headings between the two doesn't break it
+    for (let i = 0; i < toks.length;) {
+      if (toks[i].amt == null) { words.push(toks[i].s); i++; continue; }
+      const nums = []; while (i < toks.length && toks[i].amt != null) nums.push(toks[i++]);
+      const label = words.join(' ').replace(/[:.\s]+$/, ''); words = [];
+      if (!label) continue;
+      if (!/health|hsa|spending|fsa|401|403|457|retire|plan/i.test(label) && (section === 'dist' || STUB_LABELS.deposit.test(label.toLowerCase()) || /\b(checking|savings|account (number|no|#))\b/i.test(label))) {
+        if (/\bdirect deposit\b|net (pay )?distribution/i.test(label) && section !== 'dist') deposited = deposited ?? nums[0].amt;   // take-home, if the stub never says "Net Pay"
+        continue;
+      }
+      const what = stubClassify(label, section, nums.some(n => n.star)); if (!what) continue;
+      let cur = null, ytd = null;
+      if (useCols) {
+        for (const n of nums) { const c = colOf(n); if (c === 'cur' && cur == null) cur = n.amt; else if (c === 'ytd' && ytd == null) ytd = n.amt; }
+        if (cur == null && ytd == null) { cur = nums[nums.length > 2 ? nums.length - 2 : 0].amt; ytd = nums.length > 1 ? nums[nums.length - 1].amt : null; }
+      } else if (nums.length === 1) cur = nums[0].amt;
+      else if (what === 'gross' && nums.length === 4 && Math.abs(nums[0].amt * nums[1].amt - nums[2].amt) > nums[2].amt * 0.02 && nums[2].amt >= nums[0].amt && nums[3].amt >= nums[1].amt) { cur = nums[1].amt; ytd = nums[3].amt; }   // hours, this period, hours to date, year to date
+      else { cur = nums[nums.length - 2].amt; ytd = nums[nums.length - 1].amt; }
+      if (ytd != null && cur != null && ytd < cur && !useCols) [cur, ytd] = [ytd, cur];   // year to date is never the smaller one
+      put(what, label, cur, ytd);
+    }
+  });
+  if (out.net.cur == null && deposited != null) out.net.cur = deposited;
+  // the account the pay went to: its last four digits and nothing more
+  for (const line of lines) {
+    if (out.deposit || !/\b(checking|savings|direct deposit|deposit|account)\b/i.test(line) || /health savings|hsa|spending|fsa/i.test(line)) continue;
+    const acct = /[x*•#]{2,}[-\s]?(\d{2,})\b|\baccount(?: number| no\.?| #)?:?\s*[x*•#-]*(\d{4,})\b/i.exec(line);
+    if (acct) out.deposit = stubEnding(acct[1] || acct[2]);
+  }
+  // dates: "Pay Date: 11/20/2026", "Period Beginning 11/02/2026", or a row of headings over a row of dates
+  const iso = s => parseDateFlexible(s) || '';
+  const DATE_KEYS = [['date', /\b(pay|check|payment|advice|paid)\s*date\b|\bdate paid\b|\bpay day\b/i], ['from', /\b(period|pay)\s*(begin(ning)?|start|beg)\b|\bbegin(ning)? date\b|\bstart date\b/i], ['to', /\b(period|pay)\s*(end(ing)?|thru|through)\b|\bend(ing)? date\b/i]];
+  lines.forEach((line, li) => {
+    for (const [k, re] of DATE_KEYS) {
+      if (out[k]) continue;
+      const m = re.exec(line); if (!m) continue;
+      const after = STUB_DATE.exec(line.slice(m.index + m[0].length));
+      if (after && !/[a-z]{4,}/i.test(line.slice(m.index + m[0].length, m.index + m[0].length + after.index).replace(/date|end|ending|beginning|begin|start|period/gi, ''))) { out[k] = iso(after[1]); continue; }
+      // headings on this line, dates on the next: the date in the same place along the line
+      const found = DATE_KEYS.map(([kk, r2]) => ({ kk, at: line.search(r2) })).filter(x => x.at >= 0).sort((a, b) => a.at - b.at), ds = ((lines[li + 1] || '').match(STUB_DATE_ALL) || []);
+      const idx = found.findIndex(x => x.kk === k);
+      if (!STUB_DATE.test(line) && ds.length && ds.length >= found.length && idx >= 0) out[k] = iso(ds[idx + (ds.length - found.length)]);
+    }
+    const range = /\b(?:pay )?period:?\s*(\S+(?: \d{1,2},? \d{4})?)\s*(?:-|–|—|to|through|thru)\s*(\S+(?: \d{1,2},? \d{4})?)/i.exec(line);
+    if (range && iso(range[1]) && iso(range[2])) { if (!out.from) out.from = iso(range[1]); if (!out.to) out.to = iso(range[2]); }
+  });
+  // the employer: a line that says so, else the first line near the top that reads like a company's name
+  const emp = /\b(?:employer|company)(?: name)?\s*[:\-]\s*([^\n]+?)(?:\s{3,}|$)/im.exec(text);
+  const co = lines.slice(0, 14).map(l => l.split(/\s{3,}/)[0].trim()).filter(l => l.length >= 5 && /\S \S/.test(l)).find(l => /\b(inc|llc|l\.l\.c|corp|corporation|company|co|ltd|lp|llp|pllc|pc|group|associates|partners|university|college|hospital|schools?|district|foundation|bank)\b\.?,?$/i.test(l) && l.length <= 60 && !STUB_DATE.test(l));
+  out.employer = stubScrub((emp ? emp[1] : co) || '');
+  for (const b of ['pre', 'tax', 'post', 'er']) out[b] = out[b].filter(r => r.cur != null || r.ytd != null);
+  out.found = [out.gross.cur, out.net.cur, ...['pre', 'tax', 'post', 'er'].flatMap(b => out[b].map(r => r.cur ?? r.ytd))].filter(v => v != null).length;
+  return out;
 }
 
 /* Charts are drawn at the host's real pixel width after each render, so text stays legible on any screen.
@@ -2571,7 +3307,7 @@ function loadPdfJs() {
 async function pdfToLines(buffer) {
   const pdfjs = await loadPdfJs();
   const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer), isEvalSupported: false, disableFontFace: true, useSystemFonts: false }).promise;
-  const lines = [];
+  const lines = [], pos = [];   // pos: for each line, its runs of text and where they sit (pay stubs' columns, 29-paystubs.js)
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
     const tc = await page.getTextContent();
@@ -2591,9 +3327,10 @@ async function pdfToLines(buffer) {
         if (prevEnd != null) text += (it.x - prevEnd > it.fs * 1.2) ? '   ' : (it.x - prevEnd > it.fs * 0.15 ? ' ' : '');
         text += it.s; prevEnd = it.x + it.w;
       }
-      lines.push(text.replace(/\s+$/, ''));
+      lines.push(text.replace(/\s+$/, '')); pos.push(r.items.map(it => ({ x: it.x, w: it.w, s: it.s, fs: it.fs })));
     }
   }
+  lines.pos = pos;
   return lines;
 }
 function statementPeriod(text) {
@@ -3014,6 +3751,11 @@ async function handleImportFile(file, opts = {}) {
   try {
     if (ext === 'pdf') {
       const lines = await pdfToLines(await readFileAsBuffer(file));
+      if (isPayStubLines(lines)) {   // a pay stub adds no transactions: offer Taxes › Pay stubs instead (29-paystubs.js, 61-paystubs.js)
+        if (opts.silent) throw new Error('This looks like a pay stub. It adds no transactions: open it in Taxes › Pay stubs instead.');
+        IMP.source = 'paystub'; IMP.stubLines = lines; IMP.step = 'paystub';
+        return renderImport();
+      }
       if (isPayPalPdf(lines)) {
         IMP.source = 'paypal'; IMP.kind = 'paypal'; IMP.ppRows = parsePayPalPdf(lines); IMP.step = 'paypal';
         if (!IMP.ppRows.length) throw new Error('Ọrọ̀ found a PayPal statement but couldn’t read any payments from it.');
@@ -3231,6 +3973,7 @@ function renderImport() {
   if (s === 'positions') return renderPositionsStep(box);
   if (s === 'batch') return renderBatchStep(box);
   if (s === 'paypal') return renderPayPalStep(box);
+  if (s === 'paystub') return renderPayStubOffer(box);
 }
 function importFiles(files) {
   if (!files.length) return;
@@ -4614,7 +5357,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '6e9c21f';
+const ORO_BUILD = '7b97092';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -4884,11 +5627,11 @@ function drillFlow(kind, mk = thisMonth()) {
 }
 /* Kept = money in − spent, each of which opens in turn. */
 function drillKept(mk = thisMonth()) {
-  const f = flowSummary(lensed(txInMonth(mk))), M = monthLabel(mk);
+  const f = flowSummary(lensed(txInMonth(mk))), M = monthLabel(mk), K = keptWithPayroll(mk), pay = K.savedThroughPay > 0;
   const row = (label, v, d, cls = '') => `<tr class="${cls}"><th scope="row">${d ? `<button class="linklike" data-drill="${d}|${mk}">${label}</button>` : label}</th><td class="num">${money(v)}</td></tr>`;
-  openModal({ title: `Kept in ${M}`, id: 'drill', body: `<p class="drill-sub">What came in, less what went out.</p>
-    <table class="ledger compact sched drill-sum"><tbody>${row('Money in', f.income, 'in')}${row('Spent', -f.spending, 'out')}${row('Kept', f.net, '', 'net')}</tbody></table>
-    <p class="muted small drill-note">${isFinite(f.rate) ? `That is ${pct(f.rate, 0)} of what came in. ` : ''}${TRANSFER_NOTE}</p>`, actions: '<button class="btn primary" data-close>Done</button>' });
+  openModal({ title: `Kept in ${M}`, id: 'drill', body: `<p class="drill-sub">What came in, less what went out${pay ? ', plus what was saved through pay before it reached the bank' : ''}.</p>
+    <table class="ledger compact sched drill-sum"><tbody>${row('Money in', f.income, 'in')}${row('Spent', -f.spending, 'out')}${pay ? `<tr class="drill-pay"><th scope="row"><a href="#/taxes" data-close>Saved through pay</a> <span class="muted small">${esc(payrollKindsText(K.byKind))}</span></th><td class="num">${money(K.savedThroughPay)}</td></tr>` : ''}${row('Kept', K.kept, '', 'net')}</tbody></table>
+    <p class="muted small drill-note">${isFinite(K.rate) ? `That is ${pct(K.rate, 0)} of what came in${pay ? ' (counting what was saved through pay)' : ''}. ` : ''}${TRANSFER_NOTE}</p>`, actions: '<button class="btn primary" data-close>Done</button>' });
 }
 /* One slice of "Where it went": the categories of a group that have spending this month. */
 function drillGroup(label, mk = thisMonth()) {
@@ -5020,9 +5763,10 @@ function whatMatters(mk = thisMonth()) {
   if (cur) for (const a of attentionItems()) if (a.k === 'off' && /Cash is projected/.test(a.text)) add('off', 5000, a.text + '.', { go: a.go });
 
   // ---- going well
-  if (f.income > 0 && f.net > 0) {
-    const xs = [1, 2, 3].map(i => flowSummary(lensed(txInMonth(addMonths(mk, -i))))), inc = sum(xs.map(x => x.income)), usual = inc > 0 ? (inc - sum(xs.map(x => x.spending))) / inc : NaN;
-    add('well', 900, `Kept ${sm(f.net)} ${cur ? 'so far this month' : `in ${M}`}, ${pct(f.rate, 0)} of what came in${!cur && isFinite(usual) && f.rate > usual + 0.03 ? `, better than the usual ${pct(usual, 0)}` : ''}.`, { drill: `kept|${mk}` });
+  const K = keptWithPayroll(mk);   // counts what was saved through pay, when there are pay stubs in the month
+  if (K.moneyIn + K.savedThroughPay > 0 && K.kept > 0) {
+    const xs = [1, 2, 3].map(i => keptWithPayroll(addMonths(mk, -i))), base = sum(xs.map(x => x.moneyIn + x.savedThroughPay)), usual = base > 0 ? sum(xs.map(x => x.kept)) / base : NaN;
+    add('well', 900, `Kept ${sm(K.kept)} ${cur ? 'so far this month' : `in ${M}`}${K.savedThroughPay > 0 ? `, counting ${sm(K.savedThroughPay)} saved through pay:` : ','} ${pct(K.rate, 0)} of what came in${!cur && isFinite(usual) && K.rate > usual + 0.03 ? `, better than the usual ${pct(usual, 0)}` : ''}.`, { drill: `kept|${mk}` });
   }
   const billCats = new Set(state.recurring.map(r => r.categoryId));
   const flex = state.categories.filter(c => c.kind === 'expense' && c.budget > 0 && c.period !== 'year' && !c.rental && !billCats.has(c.id)).map(c => budgetView(c, mk));
@@ -5108,7 +5852,7 @@ function insights(mk = thisMonth(), opts = {}) {
   if (isCur) for (const u of upcoming(35).filter(u => u.amount <= -1000 && !/mortgage|rent\b|card payment/i.test(u.name))) out.push({ tone: 'info', w: -u.amount / 3, go: '#/cashflow', text: `${u.name} of ${money(-u.amount, { cents: false })} is due ${dateLabel(u.date)}.` });
   for (const g of state.goals) { const p = goalProgress(g); if (p.past) out.push({ tone: 'warn', w: 450, go: '#/planning', text: `${g.name} is past its date (${dateLabel(g.targetDate, true)}) with ${money(p.remaining, { cents: false })} still to go.` }); else if (p.status === 'behind') out.push({ tone: 'warn', w: 400, go: '#/planning', text: `${g.name} needs ${money(p.needed, { cents: false })} a month to hit ${dateLabel(g.targetDate, true)}; you’re putting in ${money(g.monthly, { cents: false })}.` }); else if (p.status === 'done') out.push({ tone: 'good', w: 300, go: '#/planning', text: `${g.name} is fully funded. Nice work.` }); }
   for (const d of detectRepeating().filter(d => d.isNew)) out.push({ tone: 'info', w: d.monthly * 6, go: '#/cashflow', text: `New subscription: ${d.payee}, ${money(d.monthly)} a month (${money(d.monthly * 12, { cents: false })} a year).` });
-  const f = flowSummary(txInMonth(mk)), avgRate = (() => { const xs = [1, 2, 3].map(i => flowSummary(txInMonth(addMonths(mk, -i)))); const inc = sum(xs.map(x => x.income)), sp = sum(xs.map(x => x.spending)); return inc ? (inc - sp) / inc : NaN; })();
+  const f = keptWithPayroll(mk, { lens: false }), avgRate = (() => { const xs = [1, 2, 3].map(i => keptWithPayroll(addMonths(mk, -i), { lens: false })); const base = sum(xs.map(x => x.moneyIn + x.savedThroughPay)); return base ? sum(xs.map(x => x.kept)) / base : NaN; })();
   if (!isCur && isFinite(f.rate) && isFinite(avgRate) && Math.abs(f.rate - avgRate) > 0.05) out.push({ tone: f.rate > avgRate ? 'good' : 'warn', w: 500, drill: `kept|${mk}`, text: `You kept ${pct(f.rate, 0)} of income, ${f.rate > avgRate ? 'better than' : 'below'} the recent ${pct(avgRate, 0)}.` });
   return out.sort((a, b) => b.w - a.w).slice(0, opts.limit || 5);
 }
@@ -5168,7 +5912,8 @@ function overviewDetailed(sub) {
   const up = upcoming(14, true), att = attentionItems();
   const planned = sum(state.categories.filter(c => c.kind === 'expense').map(c => c.period === 'year' ? (c.budget || 0) / 12 : (c.budget || 0)));
   const spendSeries = monthlySeries(m => flowSummary(lensed(txInMonth(m))).spending);
-  const keptSeries = monthlySeries(m => flowSummary(lensed(txInMonth(m))).net);
+  const K = keptWithPayroll(mk), pay = K.savedThroughPay > 0;   // what was saved through pay (on pay stubs) never reaches the bank, so Kept adds it
+  const keptSeries = monthlySeries(m => keptWithPayroll(m).kept);
   const inSeries = monthlySeries(m => flowSummary(lensed(txInMonth(m))).income), lastIn = inSeries[inSeries.length - 2] || 0;
   const inNW = id => { const a = acctById(id); return a && nwIncludes(a, true); };
   const cashSeries = monthlySeries(m => { const s = state.snapshots[m] || {}; return sum(Object.entries(s).filter(([id]) => inNW(id) && ACCOUNT_TYPES[acctById(id)?.type]?.bucket === 'cash').map(([, v]) => v)); });
@@ -5201,10 +5946,11 @@ function overviewDetailed(sub) {
   ${briefPanel(mk)}
 
   <section class="kpis-row">
-    <div class="month-strip" role="group" aria-label="This month: money in, less what was spent, is what was kept">
+    <div class="month-strip${pay ? ' has-pay' : ''}" role="group" aria-label="This month: money in, less what was spent${pay ? ', plus what was saved through pay,' : ''} is what was kept">
     <div class="kpi kpi-in" data-drill="in|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Money in this month</span><span class="kpi-value num ${f.income > 0 ? 'pos' : ''}">${money(f.income, { cents: false })}</span><span class="kpi-sub">${lastIn ? `${money(lastIn, { cents: false })} in ${MONTHS[+prev.slice(5) - 1]}` : 'Paychecks and other money coming in'}</span>${sparkline(inSeries, { color: 'var(--pos)' })}</div>
     <div class="kpi kpi-out" data-drill="out|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Spent in ${MONTHS[new Date().getMonth()]}</span><span class="kpi-value num">${money(f.spending, { cents: false })}</span><span class="kpi-sub">${lensActive() && UI.lens !== 'nokids' ? `${esc(lensLabel())}’s share of the spending` : planned ? `of ${money(planned, { cents: false })} planned · ${pct(f.spending / planned, 0)}` : 'No budget set'}</span>${sparkline(spendSeries, { color: 'var(--c4)' })}</div>
-    <div class="kpi kpi-kept" data-drill="kept|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Kept this month</span><span class="kpi-value num ${signClass(f.net)}">${money(f.net, { cents: false })}</span><span class="kpi-sub">${isFinite(f.rate) ? `${pct(f.rate, 0)} of income` : 'No income yet'}</span>${sparkline(keptSeries, { color: 'var(--pos)' })}</div>
+    ${pay ? `<a class="kpi kpi-pay" href="#/taxes" title="From your pay stubs: open Taxes"><span class="kpi-label">Saved through pay</span><span class="kpi-value num pos">${money(K.savedThroughPay, { cents: false })}</span><span class="kpi-sub">${esc(payrollKindsText(K.byKind))}</span></a>` : ''}
+    <div class="kpi kpi-kept" data-drill="kept|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Kept this month</span><span class="kpi-value num ${signClass(K.kept)}">${money(K.kept, { cents: false })}</span><span class="kpi-sub">${isFinite(K.rate) ? `${pct(K.rate, 0)} of income` : 'No income yet'}</span>${sparkline(keptSeries, { color: 'var(--pos)' })}</div>
     </div>
     <a class="kpi kpi-bal" href="#/cashflow"><span class="kpi-label">Cash on hand</span><span class="kpi-value num">${money(t.cash, { cents: false })}</span><span class="kpi-sub">${state.recurring.length ? `Low of ${money(fc.low.y, { cents: false })} on ${dateLabel(fc.low.x)}` : 'Add bills to forecast'}</span>${sparkline(cashSeries, { color: 'var(--c2)' })}</a>
     <a class="kpi kpi-bal" href="#/investments"><span class="kpi-label">Investments</span><span class="kpi-value num">${money(t.invest, { cents: false })}</span><span class="kpi-sub">${(() => { const p = invSeries[invSeries.length - 2]; return p ? `${money(t.invest - p, { cents: false, sign: true })} this month` : '&nbsp;'; })()}</span>${sparkline(invSeries, { color: 'var(--c1)' })}</a>
@@ -5261,7 +6007,7 @@ function overviewSimple(sub) {
   <section class="simple-cards">
     <div class="s-card"><span class="s-label">Came in</span><span class="s-value num">${money(f.income, { cents: false })}</span><span class="s-sub">${MONTHS[+mk.slice(5) - 1]} so far</span></div>
     <div class="s-card"><span class="s-label">Went out</span><span class="s-value num">${money(f.spending, { cents: false })}</span><span class="s-sub">${planned ? `${pct(Math.min(9.99, f.spending / planned), 0)} of the plan` : '&nbsp;'}</span></div>
-    <div class="s-card accent"><span class="s-label">Kept</span><span class="s-value num ${signClass(f.net)}">${money(f.net, { cents: false })}</span><span class="s-sub">${isFinite(f.rate) ? `${pct(f.rate, 0)} of what came in` : '&nbsp;'}</span></div>
+    ${(() => { const K = keptWithPayroll(mk); return `<div class="s-card accent"><span class="s-label">Kept</span><span class="s-value num ${signClass(K.kept)}">${money(K.kept, { cents: false })}</span><span class="s-sub">${isFinite(K.rate) ? `${pct(K.rate, 0)} of what came in${K.savedThroughPay > 0 ? `, counting ${money(K.savedThroughPay, { cents: false })} saved through pay` : ''}` : '&nbsp;'}</span></div>`; })()}
   </section>
   ${briefPanel(mk)}
   <div class="cols">
@@ -5699,6 +6445,10 @@ VIEWS.review = p => {
   const avg3 = [1, 2, 3].map(i => flowSummary(txInMonth(addMonths(mk, -i))));
   const avgN = Math.max(1, [1, 2, 3].filter(i => addMonths(mk, -i) >= firstTxMonth()).length);   // fewer than three earlier months: the average of the ones there are
   const avgSpend = sum(avg3.map(x => x.spending)) / avgN, avgIncome = sum(avg3.map(x => x.income)) / avgN;
+  // Saved through pay (401(k), HSA… on pay stubs) never reaches the bank, so it's added to what was left over
+  const K = keptWithPayroll(mk, { lens: false }), Kp = keptWithPayroll(prev, { lens: false }), avgPay = sum([1, 2, 3].map(i => keptWithPayroll(addMonths(mk, -i), { lens: false }).savedThroughPay)) / avgN;
+  const pay = K.savedThroughPay > 0 || Kp.savedThroughPay > 0 || avgPay > 0;
+  const payCols = (saved, kept, cls = '') => (pay ? `<td class="num hide-sm ${cls}">${money(saved, { cents: false })}</td><td class="num ${cls}">${money(kept, { cents: false })}</td>` : '');
   const acts = categoryActuals(txs);
   const exp = state.categories.filter(c => c.kind === 'expense');
   const monthly = exp.filter(c => c.period !== 'year' && c.budget > 0).map(c => { const v = budgetView(c, mk); return { c, a: v.actual, b: round2(v.budget + (v.carry || 0)), d: Math.abs(v.available), left: v.available }; });
@@ -5726,12 +6476,13 @@ VIEWS.review = p => {
   return pageHead(`${monthLabel(mk)} review`, rv.completedAt ? `Reviewed ${dateLabel(rv.completedAt, true)}` : 'Not reviewed yet',
     `<label class="field inline"><span class="sr">Month</span><select data-filter="m">${months.map(m => `<option value="${m}" ${m === mk ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}</select></label><button class="btn" data-act="money-date" data-mk="${mk}">Present as Money date</button><button class="btn ghost" data-act="print">Print</button>`) + `
   <section class="flows"><table class="ledger flows-table">
-    <thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Left over</th><th class="num">Savings rate</th></tr></thead>
+    <thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num${pay ? ' hide-sm' : ''}">Left over</th>${pay ? '<th class="num hide-sm">Saved through pay</th><th class="num">Kept</th>' : ''}<th class="num">Savings rate</th></tr></thead>
     <tbody>
-      <tr><th scope="row">${MONTHS[+mk.slice(5) - 1]}</th><td class="num">${money(f.income, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td><td class="num ${signClass(f.net)}">${money(f.net, { cents: false })}</td><td class="num">${pct(f.rate, 0)}</td></tr>
-      <tr><th scope="row">${MONTHS[+prev.slice(5) - 1]}</th><td class="num muted">${money(fp.income, { cents: false })}</td><td class="num muted">${money(fp.spending, { cents: false })}</td><td class="num muted">${money(fp.net, { cents: false })}</td><td class="num muted">${pct(fp.rate, 0)}</td></tr>
-      <tr><th scope="row">${avgN < 3 ? (avgN === 1 ? 'The month before' : `Prior ${avgN}-month average`) : 'Prior 3-month average'}</th><td class="num muted">${money(avgIncome, { cents: false })}</td><td class="num muted">${money(avgSpend, { cents: false })}</td><td class="num muted">${money(avgIncome - avgSpend, { cents: false })}</td><td class="num muted">${avgIncome ? pct((avgIncome - avgSpend) / avgIncome, 0) : '—'}</td></tr>
-    </tbody></table></section>
+      <tr><th scope="row">${MONTHS[+mk.slice(5) - 1]}</th><td class="num">${money(f.income, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td><td class="num ${signClass(f.net)}${pay ? ' hide-sm' : ''}">${money(f.net, { cents: false })}</td>${payCols(K.savedThroughPay, K.kept)}<td class="num">${pct(pay ? K.rate : f.rate, 0)}</td></tr>
+      <tr><th scope="row">${MONTHS[+prev.slice(5) - 1]}</th><td class="num muted">${money(fp.income, { cents: false })}</td><td class="num muted">${money(fp.spending, { cents: false })}</td><td class="num muted${pay ? ' hide-sm' : ''}">${money(fp.net, { cents: false })}</td>${payCols(Kp.savedThroughPay, Kp.kept, 'muted')}<td class="num muted">${pct(pay ? Kp.rate : fp.rate, 0)}</td></tr>
+      <tr><th scope="row">${avgN < 3 ? (avgN === 1 ? 'The month before' : `Prior ${avgN}-month average`) : 'Prior 3-month average'}</th><td class="num muted">${money(avgIncome, { cents: false })}</td><td class="num muted">${money(avgSpend, { cents: false })}</td><td class="num muted${pay ? ' hide-sm' : ''}">${money(avgIncome - avgSpend, { cents: false })}</td>${payCols(avgPay, avgIncome - avgSpend + avgPay, 'muted')}<td class="num muted">${avgIncome + avgPay ? pct((avgIncome - avgSpend + avgPay) / (avgIncome + avgPay), 0) : '—'}</td></tr>
+    </tbody></table>
+    ${K.savedThroughPay > 0 ? `<p class="muted small pay-saved">Kept counts the ${money(K.savedThroughPay, { cents: false })} saved through pay in ${MONTHS[+mk.slice(5) - 1]} (${esc(payrollKindsText(K.byKind))}): it never reached the bank, so it isn’t in Money in.${K.employer ? ` Your employer put in ${money(K.employer, { cents: false })} more.` : ''}</p>` : ''}</section>
 
   <div class="cols">
     <section class="panel">
@@ -5740,7 +6491,7 @@ VIEWS.review = p => {
         <tr><th scope="row">End of ${MONTHS[+prev.slice(5) - 1]}</th><td class="num">${money(startNW, { cents: false })}</td></tr>
         ${bucketChange.filter(x => Math.abs(x.change) >= 1).map(x => `<tr><td class="indent">${esc(x.b.label)}</td><td class="num ${signClass(x.change)}">${money(x.change, { cents: false, sign: true })}</td></tr>`).join('')}
         <tr><th scope="row">${mk === thisMonth() ? 'Today' : `End of ${MONTHS[+mk.slice(5) - 1]}`}</th><td class="num total double">${money(endNW, { cents: false })}</td></tr></tbody></table>
-        <p class="muted small">Each line is its effect on net worth. Of the ${money(endNW - startNW, { cents: false, sign: true })} change, ${money(f.net, { cents: false, sign: true })} came from income left over after spending; the rest is market moves, loan paydown and revaluations.</p>`
+        <p class="muted small">Each line is its effect on net worth. Of the ${money(endNW - startNW, { cents: false, sign: true })} change, ${money(f.net, { cents: false, sign: true })} came from income left over after spending${K.savedThroughPay + K.employer > 0 ? ` and ${money(K.savedThroughPay + K.employer, { cents: false, sign: true })} from saving through pay (${money(K.savedThroughPay, { cents: false })} from your pay${K.employer ? `, ${money(K.employer, { cents: false })} from your employer` : ''})` : ''}; the rest is market moves, loan paydown and revaluations.</p>`
         : '<p class="muted">Net worth history starts once two months of balances exist. You can add past balances from each account’s History.</p>'}
     </section>
     <section class="panel">
@@ -6018,12 +6769,20 @@ VIEWS.reports = p => {
   if (tab === 'flow') {
     const sk = lensActive() ? sankeyData(R.from, R.to, acts, 'From savings or shared income') : sankeyData(R.from, R.to);
     const f = flowSummary(txs);
+    // Saved through pay (401(k), HSA… on pay stubs) never reached the bank: it comes in on the left and lands in Saved
+    const K = keptWithPayrollRange(R.from, R.to), S = K.savedThroughPay;
+    if (S > 0) {
+      const at = sk.left.findIndex(n => n.drawn), saved = sk.right.find(n => n.saved);
+      sk.left = [...sk.left]; sk.left.splice(at < 0 ? sk.left.length : at, 0, { name: 'Saved through pay', value: S, title: `Saved through pay, before it reached the bank: ${money(S, { cents: false })}` });
+      sk.right = saved ? sk.right.map(n => (n.saved ? { ...n, value: n.value + S } : n)) : [...sk.right, { name: 'Saved', value: S, saved: true }];
+    }
     return head + `
     <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Left over</th><th class="num">Savings rate</th></tr></thead>
-      <tbody><tr><th scope="row">${esc(R.label)}</th><td class="num">${money(f.income, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td><td class="num ${signClass(f.net)}">${money(f.net, { cents: false })}</td><td class="num">${pct(f.rate, 0)}</td></tr></tbody></table></section>
+      <tbody><tr><th scope="row">${esc(R.label)}</th><td class="num">${money(f.income, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td><td class="num ${signClass(f.net)}">${money(f.net, { cents: false })}</td><td class="num">${pct(f.rate, 0)}</td></tr></tbody></table>
+      ${S > 0 ? `<p class="muted small pay-saved">Counting ${money(S, { cents: false })} saved through pay (${esc(payrollKindsText(K.byKind))}), which never reached the bank, you kept <strong class="num">${money(K.kept, { cents: false })}</strong>: ${pct(K.rate, 0)} of what came in.</p>` : ''}</section>
     <section class="panel"><header class="panel-head"><h2>Where the money came from and went</h2><span class="muted small">${isTouch() ? 'Tap' : 'Hover over'} a band for the amount</span></header>
-      ${chartHost({ type: 'sankey', label: 'Where the money came from and went', left: sk.left, right: sk.right, total: Math.max(sk.income, sk.spending), empty: 'No income or spending in this period.',
-        pick: R.from.slice(0, 7) === R.to.slice(0, 7) ? (n, side) => { const m = R.from.slice(0, 7); if (n.saved) drillKept(m); else if (side === 'r') drillGroup(n.name, m); else drillFlow('in', m); } : null })}</section>`;
+      ${chartHost({ type: 'sankey', label: 'Where the money came from and went', left: sk.left, right: sk.right, total: Math.max(sk.income, sk.spending) + S, empty: 'No income or spending in this period.',
+        pick: R.from.slice(0, 7) === R.to.slice(0, 7) ? (n, side) => { const m = R.from.slice(0, 7); if (n.name === 'Saved through pay') go('#/taxes'); else if (n.saved) drillKept(m); else if (side === 'r') drillGroup(n.name, m); else drillFlow('in', m); } : null })}</section>`;
   }
 
   if (tab === 'spending') {
@@ -6064,6 +6823,7 @@ VIEWS.reports = p => {
     const row = (label, vals, cls = '') => `<tr class="${cls}"><th scope="row">${label}</th>${vals.map(v => `<td class="num">${v ? money(v, { cents: false }) : '<span class="muted">—</span>'}</td>`).join('')}<td class="num total-col">${money(sum(vals), { cents: false })}</td></tr>`;
     const incT = ms.map((_, i) => sum(inc.map(c => per[i][c.id] || 0)) + uncIn[i]);
     const expT = ms.map((_, i) => sum(cats.filter(c => c.kind === 'expense').map(c => per[i][c.id] || 0)) + uncOut[i]);
+    const payT = ms.map(m => payrollSaving(`${m}-01`, monthEnd(m)).total), anyPay = payT.some(Boolean);   // on pay stubs: saved before it reached the bank
     return head + `<div class="toolbar"><button class="btn small" data-act="export-statement" data-from="${R.from}" data-to="${R.to}">Export CSV</button><span class="muted small">Showing ${ms.length} month${ms.length > 1 ? 's' : ''}. Transfers are left out.</span></div>
     <div class="scroll-table"><table class="ledger statement"><thead><tr><th>Category</th>${ms.map(m => `<th class="num">${monthLabel(m, true)}</th>`).join('')}<th class="num">Total</th></tr></thead><tbody>
       <tr class="sect"><th colspan="${ms.length + 2}">Income</th></tr>
@@ -6075,7 +6835,8 @@ VIEWS.reports = p => {
       ${uncOut.some(Boolean) ? row('<strong>Uncategorized</strong>', uncOut, 'grp') : ''}
       ${row('Total spending', expT, 'subtotal')}
       ${row('Net', ms.map((_, i) => incT[i] - expT[i]), 'net')}
-      <tr class="rate"><th scope="row">Savings rate</th>${ms.map((_, i) => `<td class="num">${incT[i] ? pct((incT[i] - expT[i]) / incT[i], 0) : '—'}</td>`).join('')}<td class="num total-col">${sum(incT) ? pct((sum(incT) - sum(expT)) / sum(incT), 0) : '—'}</td></tr>
+      ${anyPay ? row('Saved through pay', payT, 'pay-saved') + row('Kept, counting saved through pay', ms.map((_, i) => incT[i] - expT[i] + payT[i]), 'subtotal pay-kept') : ''}
+      <tr class="rate"><th scope="row">Savings rate</th>${ms.map((_, i) => `<td class="num">${incT[i] + payT[i] ? pct((incT[i] - expT[i] + payT[i]) / (incT[i] + payT[i]), 0) : '—'}</td>`).join('')}<td class="num total-col">${sum(incT) + sum(payT) ? pct((sum(incT) - sum(expT) + sum(payT)) / (sum(incT) + sum(payT)), 0) : '—'}</td></tr>
     </tbody></table></div>`;
   }
 
@@ -6182,10 +6943,11 @@ VIEWS.planning = p => {
   if (!P.age) return head + `<section class="panel narrow"><h2>Start with your age</h2><p class="muted">Ọrọ̀ fills in the rest from your accounts and spending, and you can adjust any of it.</p>
     <div class="form-grid"><label class="field"><span>Your age</span><input data-plan="age" inputmode="numeric" autofocus placeholder="e.g. 42"></label><label class="field"><span>Retire at</span><input data-plan="retireAge" inputmode="numeric" value="${P.retireAge}"></label></div></section>`;
   const stats = portfolioStats(D.alloc);
+  const paySave = payrollSavingForYear(new Date().getFullYear()), payTyped = +P.payrollSavings > 0;   // a blank (or 0) box uses this year's pay stubs
   const inp = {
     age: +P.age, retireAge: +P.retireAge, endAge: +P.endAge,
     start: P.start != null && P.start !== '' ? +P.start : D.start,
-    savings: (P.savings != null && P.savings !== '' ? +P.savings : D.savings) + (+P.payrollSavings || 0),
+    savings: (P.savings != null && P.savings !== '' ? +P.savings : D.savings) + (payTyped ? +P.payrollSavings : paySave.total),
     spending: P.spending != null && P.spending !== '' ? +P.spending : D.spending,
     otherIncome: +P.otherIncome || 0, otherIncomeAge: +P.otherIncomeAge || 67,
     rentalNet: P.includeRental ? D.rentalNet : 0, inflation: +P.inflation,
@@ -6209,7 +6971,7 @@ VIEWS.planning = p => {
       <div class="form-grid">
         ${field('start', 'Invested today', P.start, money(D.start, { cents: false }), 'Cash, investments' + (P.includePrivate ? ' and private' : ''))}
         ${field('savings', 'Saved per year from cash flow', P.savings, money(D.savings, { cents: false }), 'Last 12 months, after spending')}
-        ${field('payrollSavings', '401(k) and payroll savings per year', P.payrollSavings, '0', 'Taken out before your paycheck')}
+        ${field('payrollSavings', '401(k) and payroll savings per year', payTyped || !paySave.total ? P.payrollSavings : '', paySave.total ? money(paySave.total, { cents: false }) : '0', paySave.total ? `Taken out before your paycheck. From your pay stubs this year: ${money(paySave.mine, { cents: false })}${paySave.employer ? ` plus ${money(paySave.employer, { cents: false })} your employer puts in` : ''}` : 'Taken out before your paycheck')}
         ${field('spending', 'Spending in retirement per year', P.spending, money(D.spending, { cents: false }), 'Today’s dollars; defaults to the last 12 months')}
         ${field('otherIncome', 'Social Security or pension per year', P.otherIncome, '0', 'Today’s dollars')}
         ${field('otherIncomeAge', 'Starting at age', P.otherIncomeAge)}
@@ -6258,6 +7020,8 @@ function interestFromLine(from, est, loan) {
 function afterTaxPanel(X) {
   const { year, H } = X, sm = n => money(n, { cents: false }), rate = n => pct(n, 1), cur = year === new Date().getFullYear();
   const box = (attr, v, ph = '0') => `<input ${attr} data-year="${year}" inputmode="decimal" value="${v ?? ''}" placeholder="${ph}">`;
+  const typed = (id, f) => (H.typed ? H.typed[id]?.[f] : H.people[id]?.[f]), fromStub = (id, f) => !!H.stubs?.[id]?.[f];   // a blank box uses the year projected from pay stubs
+  const pbox = (id, f, help) => `${box(`data-taxp="${id}:${f}"`, typed(id, f), fromStub(id, f) ? sm(H.people[id][f]) : '0')}<small class="muted">${fromStub(id, f) ? `${sm(H.people[id][f])} from your pay stubs. ` : ''}${help}</small>`;
   const est = { federal: X.fedEst, state: X.ilEst, fica: X.ficaEst }, anyActual = Object.values(X.actual).some(v => v != null);
   const tag = k => `<span class="tag soft">${X.actual[k] != null ? 'actual' : 'estimate'}</span>`;
   const interestIn = round2(sum(txInRange(`${year}-01-01`, `${year}-12-31`).flatMap(t => txLines(t)).filter(l => /interest|dividend/i.test(catById(l.categoryId)?.name || '') && catById(l.categoryId)?.kind === 'income').map(l => l.amount)));
@@ -6268,9 +7032,9 @@ function afterTaxPanel(X) {
       <label class="field"><span>Filing</span><select data-taxh="status" data-year="${year}">${Object.entries(FILING).map(([k, l]) => `<option value="${k}" ${X.status === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     </div>
     ${X.earners.length ? X.earners.map(e => `<fieldset class="tax-person"><legend>${esc(e.name)}</legend><div class="form-grid three">
-      <label class="field"><span>Pay before tax</span>${box(`data-taxp="${e.id}:gross"`, H.people[e.id].gross)}<small class="muted">Salary and bonus for the year</small></label>
-      <label class="field"><span>Saved before tax</span>${box(`data-taxp="${e.id}:retire"`, H.people[e.id].retire)}<small class="muted">401(k), 403(b) or 457 from pay</small></label>
-      <label class="field"><span>Health through pay</span>${box(`data-taxp="${e.id}:health"`, H.people[e.id].health)}<small class="muted">HSA, FSA and health premiums</small></label>
+      <label class="field"><span>Pay before tax</span>${pbox(e.id, 'gross', 'Salary and bonus for the year')}</label>
+      <label class="field"><span>Saved before tax</span>${pbox(e.id, 'retire', '401(k), 403(b) or 457 from pay')}</label>
+      <label class="field"><span>Health through pay</span>${pbox(e.id, 'health', 'HSA, FSA and health premiums')}</label>
     </div></fieldset>`).join('') : '<p class="muted">Add the adults in your household in Settings › Household to enter their pay.</p>'}
     <div class="form-grid three">
       <label class="field"><span>Other income</span>${box('data-taxh="other"', H.other)}<small class="muted">Interest, dividends, rental profit.${interestIn > 0 ? ` Interest and dividends in your transactions: ${sm(interestIn)}.` : ''}${rentNet ? ` Rentals (Schedule E): ${money(rentNet, { cents: false, paren: true })}.` : ''}</small></label>
@@ -6291,7 +7055,12 @@ function afterTaxPanel(X) {
   const exact = n => `${Math.round(n * 10000) / 100}%`;   // 4.95%, 8.55%, 24%: rates as the tables give them
   const topParts = [X.top.federal && `${exact(X.top.federal)} federal`, X.top.state && `${exact(X.top.state)} Illinois`, X.top.fica && `${exact(X.top.fica)} Social Security and Medicare`].filter(Boolean).join(' + ');
   const meter = (label, v, cls) => `<div class="rate-row ${cls}"><span>${label}</span><div class="meter"><span style="width:${Math.min(100, v / 0.6 * 100).toFixed(1)}%"></span></div><strong class="num">${rate(v)}</strong></div>`;
-  return `<section class="panel aftertax">${head}
+  // Nothing typed yet, but there are pay stubs: the figures from the stubs in a panel of their own, then the boxes
+  const stubsOnly = !X.H.typedPay;
+  const open = stubsOnly ? `<section class="panel aftertax-est"><header class="panel-head"><h2>What you keep after tax</h2><span class="muted small">${year} · from your pay stubs, projected to the end of the year · ${FILING[X.status]}</span></header>` : `<section class="panel aftertax">${head}`;
+  const close = stubsOnly ? `</section><section class="panel aftertax"><header class="panel-head"><h2>Your own numbers</h2><span class="muted small">${year} · optional</span></header>
+    <p>These figures come from your pay stubs. Type each person’s pay before tax, or any box here, to plan with your own numbers. A blank box keeps using your pay stubs.</p>${inputs}</section>` : `${inputs}</section>`;
+  return `${open}
     <dl class="kpis">
       <div><dt>Kept after tax</dt><dd class="num">${sm(X.kept)}</dd><span class="muted small">of ${sm(X.income)}${X.other ? ' pay and other income' : ' pay'}${X.pretax ? `, after ${sm(X.pretax)} saved before tax` : ''}</span></div>
       <div><dt>Average rate</dt><dd class="num">${rate(X.average)}</dd><span class="muted small">All taxes ÷ all income (your effective rate)</span></div>
@@ -6324,7 +7093,7 @@ function afterTaxPanel(X) {
       <p class="muted small">${X.tableYear !== year ? `Ọrọ̀ has the tax tables for 2025 and 2026; ${year} uses ${X.tableYear}’s. ` : ''}Not counted: capital gains and dividend rates, self-employment tax, the 65-and-older deductions, tips and overtime, other credits. Organized for your CPA; not tax advice.</p>
     </details>
     ${paid > 0 ? `<p class="muted small">Paychecks that came into your accounts in ${year}${cur ? ' so far' : ''}: ${sm(paid)}.</p>` : ''}
-    ${inputs}</section>`;
+    ${close}`;
 }
 
 /* Itemized or standard: Schedule A beside the standard deduction, with the home mortgage interest. */
@@ -6346,16 +7115,18 @@ function scheduleAPanel(X) {
         <p class="callout">${diff > 0 ? `Itemizing is worth ${sm(diff)} more than the standard deduction, so the estimate above itemizes.` : `The standard deduction is ${sm(-diff)} more than itemizing, so the estimate above uses it.`}</p>
         ${loans || '<p class="muted small">No home mortgage in Ọrọ̀. A mortgage on a rental goes on its Schedule E below.</p>'}
         <label class="field"><span>Property tax paid on your home, ${year}</span><input data-taxh="propertyTax" data-year="${year}" inputmode="decimal" value="${X.H.propertyTax ?? ''}" placeholder="${sm(round2(deductionSummary(year).by['State and local taxes'] || 0))}"><small class="muted">Including any paid through your mortgage’s escrow (Form 1098, box 10). Blank uses your categories tagged for state and local taxes.</small></label>
+        <label class="field"><span>Gifts to charity, ${year}</span><input data-taxh="charity" data-year="${year}" inputmode="decimal" value="${X.H.charity ?? ''}" placeholder="${sm(round2(deductionSummary(year).by['Charitable'] || 0))}"><small class="muted">Blank uses your categories tagged for gifts to charity.</small></label>
+        ${X.H.interest != null || !A.loans.length ? `<label class="field"><span>Home mortgage interest, ${year}${A.loans.length ? ', all home loans' : ''}</span><input data-taxh="interest" data-year="${year}" inputmode="decimal" value="${X.H.interest ?? ''}" placeholder="${A.loans.length ? sm(round2(sum(A.loans.map(x => x.amount)))) : '0'}"><small class="muted">${A.loans.length ? 'Used instead of the figures above. Blank goes back to them.' : 'From Form 1098, if your mortgage isn’t in Ọrọ̀.'}</small></label>` : ''}
       </div>
     </div></section>`;
 }
 
 VIEWS.taxes = p => {
   const year = +(p.y || new Date().getFullYear());
-  const years = [...new Set([new Date().getFullYear(), new Date().getFullYear() - 1, ...state.transactions.map(t => yearOf(t.date))])].sort((a, b) => b - a);
+  const years = [...new Set([new Date().getFullYear(), new Date().getFullYear() - 1, ...state.transactions.map(t => yearOf(t.date)), ...stubsAll().filter(s => s.date).map(s => yearOf(s.date))])].sort((a, b) => b - a);   // and any year with a pay stub
   const rentals = activeAccounts().filter(a => a.type === 'realestate' && a.rental);
   const ded = deductionSummary(year), TX = taxEstimate(year);
-  return pageHead('Taxes', `${year} tax year. Organized for your CPA; not tax advice.`, `<label class="field inline"><span class="sr">Year</span><select data-filter="y">${years.map(y => `<option ${y === year ? 'selected' : ''}>${y}</option>`).join('')}</select></label><button class="btn" data-act="export-tax" data-year="${year}">Export for your CPA</button>`) + afterTaxPanel(TX) + scheduleAPanel(TX) + `
+  return pageHead('Taxes', `${year} tax year. Organized for your CPA; not tax advice.`, `<label class="field inline"><span class="sr">Year</span><select data-filter="y">${years.map(y => `<option ${y === year ? 'selected' : ''}>${y}</option>`).join('')}</select></label><button class="btn" data-act="export-tax" data-year="${year}">Export for your CPA</button>`) + (() => { const due = taxDuePanel(year), first = taxDue(year).withheldAny; return (first ? due : '') + afterTaxPanel(TX) + whatIfPanel(year) + payStubsPanel(year) + (first ? '' : due); })() + scheduleAPanel(TX) + `
   ${rentals.length ? rentals.map(a => {
     const E = scheduleE(a, year), g = a.rentalGroup || 'Rental property';
     const rentalCats = state.categories.filter(c => c.group === g);
@@ -6703,6 +7474,7 @@ function txnModal(id) {
       ${t?.card ? `<p class="muted small wide">Card ending ${esc(t.card)}</p>` : ''}
       ${t?.pp ? `<p class="muted small wide">Paid through PayPal. Bank description: ${esc(t.pp.was)}</p>` : t?.rawPayee && t.rawPayee !== t.payee ? `<p class="muted small wide">Bank description: ${esc(t.rawPayee)}</p>` : ''}
       ${t?.reconciled ? '<p class="muted small wide">✓ Reconciled with a statement</p>' : ''}
+      ${t ? stubLineForTxn(t) : ''}
     </form>`,
     actions: `${t ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}${t && talkOn() ? `<button class="btn ghost" data-talk-open="txn:${t.id}" title="Say what to change about this transaction">${MIC_ICON} Talk</button>` : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${t ? 'Save' : 'Add transaction'}</button>`,
   });
@@ -7271,6 +8043,7 @@ function mdRefresh() {
 function buildSlides(mk) {
   const prev = addMonths(mk, -1), cur = mk === thisMonth(), sm = n => money(n, { cents: false });
   const txs = txInMonth(mk), f = flowSummary(txs);
+  const K = keptWithPayroll(mk, { lens: false }), pay = K.savedThroughPay > 0;   // what was saved through pay counts as kept
   const avg = [1, 2, 3].map(i => flowSummary(txInMonth(addMonths(mk, -i))));
   const avgSpend = sum(avg.map(x => x.spending)) / 3;
   const endNW = cur ? totals().netWorth : snapshotNW(mk), startNW = snapshotNW(prev);
@@ -7293,12 +8066,13 @@ function buildSlides(mk) {
       <p class="md-proverb"><span lang="yo">${MD_PROVERB[0]}</span> ${MD_PROVERB[1]}</p></div>` });
   slides.push({ title: 'The big picture', kind: 'big', html: () => `<div class="slide-center">
       <p class="eyebrow-plain">${monthLabel(mk)}</p>
-      <h1 class="slide-h">${f.net >= 0 ? `We kept <span class="num pos">${sm(f.net)}</span> ${cur ? 'so far this month' : 'this month'}.` : `We spent <span class="num neg">${sm(-f.net)}</span> more than came in.`}</h1>
-      <p class="slide-lede">${sm(f.income)} came in and ${sm(f.spending)} went out${nwChange != null ? `, and our net worth ${nwChange >= 0 ? 'grew' : 'fell'} by ${sm(Math.abs(nwChange))}` : ''}.</p>
-      <div class="md-trio">
+      <h1 class="slide-h">${K.kept >= 0 ? `We kept <span class="num pos">${sm(K.kept)}</span> ${cur ? 'so far this month' : 'this month'}.` : `We spent <span class="num neg">${sm(-K.kept)}</span> more than came in.`}</h1>
+      <p class="slide-lede">${sm(f.income)} came in and ${sm(f.spending)} went out${pay ? `, ${sm(K.savedThroughPay)} more was saved through pay before it reached the bank` : ''}${nwChange != null ? `, and our net worth ${nwChange >= 0 ? 'grew' : 'fell'} by ${sm(Math.abs(nwChange))}` : ''}.</p>
+      <div class="md-trio${pay ? ' four' : ''}">
         <button class="md-fig" data-drill="in|${mk}"><span>Came in</span><strong class="num">${sm(f.income)}</strong></button>
         <button class="md-fig" data-drill="out|${mk}"><span>Went out</span><strong class="num">${sm(f.spending)}</strong></button>
-        <button class="md-fig" data-drill="kept|${mk}"><span>Kept</span><strong class="num ${signClass(f.net)}">${sm(f.net)}</strong></button></div></div>` });
+        ${pay ? `<div class="md-fig still"><span>Saved through pay</span><strong class="num">${sm(K.savedThroughPay)}</strong></div>` : ''}
+        <button class="md-fig" data-drill="kept|${mk}"><span>Kept</span><strong class="num ${signClass(K.kept)}">${sm(K.kept)}</strong></button></div></div>` });
   const lastMk = Object.keys(state.reviews).filter(k => k < mk && (state.reviews[k]?.notes || '').trim()).sort().pop();
   if (lastMk) {
     const lines = state.reviews[lastMk].notes.split(/\n+/).map(x => x.replace(/^\s*[-•*]\s*/, '').trim()).filter(Boolean), done = state.reviews[lastMk].done || {};
@@ -7318,14 +8092,14 @@ function buildSlides(mk) {
         ${moves.length ? `<div class="md-moves"><h3>What moved it most</h3><ul class="simple-list">${moves.map(r => `<li><span>${esc(r.name)}</span><span></span><span class="num ${signClass(r.d)}">${money(r.d, { cents: false, sign: true })}</span></li>`).join('')}</ul><button class="linklike md-more" data-drill="nw|${mk}">See every account</button></div>` : ''}</div></div>` });
   }
   slides.push({ title: 'Money in and out', kind: 'io', html: () => {
-    const mx = Math.max(f.income, f.spending, 1), ms = Array.from({ length: 6 }, (_, i) => addMonths(mk, i - 5)), kept = ms.map(m => flowSummary(txInMonth(m)).net);
+    const mx = Math.max(f.income, f.spending, 1), ms = Array.from({ length: 6 }, (_, i) => addMonths(mk, i - 5)), kept = ms.map(m => keptWithPayroll(m, { lens: false }).kept);
     return `<div class="slide-split">
       <div><h2 class="slide-h2">In and out</h2>
         <div class="io-bars"><button class="io-row" data-drill="in|${mk}"><span>Came in</span><div class="io-track"><span style="width:${f.income / mx * 100}%;background:var(--pos)"></span></div><strong class="num">${sm(f.income)}</strong></button>
         <button class="io-row" data-drill="out|${mk}"><span>Went out</span><div class="io-track"><span style="width:${f.spending / mx * 100}%;background:var(--c4)"></span></div><strong class="num">${sm(f.spending)}</strong></button></div>
         <p class="slide-lede">Spending was ${avgSpend ? `${sm(Math.abs(f.spending - avgSpend))} ${f.spending > avgSpend ? 'more' : 'less'} than` : 'compared with'} our usual month.</p>
         <div class="md-mini"><h3>Kept, the last six months</h3>${chartHost({ type: 'bars', h: 150, label: 'Kept by month', labels: ms.map(m => MON[+m.slice(5) - 1]), series: [{ name: 'Kept', values: kept, color: 'var(--ink-accent)' }], pick: i => drillMonth(ms[i]), pickLabel: 'Open the month', tip: i => `<strong>${monthLabel(ms[i])}</strong><br>Kept ${money(kept[i], { cents: false })}` })}</div></div>
-      <div class="slide-center">${ring(isFinite(f.rate) ? Math.max(0, f.rate) : 0, { size: 220, width: 20, label: isFinite(f.rate) ? pct(f.rate, 0) : '—', color: f.rate >= 0.2 ? 'var(--pos)' : f.rate >= 0 ? 'var(--ink-accent)' : 'var(--neg)' })}<p class="slide-lede">of what came in, we kept</p></div></div>`;
+      <div class="slide-center">${ring(isFinite(K.rate) ? Math.max(0, K.rate) : 0, { size: 220, width: 20, label: isFinite(K.rate) ? pct(K.rate, 0) : '—', color: K.rate >= 0.2 ? 'var(--pos)' : K.rate >= 0 ? 'var(--ink-accent)' : 'var(--neg)' })}<p class="slide-lede">of what came in, we kept${pay ? `<br><span class="small">counting ${sm(K.savedThroughPay)} saved through pay</span>` : ''}</p></div></div>`;
   } });
   if (items.length) slides.push({ title: 'Where it went', kind: 'where', html: () => `<div class="slide-split">
       <div>${chartHost({ type: 'donut', h: 330, label: 'Where the money went', items, center: { value: sm(spendTotal), label: 'spent' }, pick: it => drillGroup(it.label, mk) })}</div>
@@ -7641,6 +8415,7 @@ const ACTIONS = {
         `Federal income tax,${(-X.federal).toFixed(2)},${src('federal')}`, `Illinois income tax,${(-X.state).toFixed(2)},${src('state')}`, `Social Security and Medicare,${(-X.fica).toFixed(2)},${src('fica')}`,
         `Kept after tax,${X.kept.toFixed(2)},`, `Average rate (effective),${(X.average * 100).toFixed(1)}%,`, `Top rate (marginal),${(X.top.all * 100).toFixed(1)}%,`, `Filing,${q(FILING[X.status])},`, '');
     }
+    lines.push(...payStubExportLines(year));   // pay stubs, saved through pay, the likely bill or refund (61-paystubs.js)
     lines.push('Schedule A (Ọrọ̀ estimate),Amount,Source', `4,Medical and dental over 7.5% of income,${X.A.medical.toFixed(2)},`, `5e,State and local taxes,${X.A.salt.toFixed(2)},`);
     for (const x of X.A.loans) lines.push(`8a,${q(`Home mortgage interest: ${x.prop?.name || x.loan.name}`)},${x.amount.toFixed(2)},${from(x.from)}`);
     lines.push(`14,Gifts to charity,${X.A.charity.toFixed(2)},`, `17,Itemized deductions,${X.A.total.toFixed(2)},`, `,Standard deduction,${X.std.toFixed(2)},`, '');
@@ -7949,6 +8724,487 @@ async function boot() {
 }
 document.addEventListener('DOMContentLoaded', boot);
 
+/* ================= Taxes: What if…, Pay stubs, and the likely tax bill or refund (the screens) =================
+   The working-out is in 29-paystubs.js. These are the panels on the Taxes page, the pay stub window (typed, or filled
+   from a PDF read on this device), the window for picking the deposit a stub landed as, and the small lines other
+   screens borrow (the transaction window, Import, the CPA export). */
+
+/* An amount that shows cents where there's room and whole dollars on a narrow screen */
+const mFit = (n, o = {}) => `<span class="m-full">${money(n, o)}</span><span class="m-short">${money(n, { ...o, cents: false })}</span>`;
+const stubOpenSet = () => (UI.stubOpen ||= new Set());
+const stubPeopleWith = year => taxEarners().filter(m => stubYear(m.id, year));
+
+/* ---------- What if… ---------- */
+function whatIfPanel(year) {
+  const R = whatIf(year), P = R.plan, W = R.W || {}, sm = n => money(n, { cents: false });
+  const head = `<header class="panel-head"><h2>What if…</h2><span class="muted small">${year} · try a change before you make it</span></header>`;
+  if (!P.P.H.entered) return `<section class="panel whatif">${head}<p class="muted">Type each person’s pay above, or add a pay stub below. Then try a change here: more in the 401(k), an HSA, a bonus, more tax taken out.</p></section>`;
+  const box = (who, f, label, plan, help = '') => `<label class="field"><span>${label}</span><input data-wi="${who}:${f}" data-year="${year}" inputmode="decimal" value="${who === 'h' ? W[f] ?? '' : W.people?.[who]?.[f] ?? ''}" placeholder="${f === 'kids' ? plan : sm(plan)}">${help ? `<small class="muted">${help}</small>` : ''}</label>`;
+  const lumped = id => P.P.H.typed?.[id]?.health != null && P.P.H.typed?.[id]?.hsa == null && !P.P.H.stubs?.[id]?.health && P.people[id].health > 0;
+  const people = P.P.earners.map(e => { const p = P.people[e.id]; return `<fieldset class="wi-person"><legend>${esc(e.name)}</legend><div class="form-grid four">
+      ${box(e.id, 'gross', 'Pay for the year', p.gross)}
+      ${box(e.id, 'bonus', 'A bonus', 0, 'On top of that pay')}
+      ${box(e.id, 'retire', '401(k), 403(b) or 457', p.retire)}
+      ${box(e.id, 'hsa', 'HSA', p.hsa)}
+      ${box(e.id, 'health', 'Other before-tax', p.health, lumped(e.id) ? 'FSA and premiums. Your plan has all of health through pay here' : 'FSA and health premiums')}
+      ${box(e.id, 'fedWh', 'Federal tax taken out', p.fedWh, 'Income tax, for the year')}
+      ${box(e.id, 'stateWh', 'Illinois taken out', p.stateWh, 'For the year')}
+    </div></fieldset>`; }).join('');
+  const house = `<div class="form-grid three">
+      ${box('h', 'other', 'Other income', P.house.other)}
+      <label class="field"><span>Filing</span><select data-wi="h:status" data-year="${year}"><option value="">${esc(FILING[P.house.status])} (your plan)</option>${Object.entries(FILING).filter(([k]) => k !== P.house.status).map(([k, l]) => `<option value="${k}" ${W.status === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      ${box('h', 'kids', 'Children under 17', P.house.kids)}
+      ${box('h', 'charity', 'Gifts to charity', P.house.charity)}
+      ${box('h', 'propertyTax', 'Property tax', P.house.propertyTax)}
+      ${box('h', 'interest', 'Mortgage interest', P.house.interest)}
+    </div>`;
+  const refund = r => (Math.abs(r) < 0.005 ? 'Even' : `<span class="nowrap">${mFit(Math.abs(r))}</span> ${r > 0 ? 'refund' : 'owed'}`);
+  const cell = (row, v) => (row.rate ? pct(v, 1) : row.key === 'refund' ? refund(v) : mFit(v));
+  const diff = row => {
+    if (!R.changed || Math.abs(row.diff) < (row.rate ? 0.00005 : 0.005)) return '<span class="muted">—</span>';
+    if (row.rate) return `${row.diff > 0 ? '+' : '−'}${Math.abs(row.diff * 100).toFixed(1)} pts`;
+    return mFit(row.diff, { sign: true });
+  };
+  const better = { income: 1, pretax: 0, taxable: 0, federal: -1, state: -1, fica: -1, taxes: -1, withheld: 0, refund: 0, kept: 1, keptSaved: 1, average: -1, top: -1 };
+  const tone = row => { const b = better[row.key]; return !R.changed || !b || Math.abs(row.diff) < 0.005 ? '' : row.diff * b > 0 ? 'pos' : 'neg'; };
+  const cls = { taxes: 'subtotal', refund: 'net', kept: 'net' };
+  const table = `<table class="ledger compact sched whatif-table"><thead><tr><th scope="col">For ${year}</th><th class="num" scope="col">Your plan</th><th class="num" scope="col">What if</th><th class="num" scope="col">Difference</th></tr></thead><tbody>
+      ${R.rows.map(r => `<tr class="${cls[r.key] || ''}" data-wi-row="${r.key}"><th scope="row">${r.label}${r.key === 'withheld' ? ' <span class="muted small">income tax</span>' : ''}</th><td class="num${r.key === 'refund' ? ' wraps' : ''}">${cell(r, r.plan)}</td><td class="num${r.key === 'refund' ? ' wraps' : ''}">${cell(r, r.what)}</td><td class="num ${tone(r)}">${diff(r)}</td></tr>`).join('')}
+    </tbody></table>`;
+  const any = !!state.tax?.whatif?.[year];
+  return `<section class="panel whatif">${head}
+    <p class="muted small">Each box shows what your plan uses now (what you typed above, or your pay stubs where a box is blank). Type a different number to see what changes. A blank box keeps the plan.</p>
+    ${people}${house}${table}
+    ${R.says.length ? `<ul class="plain whatif-says">${R.says.map(s => `<li>${esc(s)}</li>`).join('')}</ul>` : '<p class="muted small whatif-says">Nothing changed yet: both columns are your plan.</p>'}
+    ${whatIfActualNote(year)}
+    <div class="actions"><button class="btn primary" data-act="whatif-plan" data-year="${year}" ${R.changed ? '' : 'disabled'}>Make this my plan</button><button class="btn ghost" data-act="whatif-clear" data-year="${year}" ${any ? '' : 'disabled'}>Clear</button></div>
+  </section>`;
+}
+/* With actual taxes typed, What if… still works from the estimate (an actual figure wouldn't move) */
+function whatIfActualNote(year) {
+  const a = taxHousehold(year).actual;
+  return Object.values(a).some(v => v != null) ? '<p class="muted small">You’ve typed actual taxes for this year. What if… works from Ọrọ̀’s estimate, so both columns here are estimates.</p>' : '';
+}
+
+/* ---------- Pay stubs ---------- */
+/* The stepped picture: pay before tax, each thing taken out stepping down from it, and what's left */
+function stubSteps(s) {
+  const p = stubPath(s), g = p.gross > 0 ? p.gross : 1, pc = v => `${(clamp(v / g, 0, 1) * 100).toFixed(2)}%`;
+  const row = (label, amount, left, width, cls) => `<div class="stub-step ${cls}"><span class="stub-step-label">${label}</span><span class="stub-step-bar"><i style="left:${pc(left)};width:${pc(width)}"></i></span><span class="num">${money(amount)}</span></div>`;
+  return `<div class="stub-steps" role="img" aria-label="From ${money(p.gross)} before tax to ${money(p.net)} take-home">
+    ${row('Pay before tax', p.gross, 0, p.gross, 'pay')}
+    ${p.pre ? row('Saved or paid before tax', -p.pre, p.afterPre, p.pre, 'pre') : ''}
+    ${row('Taxes taken out', -p.tax, p.afterTax, p.tax, 'tax')}
+    ${p.post ? row('Other things taken out', -p.post, p.expected, p.post, 'post') : ''}
+    ${row('Take-home pay', p.net, 0, p.net, 'net')}</div>`;
+}
+/* The same path as a table, row by row, with year to date beside it when the stub has it */
+function stubTable(s) {
+  const p = stubPath(s), ytd = s.grossYtd != null || [...s.pre, ...s.tax, ...s.post].some(r => r.ytd != null);
+  const y = v => (ytd ? `<td class="num muted">${v == null ? '' : money(v)}</td>` : '');
+  const rows = (list, kinds) => list.map(r => `<tr><td class="indent">${esc(r.label || kinds[r.kind])}</td><td class="num">${money(-r.cur)}</td>${y(r.ytd)}</tr>`).join('');
+  const sub = (label, v) => `<tr class="subtotal"><th scope="row">${label}</th><td class="num">${money(v)}</td>${y(null)}</tr>`;
+  return `<table class="ledger compact sched stub-table"><thead><tr><th scope="col">${esc(stubName(s))}</th><th class="num" scope="col">This paycheck</th>${ytd ? '<th class="num" scope="col">Year to date</th>' : ''}</tr></thead><tbody>
+    <tr class="income-line"><th scope="row">Pay before tax</th><td class="num">${money(p.gross)}</td>${y(s.grossYtd)}</tr>
+    ${s.pre.length ? rows(s.pre, STUB_PRE) + sub('After what’s saved or paid before tax', p.afterPre) : ''}
+    ${rows(s.tax, STUB_TAX)}${sub('After taxes', p.afterTax)}
+    ${s.post.length ? rows(s.post, STUB_POST) : ''}
+    <tr class="net"><th scope="row">Take-home pay</th><td class="num total double">${money(p.net)}</td>${y(s.netYtd)}</tr>
+    ${s.er.length ? s.er.map(r => `<tr class="stub-er"><td class="indent muted">Your employer put in: ${esc(r.label || STUB_ER[r.kind])}</td><td class="num muted">${money(r.cur)}</td>${y(r.ytd)}</tr>`).join('') : ''}
+  </tbody></table>`;
+}
+/* "Landed in Everyday checking on Nov 20: $4,850.00" with the amount opening that transaction, or "Not in your transactions yet" */
+function stubLanded(s) {
+  const d = stubDeposits(s);
+  if (!d.txs.length) return `<p class="stub-landed none"><span>Not in your transactions yet</span> <button class="btn small" data-stub-pick="${esc(s.id)}">Pick it…</button></p>`;
+  const parts = d.txs.map(t => `${esc(acctById(t.accountId)?.name || 'an account')} on ${dateLabel(t.date)}: <button class="linklike link num" data-edit-txn="${esc(t.id)}">${money(t.amount)}</button>`).join(' and ');
+  const short = Math.abs(d.short) > 0.004 ? ` <span class="neg">${money(Math.abs(d.short))} ${d.short > 0 ? 'short of' : 'more than'} the take-home</span>` : '';
+  return `<p class="stub-landed"><span>Landed in ${parts}${short}</span> <button class="linklike link small" data-stub-pick="${esc(s.id)}">${d.how === 'picked' ? 'Picked by hand. Change…' : 'Not this one? Pick it…'}</button></p>`;
+}
+function stubCard(s) {
+  const p = stubPath(s), d = stubDeposits(s), open = stubOpenSet().has(s.id);
+  const land = d.txs.length ? `${esc(acctById(d.txs[0].accountId)?.name || 'an account')}${d.txs.length > 1 ? ` and ${d.txs.length - 1} more` : ''}` : 'Not in your transactions yet';
+  return `<details class="stub" data-stub="${esc(s.id)}" ${open ? 'open' : ''}><summary>
+      <span class="stub-when">${dateLabel(s.date)}</span>
+      <span class="stub-emp">${esc(s.employer || 'Pay stub')}${s.bonus ? ' <span class="tag soft">bonus or one-time</span>' : ''}${p.ok ? '' : ' <span class="tag warn">doesn’t add up</span>'}</span>
+      <span class="stub-nums"><span class="num">${money(p.gross)}</span> <span class="muted">before tax</span> → <span class="num">${money(p.net)}</span> <span class="muted">take-home</span></span>
+      <span class="stub-land muted small ${d.txs.length ? '' : 'none'}">${land}</span>
+    </summary>
+    <div class="stub-body">${stubSteps(s)}${stubTable(s)}
+      ${p.ok ? '' : `<p class="stub-adds bad">Off by ${money(Math.abs(p.off))}: check the rows.</p>`}
+      ${stubLanded(s)}
+      <div class="actions"><button class="btn small" data-stub-edit="${esc(s.id)}">Edit</button>${s.deposit ? `<span class="muted small">Deposit account ${esc(s.deposit)}</span>` : ''}</div>
+    </div></details>`;
+}
+/* Where the year stands: so far and projected, for one person or the household */
+function stubYearTable(Y, title, year) {
+  const S = Y.sofar, P = Y.projected, any = k => Math.abs(S[k]) > 0.004 || Math.abs(P[k]) > 0.004;
+  const line = (label, k, cls = '', neg = false) => `<tr class="${cls}" data-line="${k}"><${cls === 'detail' ? 'td class="indent"' : 'th scope="row"'}>${label}</${cls === 'detail' ? 'td' : 'th'}><td class="num">${mFit(neg ? -S[k] : S[k])}</td><td class="num">${mFit(neg ? -P[k] : P[k])}</td></tr>`;
+  const part = (label, b, kinds, names) => {
+    const ks = Object.keys(kinds).filter(k => any(`${b}.${k}`)); if (!ks.length) return '';
+    return `<tr class="subtotal" data-line="${b}"><th scope="row">${label}</th><td class="num">${mFit(-linesPart(S, b))}</td><td class="num">${mFit(-linesPart(P, b))}</td></tr>` + ks.map(k => line(names[k] || kinds[k], `${b}.${k}`, 'detail', true)).join('');
+  };
+  const er = round2(S['er.retire'] + S['er.hsa'] + S['er.other']), erP = round2(P['er.retire'] + P['er.hsa'] + P['er.other']);
+  return `<table class="ledger compact sched stub-year"><thead><tr><th scope="col">${title}</th><th class="num" scope="col">So far</th><th class="num" scope="col">Projected for ${year}</th></tr></thead><tbody>
+    ${line('Earned (pay before tax)', 'gross', 'income-line')}
+    ${part('Saved or paid before tax', 'pre', STUB_PRE, { premium: 'Health, dental and vision', other: 'Other before tax' })}
+    ${part('Taxes taken out', 'tax', STUB_TAX, { other: 'Other taxes' })}
+    ${part('Other things taken out', 'post', STUB_POST, { other: 'Other' })}
+    ${line('Take-home pay', 'net', 'net')}
+    ${er || erP ? `<tr class="stub-er" data-line="er"><td class="muted">Your employer put in</td><td class="num muted">${mFit(er)}</td><td class="num muted">${mFit(erP)}</td></tr>` : ''}
+  </tbody></table>`;
+}
+/* In words: whose latest stub, how often they're paid, how many paychecks are left, which limits were reached */
+function stubYearNotes(Y, year) {
+  const j = Y.main, sm = n => money(n, { cents: false }), out = [];
+  const src = Y.summed ? `from ${Y.n} stub${Y.n === 1 ? '' : 's'} added up (their year-to-date boxes are blank)` : `from the latest stub’s year-to-date (${dateLabel(Y.latest.date)}${Y.latest.employer ? `, ${esc(Y.latest.employer)}` : ''})`;
+  out.push(`So far: ${src}.`);
+  if (Y.ask) out.push('<strong>How often are you paid?</strong> Choose it below and Ọrọ̀ projects the rest of the year.');
+  else if (j?.regular && j.freq) out.push(`Paid ${FREQS[j.freq].toLowerCase()}${j.typedFreq ? '' : ' (worked out from the stubs)'}: ${Y.left} regular paycheck${Y.left === 1 ? '' : 's'} left through December 31, at the latest regular paycheck’s amounts.`);
+  else if (!j?.regular) out.push('Only bonus or one-time stubs so far, so nothing more is projected.');
+  if (Y.jobs.length > 1) out.push(`Counted as ${Y.jobs.length} employers (${Y.jobs.map(x => esc(x.employer || 'no name')).join(', ')}), each with its own year-to-date. If two are the same employer, give their stubs the same name.`);
+  if (Y.capped.ss) out.push(`Social Security stops at ${sm(taxTables(year).T.ssBase)} of pay (${money(Y.ssMax)} of tax): the projection stops it there.`);
+  if (Y.capped.retire) out.push(`The 401(k) limit for ${year} is ${sm(Y.limits.deferral)}${Y.age == null ? ' (under 50)' : ''}: the projection stops there.`);
+  if (Y.capped.hsa) out.push(`The HSA limit for ${year} is ${sm(Y.limits.hsa)}: the projection stops there.`);
+  return out;
+}
+function stubPersonBlock(m, year) {
+  const Y = stubYear(m.id, year), info = payInfo(m.id);
+  const add = `<button class="btn small" data-act="add-paystub" data-person="${esc(m.id)}" data-year="${year}">Add a pay stub for ${esc(m.name)}</button>`;
+  if (!Y) return `<div class="stub-person" data-stub-person="${esc(m.id)}"><h3>${esc(m.name)}</h3><p class="muted small">No pay stubs for ${year} yet.</p><div class="actions">${add}</div></div>`;
+  const list = stubsAll().filter(s => s.person === m.id && yearOf(s.date) === year).sort((a, b) => b.date.localeCompare(a.date)), first = list.slice(0, 3), rest = list.slice(3);
+  const moreKey = `more:${m.id}:${year}`;
+  const freqs = Y.jobs.filter(j => j.regular).map(j => `<label class="field"><span>How often ${Y.jobs.length > 1 && j.employer ? `${esc(j.employer)} pays` : 'you’re paid'}</span><select data-payinfo="${esc(m.id)}:freq:${esc(j.key)}">
+      <option value="">${j.guess ? `${FREQS[j.guess]} (from the stubs)` : 'Choose…'}</option>${PAY_FREQS.map(f => `<option value="${f}" ${j.typedFreq === f ? 'selected' : ''}>${FREQS[f]}</option>`).join('')}</select></label>`).join('');
+  return `<div class="stub-person" data-stub-person="${esc(m.id)}"><h3>${esc(m.name)}</h3>
+    ${stubYearTable(Y, 'Where the year stands', year)}
+    <ul class="plain stub-notes muted small">${stubYearNotes(Y, year).map(n => `<li>${n}</li>`).join('')}</ul>
+    <div class="form-grid three stub-info">${freqs}
+      <label class="field"><span>Born in</span><input data-payinfo="${esc(m.id)}:born" inputmode="numeric" maxlength="4" value="${info.born ?? ''}" placeholder="Year"><small class="muted">For the higher 401(k) limit at 50 and the HSA’s at 55</small></label>
+      <label class="field"><span>HSA covers</span><select data-payinfo="${esc(m.id)}:hsa"><option value="family" ${info.hsa === 'self' ? '' : 'selected'}>Your family</option><option value="self" ${info.hsa === 'self' ? 'selected' : ''}>Just you</option></select></label>
+    </div>
+    <div class="stub-list">${first.map(stubCard).join('')}${rest.length ? `<details class="stub-more" data-stubs-more="${esc(moreKey)}" ${stubOpenSet().has(moreKey) ? 'open' : ''}><summary>${rest.length} earlier stub${rest.length === 1 ? '' : 's'}</summary>${rest.map(stubCard).join('')}</details>` : ''}</div>
+    <div class="actions">${add}</div></div>`;
+}
+function payStubsPanel(year) {
+  const earners = taxEarners(), H = stubHousehold(year);
+  const head = `<header class="panel-head"><h2>Pay stubs</h2><span class="muted small">${year}${H.n ? ` · ${H.n} stub${H.n === 1 ? '' : 's'}` : ''}</span></header>`;
+  if (!earners.length) return `<section class="panel paystubs">${head}<p class="muted">Add the adults in your household in Settings › Household to add their pay stubs.</p></section>`;
+  if (!H.n) return `<section class="panel paystubs">${head}
+    <p>Add a pay stub and Ọrọ̀ shows the path from pay before tax to the paycheck that landed, where the year stands, and the likely tax bill or refund. Type it in, or read it from a PDF: it’s read on this device and nothing is sent anywhere.</p>
+    <div class="actions"><button class="btn primary" data-act="add-paystub" data-year="${year}">Add a pay stub</button></div></section>`;
+  return `<section class="panel paystubs">${head}
+    <p class="muted small">From pay before tax to the paycheck that landed, and where the year stands. The latest stub’s year-to-date is enough for the year; older stubs show each paycheck’s path.</p>
+    ${earners.map(m => stubPersonBlock(m, year)).join('')}
+    ${H.people.length > 1 ? `<div class="stub-person stub-household"><h3>Your household</h3>${stubYearTable(H, 'Where the year stands, together', year)}</div>` : ''}
+  </section>`;
+}
+
+/* ---------- the likely tax bill or refund ---------- */
+function taxDuePanel(year) {
+  const D = taxDue(year), X = D.X, sm = n => money(n, { cents: false });
+  const head = `<header class="panel-head"><h2>Likely tax bill or refund</h2><span class="muted small">${year} · the year’s tax against what’s taken out of pay</span></header>`;
+  if (!X.H.entered) return `<section class="panel taxdue">${head}<p class="muted">Add a pay stub, or type each person’s pay at the top, and Ọrọ̀ sets the year’s income tax against what’s taken out of pay.</p></section>`;
+  const word = d => (Math.abs(d) < 0.5 ? 'even' : d < 0 ? 'refund' : 'owed');   // within 50 cents reads as even in the tiles (the table keeps the cents)
+  const kpi = (label, d, note) => `<div data-due="${label.toLowerCase()}"><dt>${label}: ${word(d)}</dt><dd class="num ${d <= -0.5 ? 'pos' : d >= 0.5 ? 'neg' : ''}">${sm(Math.abs(d))}</dd><span class="muted small">${note}</span></div>`;
+  const src = k => (X.actual[k] != null ? 'actual' : 'estimate');
+  const box = (attr, v, ph, label, help = '') => `<label class="field"><span>${label}</span><input ${attr} data-year="${year}" inputmode="decimal" value="${v ?? ''}" placeholder="${ph}">${help ? `<small class="muted">${help}</small>` : ''}</label>`;
+  const stubs = X.H.stubs || {}, typed = X.H.typed || {};
+  const people = X.earners.map(e => {
+    const S = stubPlan(e.id, year), from = k => (stubs[e.id]?.[k] ? 'From your pay stubs' : S ? 'Typed here; your pay stubs say ' + sm(S[k]) : '');
+    return `<fieldset class="wi-person"><legend>${esc(e.name)}</legend><div class="form-grid three">
+      ${box(`data-taxp="${e.id}:fedWh"`, typed[e.id]?.fedWh, S ? sm(S.fedWh) : '0', 'Federal income tax taken out', from('fedWh') || 'For the whole year')}
+      ${box(`data-taxp="${e.id}:stateWh"`, typed[e.id]?.stateWh, S ? sm(S.stateWh) : '0', 'Illinois taken out', from('stateWh') || 'For the whole year')}
+      ${box(`data-taxp="${e.id}:hsa"`, typed[e.id]?.hsa, S ? sm(S.hsa) : '0', 'HSA part of health through pay', 'So Ọrọ̀ can show what the HSA saves')}
+    </div></fieldset>`; }).join('');
+  const kpis = D.withheldAny ? `<dl class="kpis three">
+      ${kpi('Federal', D.federal.due, `${sm(D.federal.tax)} tax, ${sm(D.federal.withheld + D.federal.paid)} paid in`)}
+      ${kpi('Illinois', D.state.due, `${sm(D.state.tax)} tax, ${sm(D.state.withheld + D.state.paid)} paid in`)}
+      ${kpi('Together', D.all, Math.abs(D.all) < 0.005 ? 'Right on the nose' : D.all < 0 ? 'Coming back to you' : 'Still to pay with your returns')}
+    </dl>` : `<p class="callout">Type what’s taken out of each person’s pay below (or add a pay stub) to see whether it’s a refund or a bill. The year’s income tax comes to ${sm(D.federal.tax)} federal and ${sm(D.state.tax)} Illinois.</p>`;
+  const row = (label, a, b, cls = '') => `<tr class="${cls}"><th scope="row">${label}</th><td class="num">${a}</td><td class="num">${b}</td></tr>`;
+  const due = d => (Math.abs(d) < 0.005 ? 'Even' : `<span class="nowrap">${mFit(Math.abs(d))}</span> ${d < 0 ? 'refund' : 'owed'}`);
+  const says = [];
+  if (D.saved > 0 && D.keeps > 0) says.push(`Saving ${sm(D.saved)} before tax in the 401(k) and HSA keeps ${sm(D.keeps)} out of taxes this year.`);
+  if (D.room && D.room.retire + D.room.hsa > 0) {
+    const parts = [D.room.retire > 0 ? `${sm(D.room.retire)} (401(k))` : '', D.room.hsa > 0 ? `${sm(D.room.hsa)} (HSA)` : ''].filter(Boolean).join(' and ');
+    says.push(`Room left: you could still put in ${parts}; that would save about ${sm(D.room.saves)}.${D.room.people.some(p => !p.ageKnown) ? ' The limits are higher from age 50 (401(k)) and 55 (HSA): add a birth year under Pay stubs to count that.' : ''}`);
+  }
+  return `<section class="panel taxdue">${head}${kpis}
+    <table class="ledger compact sched taxdue-table"><thead><tr><th scope="col">For ${year}</th><th class="num" scope="col">Federal</th><th class="num" scope="col">Illinois</th></tr></thead><tbody>
+      ${row(`Income tax for the year <span class="tag soft">${src('federal') === src('state') ? src('federal') : 'see above'}</span>`, mFit(D.federal.tax), mFit(D.state.tax), 'income-line')}
+      ${row('Taken out of pay', mFit(-D.federal.withheld), mFit(-D.state.withheld))}
+      ${D.federal.paid || D.state.paid ? row('Other payments you sent in', mFit(-D.federal.paid), mFit(-D.state.paid)) : ''}
+      ${row('Refund or owed', due(D.federal.due), due(D.state.due), 'net wraps')}
+    </tbody></table>
+    ${says.length ? `<ul class="plain taxdue-says">${says.map(s => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}
+    <h3>What’s taken out, and other payments</h3>
+    <p class="muted small">A blank box uses your pay stubs, projected to the end of the year.</p>
+    ${people}
+    <div class="form-grid three">
+      ${box('data-taxh="paidFed"', X.paid.federal || '', '0', 'Other federal payments you sent in', 'Estimated tax')}
+      ${box('data-taxh="paidState"', X.paid.state || '', '0', 'Other Illinois payments you sent in', 'Estimated tax')}
+    </div>
+    <p class="muted small">An estimate to plan with, not a tax return: see what’s not counted under “How the federal estimate works” in What you keep after tax.</p>
+  </section>`;
+}
+
+/* ---------- the pay stub window ---------- */
+function payStubModal(id, preset = {}) {
+  const old = id ? stubById(id) : null, adults = taxEarners();
+  if (!adults.length) return toast('Add the adults in your household in Settings › Household first.');
+  const who = old?.person || (adults.some(m => m.id === preset.person) ? preset.person : adults.some(m => m.id === UI.lens) ? UI.lens : adults[0].id);
+  const lastOf = p => stubsAll().filter(s => s.person === p && !s.bonus).sort((a, b) => b.date.localeCompare(a.date))[0];
+  const blankRows = (list, f) => list.map(r => ({ kind: r.kind, label: r.label, cur: f ? r.cur : '', ytd: '' }));
+  const start = p => { const last = lastOf(p); return {
+    employer: last?.employer || '',
+    pre: last ? blankRows(last.pre) : ['retire', 'hsa', 'fsa', 'premium'].map(kind => ({ kind, label: '', cur: '', ytd: '' })),
+    tax: [...['federal', 'ss', 'medicare', 'state'].map(kind => ({ kind, label: '', cur: '', ytd: '' })), ...(last ? blankRows(last.tax.filter(r => r.kind === 'other')) : [])],
+    post: last && last.post.length ? blankRows(last.post) : [{ kind: 'roth', label: '', cur: '', ytd: '' }],
+    er: last && last.er.length ? blankRows(last.er) : [{ kind: 'retire', label: '', cur: '', ytd: '' }] }; };
+  const M = old ? JSON.parse(JSON.stringify(old)) : { person: who, date: preset.date || '', from: '', to: '', bonus: false, gross: '', grossYtd: '', net: '', netYtd: '', ...start(who) };
+  if (old) for (const kind of ['federal', 'ss', 'medicare', 'state']) if (!M.tax.some(r => r.kind === kind)) M.tax.push({ kind, label: '', cur: '', ytd: '' });
+  if (old) M.tax.sort((a, b) => Object.keys(STUB_TAX).indexOf(a.kind) - Object.keys(STUB_TAX).indexOf(b.kind));
+  let filled = new Set(), note = '';
+  const v = x => (x == null ? '' : x);
+  const mark = k => (filled.has(k) ? ' class="from-pdf"' : '');
+  const rowHtml = (b, r, i) => {
+    const kinds = STUB_BLOCKS[b], fixed = b === 'tax' && r.kind !== 'other', name = kinds[r.kind] || kinds.other;
+    const as = r.label && r.label.toLowerCase() !== name.toLowerCase() ? `<small class="muted stub-as">On the stub: ${esc(r.label)}</small>` : '';
+    return `<div class="stub-row" data-b="${b}" data-i="${i}"><span class="stub-what">${fixed ? `<span class="stub-fixed">${name}</span>` : `<select data-f="kind" aria-label="What it is">${Object.entries(kinds).filter(([k]) => b !== 'tax' || k === 'other').map(([k, l]) => `<option value="${k}" ${k === r.kind ? 'selected' : ''}>${l}</option>`).join('')}</select>`}${as}</span>
+      <input data-f="cur" inputmode="decimal" value="${esc(v(r.cur))}" placeholder="This paycheck" aria-label="${esc(name)}, this paycheck"${mark(`${b}.${i}.cur`)}>
+      <input data-f="ytd" inputmode="decimal" value="${esc(v(r.ytd))}" placeholder="Year to date" aria-label="${esc(name)}, year to date"${mark(`${b}.${i}.ytd`)}>
+      ${fixed ? '<span></span>' : `<button type="button" class="icon-btn" data-row-del aria-label="Remove this row">×</button>`}</div>`;
+  };
+  const one = (f, label) => `<div class="stub-row" data-one="${f}"><span class="stub-what"><span class="stub-fixed">${label}</span></span>
+      <input id="ps-${f}" inputmode="decimal" value="${esc(v(M[f]))}" placeholder="This paycheck" aria-label="${label}, this paycheck"${mark(`${f}.cur`)}>
+      <input id="ps-${f}-ytd" inputmode="decimal" value="${esc(v(M[`${f}Ytd`]))}" placeholder="Year to date" aria-label="${label}, year to date"${mark(`${f}.ytd`)}><span></span></div>`;
+  const block = (b, title, help, addLabel) => `<div class="stub-block" data-block="${b}"><h3>${title}${help ? ` <span class="muted small">${help}</span>` : ''}</h3>
+      ${M[b].map((r, i) => rowHtml(b, r, i)).join('')}<button type="button" class="btn small ghost" data-row-add="${b}">${addLabel}</button></div>`;
+  const body = () => `<form id="ps" class="stub-form" autocomplete="off">
+      <div class="stub-pdf"><label class="btn small">Read it from a PDF<input type="file" id="ps-pdf" accept="application/pdf,.pdf" hidden></label>
+        <span class="muted small" id="ps-pdf-note">${note || 'Read on this device with Ọrọ̀’s own reader. Nothing is sent anywhere, and only the numbers are kept.'}</span></div>
+      <div class="form-grid three">
+        <label class="field"><span>Whose</span><select id="ps-person">${adults.map(m => `<option value="${m.id}" ${m.id === M.person ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></label>
+        <label class="field"><span>Employer</span><input id="ps-employer" value="${esc(M.employer || '')}" placeholder="Optional"${mark('employer')}></label>
+        <label class="field"><span>Pay date</span><input type="date" id="ps-date" value="${esc(M.date || '')}"${mark('date')}></label>
+        <label class="field"><span>Pay period from</span><input type="date" id="ps-from" value="${esc(M.from || '')}"${mark('from')}></label>
+        <label class="field"><span>to</span><input type="date" id="ps-to" value="${esc(M.to || '')}"${mark('to')}></label>
+        <div class="field"><span class="field-label">Kind of paycheck</span><span class="stub-kind"><label class="check"><input type="radio" name="ps-kind" value="" ${M.bonus ? '' : 'checked'}> Regular paycheck</label><label class="check"><input type="radio" name="ps-kind" value="1" ${M.bonus ? 'checked' : ''}> Bonus or one-time</label></span></div>
+      </div>
+      <div class="stub-row stub-cols" aria-hidden="true"><span></span><span>This paycheck</span><span>Year to date</span><span></span></div>
+      <div class="stub-block" data-block="gross"><h3>Pay before tax</h3>${one('gross', 'Pay before tax')}</div>
+      ${block('pre', 'Saved or paid before tax', '', 'Add a row')}
+      ${block('tax', 'Taxes taken out', '', 'Add another tax')}
+      ${block('post', 'Other things taken out', 'after tax', 'Add a row')}
+      <div class="stub-block" data-block="net"><h3>Take-home pay</h3>${one('net', 'Take-home pay')}</div>
+      <p class="stub-adds" id="ps-adds" role="status"></p>
+      ${block('er', 'Your employer put in', 'optional; not part of your pay', 'Add a row')}
+      ${filled.size ? '<p class="muted small"><span class="from-pdf-key"></span> Filled from the PDF. Check each against the stub before saving.</p>' : '<p class="muted small">Year-to-date boxes are optional, but with them one stub is enough for the whole year.</p>'}
+    </form>`;
+  openModal({ title: old ? 'Edit pay stub' : 'Add a pay stub', wide: true, id: 'paystub', body: body(),
+    actions: `${old ? '<button class="btn ghost danger-text left" id="ps-del">Delete</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="ps-save">${old ? 'Save' : 'Add pay stub'}</button>` });
+  const root = () => $('#modal .modal[data-id="paystub"] .modal-body');
+  const read = () => {   // what's in the boxes → M
+    const f = $('#ps'); if (!f) return;
+    Object.assign(M, { person: $('#ps-person').value, employer: $('#ps-employer').value, date: $('#ps-date').value, from: $('#ps-from').value, to: $('#ps-to').value, bonus: !!f.querySelector('[name=ps-kind]:checked')?.value,
+      gross: $('#ps-gross').value, grossYtd: $('#ps-gross-ytd').value, net: $('#ps-net').value, netYtd: $('#ps-net-ytd').value });
+    for (const el of f.querySelectorAll('.stub-row[data-b]')) {
+      const r = M[el.dataset.b][+el.dataset.i]; if (!r) continue;
+      const k = el.querySelector('[data-f=kind]'); if (k && k.value !== r.kind) { r.kind = k.value; r.label = ''; }
+      r.cur = el.querySelector('[data-f=cur]').value; r.ytd = el.querySelector('[data-f=ytd]').value;
+    }
+  };
+  const adds = () => {
+    const el = $('#ps-adds'); if (!el) return;
+    const a = stubAddsUp(stubTidy(M));
+    el.textContent = a.text; el.title = a.detail || '';
+    el.className = `stub-adds ${a.ok == null ? '' : a.ok && a.ytdOk !== false ? 'ok' : 'bad'}`;
+  };
+  const paint = () => { const b = root(); if (!b) return; const y = b.scrollTop; b.innerHTML = body(); b.scrollTop = y; wire(); adds(); };
+  const fromPdf = async file => {
+    const say = t => { note = t; const n = $('#ps-pdf-note'); if (n) n.textContent = t; };
+    say('Reading the PDF…');
+    let R;
+    try { R = parsePayStub(await pdfToLines(await readFileAsBuffer(file))); }
+    catch (e) { return say('Ọrọ̀ couldn’t open that PDF. Type the numbers from the stub into the boxes.'); }
+    read(); stubFill(M, R, filled = new Set());
+    note = R.noText ? 'This PDF has no text Ọrọ̀ can read: it looks like a scan or a photo. Type the numbers from the stub into the boxes.'
+      : R.found < 3 || (R.gross.cur == null && R.net.cur == null) ? 'Ọrọ̀ couldn’t find pay stub numbers in that PDF. Type them into the boxes.'
+        : `Filled ${filled.size} box${filled.size === 1 ? '' : 'es'} from the PDF. Check them against the stub, then save. Only the numbers and row names are kept.`;
+    paint();
+  };
+  const wire = () => {
+    const f = $('#ps'); if (!f) return;
+    f.oninput = () => { read(); adds(); };
+    f.onchange = e => {
+      if (e.target.id === 'ps-pdf') { const file = e.target.files[0]; if (file) fromPdf(file); return; }
+      if (e.target.id === 'ps-person' && !old && !filled.size) {   // that person's usual rows and employer, unless rows are already typed
+        read();
+        if (['pre', 'tax', 'post', 'er'].every(b => M[b].every(r => r.cur === '' && r.ytd === ''))) { const typedEmp = M.employer, st = start(M.person); Object.assign(M, st, st.employer ? {} : { employer: typedEmp }); return paint(); }
+      }
+      read(); adds();
+    };
+    f.onclick = e => {
+      const add = e.target.closest('[data-row-add]'), del = e.target.closest('[data-row-del]');
+      if (add) { read(); const b = add.dataset.rowAdd; M[b].push({ kind: b === 'tax' ? 'other' : Object.keys(STUB_BLOCKS[b]).pop(), label: '', cur: '', ytd: '' }); filled = new Set([...filled].filter(k => !k.startsWith(b + '.'))); paint(); root()?.querySelector(`.stub-row[data-b="${b}"][data-i="${M[b].length - 1}"] select, .stub-row[data-b="${b}"][data-i="${M[b].length - 1}"] input`)?.focus(); }
+      if (del) { read(); const row = del.closest('.stub-row'); M[row.dataset.b].splice(+row.dataset.i, 1); filled = new Set([...filled].filter(k => !k.startsWith(row.dataset.b + '.'))); paint(); }
+    };
+    f.onsubmit = e => e.preventDefault();
+  };
+  wire(); adds();
+  if (preset.parsed) { stubFill(M, preset.parsed, filled); note = `Filled ${filled.size} box${filled.size === 1 ? '' : 'es'} from the PDF. Check them against the stub, then save. Only the numbers and row names are kept.`; paint(); }
+  $('#ps-save').onclick = () => {
+    read();
+    const s = stubTidy({ ...M, id: old?.id, added: old?.added, txIds: old?.txIds, src: filled.size ? 'pdf' : old?.src });
+    if (!s.date) { toast('Add the pay date.'); return $('#ps-date')?.focus(); }
+    if (!(s.gross > 0) && !(s.net > 0)) { toast('Type the pay before tax and the take-home pay.'); return $('#ps-gross')?.focus(); }
+    if (old) state.paystubs[state.paystubs.findIndex(x => x.id === old.id)] = s; else state.paystubs.push(s);
+    stubOpenSet().add(s.id);
+    const a = stubAddsUp(s), y = yearOf(s.date);
+    closeModal(true); commit();
+    if (route().page === 'taxes' && +(route().params.y || new Date().getFullYear()) !== y) go(`#/taxes?y=${y}`);
+    toast(`${old ? 'Pay stub saved' : 'Pay stub added'}${a.ok === false ? `. It’s off by ${money(Math.abs(a.off))}: check the rows when you can` : ''}.`, { label: 'Undo', fn: undo });
+  };
+  if (old) $('#ps-del').onclick = async () => {
+    if (!await confirmBox('Delete pay stub', `Delete the pay stub “${esc(stubName(old))}”?`, 'Delete', true)) return;
+    state.paystubs = state.paystubs.filter(x => x.id !== old.id); commit(); toast('Pay stub deleted.', { label: 'Undo', fn: undo });
+  };
+}
+/* What the PDF gave → the window's boxes, remembering which ones were filled */
+function stubFill(M, R, filled) {
+  if (!R || R.noText) return;
+  const set = (k, val, key) => { if (val != null && val !== '') { M[k] = val; filled.add(key); } };
+  set('employer', R.employer, 'employer'); set('date', R.date, 'date'); set('from', R.from, 'from'); set('to', R.to, 'to');
+  set('gross', R.gross.cur, 'gross.cur'); set('grossYtd', R.gross.ytd, 'gross.ytd'); set('net', R.net.cur, 'net.cur'); set('netYtd', R.net.ytd, 'net.ytd');
+  if (R.deposit) M.deposit = R.deposit;
+  const any = ['pre', 'tax', 'post', 'er'].some(b => R[b].length);
+  if (!any) return;
+  for (const b of ['pre', 'post', 'er']) M[b] = R[b].map(r => ({ ...r }));
+  M.tax = [...['federal', 'ss', 'medicare', 'state'].map(kind => R.tax.find(r => r.kind === kind) || { kind, label: '', cur: null, ytd: null }), ...R.tax.filter(r => r.kind === 'other')].map(r => ({ ...r }));
+  for (const b of ['pre', 'tax', 'post', 'er']) M[b].forEach((r, i) => { if (r.cur != null) filled.add(`${b}.${i}.cur`); if (r.ytd != null) filled.add(`${b}.${i}.ytd`); });
+}
+
+/* ---------- picking the deposit by hand ---------- */
+function stubPickModal(id) {
+  const s = stubById(id); if (!s) return;
+  const ties = stubTies(), mine = new Set(stubDeposits(s).txs.map(t => t.id));
+  const lo = addDays(s.date, -5), hi = addDays(s.date, 14);
+  const list = state.transactions.filter(t => t.amount > 0 && ((t.date >= lo && t.date <= hi && (!ties.byTx[t.id] || ties.byTx[t.id] === s.id)) || mine.has(t.id)))
+    .sort((a, b) => Math.abs(a.amount - s.net) - Math.abs(b.amount - s.net) || a.date.localeCompare(b.date)).slice(0, 40);
+  openModal({ title: 'Which deposit was this paycheck?', id: 'stub-pick',
+    body: `<p>${esc(stubName(s))}: take-home pay of <strong class="num">${money(s.net)}</strong>. Tick the deposit it landed as. If it was split between accounts, tick each part.</p>
+      ${list.length ? `<div class="stub-pick">${list.map(t => `<label class="check stub-pick-row"><input type="checkbox" value="${esc(t.id)}" ${mine.has(t.id) ? 'checked' : ''}><span class="stub-pick-what">${dateLabel(t.date)} · ${esc(t.payee)}<small class="muted">${esc(acctById(t.accountId)?.name || '')}</small></span><span class="num">${money(t.amount)}</span></label>`).join('')}</div>
+      <p class="stub-adds" id="pick-sum" role="status"></p>` : `<p class="muted">No money came into your accounts between ${dateLabel(lo)} and ${dateLabel(hi)}. Import that account’s transactions, then pick the deposit here.</p>`}`,
+    actions: `<button class="btn ghost" data-close>Cancel</button>${list.length ? '<button class="btn primary" id="pick-save">Save</button>' : ''}` });
+  if (!list.length) return;
+  const picked = () => $$('#modal .stub-pick input:checked').map(i => i.value);
+  const say = () => {
+    const tot = round2(sum(picked().map(i => list.find(t => t.id === i).amount))), el = $('#pick-sum'), n = picked().length;
+    el.textContent = !n ? 'Nothing ticked: this stub won’t be tied to a deposit.' : cents(tot) === cents(s.net) ? `${n === 1 ? 'That is' : 'Those add up to'} the take-home: ${money(tot)}.` : `${money(tot)} ticked: ${money(Math.abs(s.net - tot))} ${tot < s.net ? 'short of' : 'more than'} the take-home.`;
+    el.className = `stub-adds ${!n ? '' : cents(tot) === cents(s.net) ? 'ok' : 'bad'}`;
+  };
+  $('#modal .stub-pick').onchange = say; say();
+  $('#pick-save').onclick = () => {
+    const ids = picked(), t = stubById(id);
+    if (ids.length) t.txIds = ids; else delete t.txIds;
+    closeModal(true); commit(); toast(ids.length ? 'Tied to that deposit.' : 'No longer tied to a deposit.', { label: 'Undo', fn: undo });
+  };
+}
+
+/* ---------- lines other screens borrow ---------- */
+/* The transaction window: "From Alex’s pay stub of Nov 20: $7,115.38 before tax" */
+function stubLineForTxn(t) {
+  const s = t ? stubForTxn(t.id) : null; if (!s) return '';
+  return `<p class="muted small wide stub-from">From <button type="button" class="linklike link" data-stub-view="${esc(s.id)}">${esc(memberName(s.person))}’s pay stub of ${dateLabel(s.date)}</button>: ${money(s.gross)} before tax</p>`;
+}
+/* Open Taxes at a stub, unfolded */
+function stubShow(id) {
+  const s = stubById(id); if (!s) return;
+  const y = yearOf(s.date), set = stubOpenSet();
+  set.add(id); set.add(`more:${s.person}:${y}`);
+  closeModal(true); go(`#/taxes?y=${y}`);
+  setTimeout(() => document.querySelector(`details[data-stub="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'center' }), 120);
+}
+/* Import: a pay stub PDF adds no transactions; offer to open it in Taxes › Pay stubs */
+function renderPayStubOffer(box) {
+  box.innerHTML = `<div class="notice stub-offer"><strong>This looks like a pay stub.</strong> Open it in Taxes › Pay stubs?</div>
+    <p class="muted small">A pay stub doesn’t add transactions. Ọrọ̀ reads its numbers on this device, you check them, and nothing is sent anywhere.</p>`;
+  setModalActions('<button class="btn ghost" data-imp="back">Back</button><button class="btn primary" data-act="paystub-from-import">Open it in Pay stubs</button>');
+}
+/* Export for your CPA: the pay stubs, where the year stands, what was saved through pay, and the likely bill or refund */
+function payStubExportLines(year) {
+  const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`, H = stubHousehold(year), out = [], f = n => (Number(n) || 0).toFixed(2);
+  const names = { gross: 'Pay before tax', net: 'Take-home pay' };
+  for (const [b, kinds] of Object.entries(STUB_BLOCKS)) for (const [k, l] of Object.entries(kinds)) names[`${b}.${k}`] = `${{ pre: 'Before tax', tax: 'Tax taken out', post: 'After tax', er: 'Employer put in' }[b]}: ${l}`;
+  if (H.n) {
+    out.push(`Pay stubs for ${year}: where the year stands`, 'Person,Line,So far,Projected for the year');
+    for (const Y of H.people) for (const k of STUB_LINES) if (Y.sofar[k] || Y.projected[k]) out.push(`${q(memberName(Y.person))},${q(names[k])},${f(Y.sofar[k])},${f(Y.projected[k])}`);
+    const sv = payrollSavingForYear(year), so = payrollSaving(`${year}-01-01`, `${year}-12-31`, { lens: false });
+    out.push('', 'Saved through pay (not in Money in or Kept),On the stubs so far,Projected for the year',
+      `"401(k), 403(b) or 457",${f(so.byKind.retire)},${f(sv.byKind.retire)}`, `Roth 401(k),${f(so.byKind.roth)},${f(sv.byKind.roth)}`, `HSA,${f(so.byKind.hsa)},${f(sv.byKind.hsa)}`, `Stock or savings plan,${f(so.byKind.other)},${f(sv.byKind.other)}`, `Employer put in,${f(so.employer)},${f(sv.employer)}`,
+      '', 'Each pay stub', 'Person,Employer,Pay date,Kind,Pay before tax,Saved or paid before tax,Taxes taken out,Other things taken out,Take-home pay,Federal income tax,Social Security,Medicare,Illinois income tax,Landed as');
+    for (const s of stubsAll().filter(x => yearOf(x.date) === year).sort((a, b) => a.date.localeCompare(b.date))) {
+      const p = stubPath(s), L = stubLines(s);
+      out.push([q(memberName(s.person)), q(s.employer), s.date, s.bonus ? 'Bonus or one-time' : 'Regular', f(p.gross), f(p.pre), f(p.tax), f(p.post), f(p.net), f(L['tax.federal']), f(L['tax.ss']), f(L['tax.medicare']), f(L['tax.state']), q(stubLandedText(s))].join(','));
+    }
+    out.push('');
+  }
+  const D = taxDue(year);
+  if (D.X.H.entered && D.withheldAny) out.push('Likely tax bill or refund,Federal,Illinois', `Income tax for the year,${f(D.federal.tax)},${f(D.state.tax)}`, `Taken out of pay,${f(D.federal.withheld)},${f(D.state.withheld)}`, `Other payments sent in,${f(D.federal.paid)},${f(D.state.paid)}`, `Owed (a minus is a refund),${f(D.federal.due)},${f(D.state.due)}`, '');
+  return out;
+}
+
+/* ---------- buttons and boxes ---------- */
+ACTIONS['add-paystub'] = el => payStubModal(null, { person: el?.dataset.person });
+ACTIONS['whatif-plan'] = el => { const n = whatIfMakePlan(+el.dataset.year); if (n) toast('Your plan now uses the what-if numbers.', { label: 'Undo', fn: undo }); };
+ACTIONS['whatif-clear'] = el => { if (state.tax.whatif?.[+el.dataset.year]) { whatIfForget(+el.dataset.year); commit(); toast('What if… cleared.', { label: 'Undo', fn: undo }); } };
+ACTIONS['paystub-from-import'] = () => {
+  const lines = IMP?.stubLines, R = lines ? parsePayStub(lines) : null;
+  closeModal(true); IMP = null;
+  if (R?.date) go(`#/taxes?y=${yearOf(R.date)}`); else if (route().page !== 'taxes') go('#/taxes');
+  payStubModal(null, { parsed: R });
+};
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-stub-edit],[data-stub-pick],[data-stub-view]'); if (!el) return;
+  const d = el.dataset;
+  e.preventDefault();
+  if (d.stubEdit) return payStubModal(d.stubEdit);
+  if (d.stubPick) return stubPickModal(d.stubPick);
+  if (d.stubView) return stubShow(d.stubView);
+});
+/* Which stubs are unfolded stays as it was when the page redraws */
+document.addEventListener('toggle', e => {
+  const d = e.target; if (!d.matches?.('details[data-stub], details[data-stubs-more]')) return;
+  const k = d.dataset.stub || d.dataset.stubsMore, set = stubOpenSet();
+  if (d.open) set.add(k); else set.delete(k);
+}, true);
+document.addEventListener('change', e => {
+  const el = e.target, d = el.dataset;
+  if (d.wi) {   // a What if… box: kept with the year's data, so it syncs and survives a restart
+    const year = +d.year, all = (state.tax.whatif = state.tax.whatif || {}), W = (all[year] = all[year] || {});
+    const [who, f] = d.wi.split(':'), raw = el.value.trim(), n = parseAmount(raw);
+    const val = f === 'status' ? (FILING[el.value] ? el.value : null) : raw === '' || !isFinite(n) ? null : f === 'kids' ? Math.max(0, Math.round(n)) : round2(Math.max(0, n));
+    const box = who === 'h' ? W : ((W.people = W.people || {})[who] = W.people[who] || {});
+    if (val == null) delete box[f]; else box[f] = val;
+    for (const id of Object.keys(W.people || {})) if (!Object.keys(W.people[id]).length) delete W.people[id];
+    if (W.people && !Object.keys(W.people).length) delete W.people;
+    if (!Object.keys(W).length) delete all[year];
+    if (!Object.keys(all).length) delete state.tax.whatif;
+    commit({ silent: true }); setTimeout(render, 0); return;
+  }
+  if (d.payinfo) {   // how often someone is paid, their birth year, what their HSA covers
+    const [id, f, ...rest] = d.payinfo.split(':'), job = rest.join(':'), all = (state.tax.payInfo = state.tax.payInfo || {}), info = (all[id] = all[id] || {});
+    if (f === 'born') { const y = Math.round(parseAmount(el.value)); if (y > 1900 && y <= new Date().getFullYear()) info.born = y; else delete info.born; }
+    else if (f === 'hsa') { if (el.value === 'self') info.hsa = 'self'; else delete info.hsa; }
+    else if (f === 'freq' && !UNSAFE_KEYS.has(job)) { info.freq = info.freq || {}; if (PAY_FREQS.includes(el.value)) info.freq[job] = el.value; else delete info.freq[job]; if (!Object.keys(info.freq).length) delete info.freq; }
+    if (!Object.keys(info).length) delete all[id];
+    if (!Object.keys(all).length) delete state.tax.payInfo;
+    if (isTouch() && el.tagName === 'SELECT') el.blur();
+    commit({ silent: true }); setTimeout(render, 0);
+  }
+});
+
 /* ================= iPhone ⇄ Mac sync =================
    The Mac keeps the main copy in its Ọrọ̀ folder (data/oro.json, synced by iCloud Drive).
    A phone (or any browser that can't save into a folder) opens that file, keeps a working copy,
@@ -8022,12 +9278,14 @@ function diffInto(ops, b, c, path) {
 
 function opLabel(o, target) {
   if (o.path[0] === 'settings' && (o.path[1] === 'checkinQuiet' || o.k === 'checkinQuiet')) return 'check-in: a bill or charge you set aside';
+  if (o.path[0] === 'tax' && o.path[1] === 'whatif') return `taxes: What if… for ${o.path[2] || 'the year'}`;
+  if (o.path[0] === 'tax' && o.path[1] === 'payInfo') return 'taxes: how often someone is paid, a birth year or what an HSA covers';
   const v = o.v || (o.op === 'del' ? null : undefined);
-  const where = { transactions: 'transaction', accounts: 'account', categories: 'category', goals: 'goal', holdings: 'holding', recurring: 'recurring item', rules: 'rule' }[o.path[0]] || o.path.join(' › ');
+  const where = { transactions: 'transaction', accounts: 'account', categories: 'category', goals: 'goal', holdings: 'holding', recurring: 'recurring item', rules: 'rule', paystubs: 'pay stub' }[o.path[0]] || o.path.join(' › ');
   if (o.op === 'put' || o.op === 'del') {
     const list = walkPath(target, o.path);
     const item = (Array.isArray(list) ? list.find(x => x.id === o.id) : null) || v || {};   // name it as it stands where it was kept
-    const name = item.payee || item.name || item.text || item.symbol || o.id;
+    const name = (o.path[0] === 'paystubs' && item.date ? stubName(item) : '') || item.payee || item.name || item.text || item.symbol || o.id;   // "Acme, Nov 20"
     return `${where} “${name}”`;
   }
   return o.path.join(' › ');
@@ -8120,7 +9378,10 @@ async function syncLoad() {
   try {
     if (p.encrypted) { if (!Store.pass) return; p = (await Vault.open(p, Store.pass)).data; }
     SYNC.rec = p.sync || null; SYNC.cacheKey = null;
-    if (SYNC.rec) { tidyPayees(SYNC.rec.base); tidyPayees(SYNC.rec.sentSnap); }   // match the tidy-up migrate() does, so it isn't counted as a change
+    if (SYNC.rec) for (const copy of [SYNC.rec.base, SYNC.rec.sentSnap]) {   // match what migrate() does, so it isn't counted as a change
+      tidyPayees(copy);
+      if (copy && !Array.isArray(copy.paystubs)) copy.paystubs = [];   // a copy from before pay stubs: a stub added here is then sent as one item
+    }
   } catch (e) { SYNC.rec = null; }
 }
 /* Edits made here since the last send (or since the Mac's data was opened). */
@@ -8321,7 +9582,9 @@ function mergeNote(lm, dev) {
 }
 
 /* What's waiting to be sent, in words: "Account “Chase checking”: name", "Transaction “Jewel Osco”: category". */
-const FIELD_WORDS = { categoryId: 'category', payee: 'payee', amount: 'amount', memo: 'memo', name: 'name', flag: 'flag', tags: 'tags', person: 'person', date: 'date', balance: 'balance', balanceDate: 'balance date', owner: 'owner', budget: 'budget', mortgageId: 'mortgage', amort: 'payment tracking', rate: 'rate', minPayment: 'payment', splits: 'split', institution: 'institution', last4: 'last 4 digits', pp: 'PayPal details', rawPayee: 'bank description', card: 'card', cards: 'cards', ids: 'linked IDs', importId: 'import ID' };
+const FIELD_WORDS = { categoryId: 'category', payee: 'payee', amount: 'amount', memo: 'memo', name: 'name', flag: 'flag', tags: 'tags', person: 'person', date: 'date', balance: 'balance', balanceDate: 'balance date', owner: 'owner', budget: 'budget', mortgageId: 'mortgage', amort: 'payment tracking', rate: 'rate', minPayment: 'payment', splits: 'split', institution: 'institution', last4: 'last 4 digits', pp: 'PayPal details', rawPayee: 'bank description', card: 'card', cards: 'cards', ids: 'linked IDs', importId: 'import ID',
+  gross: 'pay before tax', grossYtd: 'pay before tax, year to date', net: 'take-home pay', netYtd: 'take-home pay, year to date', pre: 'saved or paid before tax', tax: 'taxes taken out', post: 'other things taken out', er: 'what your employer put in',
+  employer: 'employer', bonus: 'regular or bonus', from: 'pay period', to: 'pay period', txIds: 'the deposit it’s tied to', deposit: 'deposit account' };
 function pendingLabels() {
   const rec = SYNC.rec; if (!rec?.base) return [];
   return syncPending().map(o => {

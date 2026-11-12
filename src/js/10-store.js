@@ -69,6 +69,7 @@ function defaultState() {
     settings: { theme: 'auto', look: 'ng', lowCash: 2500, staleDays: 35, targets: {}, privacy: false, autoLock: 15, keepBackups: 30, checkin: true, checkinQuiet: {}, members: [{ id: 'joint', name: 'Joint' }, { id: 'you', name: 'You' }, { id: 'partner', name: 'Partner' }] },
     accounts: [], transactions: [], categories: defaultCategories(), rules: [],
     holdings: [], recurring: [], snapshots: {}, reviews: {}, goals: [], plan: defaultPlan(), tax: {}, banks: { items: [], price: null },
+    paystubs: [],   // pay stubs typed in or read from a PDF (29-paystubs.js); numbers and row labels only
   };
 }
 function migrate(s) {
@@ -77,7 +78,8 @@ function migrate(s) {
   s = Object.assign(d, s || {});
   s.settings = Object.assign(defaultState().settings, s.settings || {});
   s.plan = Object.assign(defaultPlan(), s.plan || {});
-  for (const k of ['accounts', 'transactions', 'categories', 'rules', 'holdings', 'recurring', 'goals']) if (!Array.isArray(s[k])) s[k] = [];
+  for (const k of ['accounts', 'transactions', 'categories', 'rules', 'holdings', 'recurring', 'goals', 'paystubs']) if (!Array.isArray(s[k])) s[k] = [];
+  s.paystubs = s.paystubs.filter((x, i, all) => x && typeof x === 'object' && typeof x.id === 'string' && x.id && all.findIndex(y => y && y.id === x.id) === i);   // pay stubs (29-paystubs.js): each a whole item with its own id
   for (const k of ['snapshots', 'reviews', 'tax']) if (!s[k] || typeof s[k] !== 'object') s[k] = {};
   if (!s.banks || typeof s.banks !== 'object' || !Array.isArray(s.banks.items)) s.banks = { items: [], price: s.banks?.price ?? null };
   if (!s.categories.length) s.categories = defaultCategories();

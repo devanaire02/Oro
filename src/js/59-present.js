@@ -58,6 +58,7 @@ function mdRefresh() {
 function buildSlides(mk) {
   const prev = addMonths(mk, -1), cur = mk === thisMonth(), sm = n => money(n, { cents: false });
   const txs = txInMonth(mk), f = flowSummary(txs);
+  const K = keptWithPayroll(mk, { lens: false }), pay = K.savedThroughPay > 0;   // what was saved through pay counts as kept
   const avg = [1, 2, 3].map(i => flowSummary(txInMonth(addMonths(mk, -i))));
   const avgSpend = sum(avg.map(x => x.spending)) / 3;
   const endNW = cur ? totals().netWorth : snapshotNW(mk), startNW = snapshotNW(prev);
@@ -80,12 +81,13 @@ function buildSlides(mk) {
       <p class="md-proverb"><span lang="yo">${MD_PROVERB[0]}</span> ${MD_PROVERB[1]}</p></div>` });
   slides.push({ title: 'The big picture', kind: 'big', html: () => `<div class="slide-center">
       <p class="eyebrow-plain">${monthLabel(mk)}</p>
-      <h1 class="slide-h">${f.net >= 0 ? `We kept <span class="num pos">${sm(f.net)}</span> ${cur ? 'so far this month' : 'this month'}.` : `We spent <span class="num neg">${sm(-f.net)}</span> more than came in.`}</h1>
-      <p class="slide-lede">${sm(f.income)} came in and ${sm(f.spending)} went out${nwChange != null ? `, and our net worth ${nwChange >= 0 ? 'grew' : 'fell'} by ${sm(Math.abs(nwChange))}` : ''}.</p>
-      <div class="md-trio">
+      <h1 class="slide-h">${K.kept >= 0 ? `We kept <span class="num pos">${sm(K.kept)}</span> ${cur ? 'so far this month' : 'this month'}.` : `We spent <span class="num neg">${sm(-K.kept)}</span> more than came in.`}</h1>
+      <p class="slide-lede">${sm(f.income)} came in and ${sm(f.spending)} went out${pay ? `, ${sm(K.savedThroughPay)} more was saved through pay before it reached the bank` : ''}${nwChange != null ? `, and our net worth ${nwChange >= 0 ? 'grew' : 'fell'} by ${sm(Math.abs(nwChange))}` : ''}.</p>
+      <div class="md-trio${pay ? ' four' : ''}">
         <button class="md-fig" data-drill="in|${mk}"><span>Came in</span><strong class="num">${sm(f.income)}</strong></button>
         <button class="md-fig" data-drill="out|${mk}"><span>Went out</span><strong class="num">${sm(f.spending)}</strong></button>
-        <button class="md-fig" data-drill="kept|${mk}"><span>Kept</span><strong class="num ${signClass(f.net)}">${sm(f.net)}</strong></button></div></div>` });
+        ${pay ? `<div class="md-fig still"><span>Saved through pay</span><strong class="num">${sm(K.savedThroughPay)}</strong></div>` : ''}
+        <button class="md-fig" data-drill="kept|${mk}"><span>Kept</span><strong class="num ${signClass(K.kept)}">${sm(K.kept)}</strong></button></div></div>` });
   const lastMk = Object.keys(state.reviews).filter(k => k < mk && (state.reviews[k]?.notes || '').trim()).sort().pop();
   if (lastMk) {
     const lines = state.reviews[lastMk].notes.split(/\n+/).map(x => x.replace(/^\s*[-•*]\s*/, '').trim()).filter(Boolean), done = state.reviews[lastMk].done || {};
@@ -105,14 +107,14 @@ function buildSlides(mk) {
         ${moves.length ? `<div class="md-moves"><h3>What moved it most</h3><ul class="simple-list">${moves.map(r => `<li><span>${esc(r.name)}</span><span></span><span class="num ${signClass(r.d)}">${money(r.d, { cents: false, sign: true })}</span></li>`).join('')}</ul><button class="linklike md-more" data-drill="nw|${mk}">See every account</button></div>` : ''}</div></div>` });
   }
   slides.push({ title: 'Money in and out', kind: 'io', html: () => {
-    const mx = Math.max(f.income, f.spending, 1), ms = Array.from({ length: 6 }, (_, i) => addMonths(mk, i - 5)), kept = ms.map(m => flowSummary(txInMonth(m)).net);
+    const mx = Math.max(f.income, f.spending, 1), ms = Array.from({ length: 6 }, (_, i) => addMonths(mk, i - 5)), kept = ms.map(m => keptWithPayroll(m, { lens: false }).kept);
     return `<div class="slide-split">
       <div><h2 class="slide-h2">In and out</h2>
         <div class="io-bars"><button class="io-row" data-drill="in|${mk}"><span>Came in</span><div class="io-track"><span style="width:${f.income / mx * 100}%;background:var(--pos)"></span></div><strong class="num">${sm(f.income)}</strong></button>
         <button class="io-row" data-drill="out|${mk}"><span>Went out</span><div class="io-track"><span style="width:${f.spending / mx * 100}%;background:var(--c4)"></span></div><strong class="num">${sm(f.spending)}</strong></button></div>
         <p class="slide-lede">Spending was ${avgSpend ? `${sm(Math.abs(f.spending - avgSpend))} ${f.spending > avgSpend ? 'more' : 'less'} than` : 'compared with'} our usual month.</p>
         <div class="md-mini"><h3>Kept, the last six months</h3>${chartHost({ type: 'bars', h: 150, label: 'Kept by month', labels: ms.map(m => MON[+m.slice(5) - 1]), series: [{ name: 'Kept', values: kept, color: 'var(--ink-accent)' }], pick: i => drillMonth(ms[i]), pickLabel: 'Open the month', tip: i => `<strong>${monthLabel(ms[i])}</strong><br>Kept ${money(kept[i], { cents: false })}` })}</div></div>
-      <div class="slide-center">${ring(isFinite(f.rate) ? Math.max(0, f.rate) : 0, { size: 220, width: 20, label: isFinite(f.rate) ? pct(f.rate, 0) : '—', color: f.rate >= 0.2 ? 'var(--pos)' : f.rate >= 0 ? 'var(--ink-accent)' : 'var(--neg)' })}<p class="slide-lede">of what came in, we kept</p></div></div>`;
+      <div class="slide-center">${ring(isFinite(K.rate) ? Math.max(0, K.rate) : 0, { size: 220, width: 20, label: isFinite(K.rate) ? pct(K.rate, 0) : '—', color: K.rate >= 0.2 ? 'var(--pos)' : K.rate >= 0 ? 'var(--ink-accent)' : 'var(--neg)' })}<p class="slide-lede">of what came in, we kept${pay ? `<br><span class="small">counting ${sm(K.savedThroughPay)} saved through pay</span>` : ''}</p></div></div>`;
   } });
   if (items.length) slides.push({ title: 'Where it went', kind: 'where', html: () => `<div class="slide-split">
       <div>${chartHost({ type: 'donut', h: 330, label: 'Where the money went', items, center: { value: sm(spendTotal), label: 'spent' }, pick: it => drillGroup(it.label, mk) })}</div>

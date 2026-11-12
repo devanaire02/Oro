@@ -23,7 +23,7 @@ function insights(mk = thisMonth(), opts = {}) {
   if (isCur) for (const u of upcoming(35).filter(u => u.amount <= -1000 && !/mortgage|rent\b|card payment/i.test(u.name))) out.push({ tone: 'info', w: -u.amount / 3, go: '#/cashflow', text: `${u.name} of ${money(-u.amount, { cents: false })} is due ${dateLabel(u.date)}.` });
   for (const g of state.goals) { const p = goalProgress(g); if (p.past) out.push({ tone: 'warn', w: 450, go: '#/planning', text: `${g.name} is past its date (${dateLabel(g.targetDate, true)}) with ${money(p.remaining, { cents: false })} still to go.` }); else if (p.status === 'behind') out.push({ tone: 'warn', w: 400, go: '#/planning', text: `${g.name} needs ${money(p.needed, { cents: false })} a month to hit ${dateLabel(g.targetDate, true)}; you’re putting in ${money(g.monthly, { cents: false })}.` }); else if (p.status === 'done') out.push({ tone: 'good', w: 300, go: '#/planning', text: `${g.name} is fully funded. Nice work.` }); }
   for (const d of detectRepeating().filter(d => d.isNew)) out.push({ tone: 'info', w: d.monthly * 6, go: '#/cashflow', text: `New subscription: ${d.payee}, ${money(d.monthly)} a month (${money(d.monthly * 12, { cents: false })} a year).` });
-  const f = flowSummary(txInMonth(mk)), avgRate = (() => { const xs = [1, 2, 3].map(i => flowSummary(txInMonth(addMonths(mk, -i)))); const inc = sum(xs.map(x => x.income)), sp = sum(xs.map(x => x.spending)); return inc ? (inc - sp) / inc : NaN; })();
+  const f = keptWithPayroll(mk, { lens: false }), avgRate = (() => { const xs = [1, 2, 3].map(i => keptWithPayroll(addMonths(mk, -i), { lens: false })); const base = sum(xs.map(x => x.moneyIn + x.savedThroughPay)); return base ? sum(xs.map(x => x.kept)) / base : NaN; })();
   if (!isCur && isFinite(f.rate) && isFinite(avgRate) && Math.abs(f.rate - avgRate) > 0.05) out.push({ tone: f.rate > avgRate ? 'good' : 'warn', w: 500, drill: `kept|${mk}`, text: `You kept ${pct(f.rate, 0)} of income, ${f.rate > avgRate ? 'better than' : 'below'} the recent ${pct(avgRate, 0)}.` });
   return out.sort((a, b) => b.w - a.w).slice(0, opts.limit || 5);
 }
@@ -83,7 +83,8 @@ function overviewDetailed(sub) {
   const up = upcoming(14, true), att = attentionItems();
   const planned = sum(state.categories.filter(c => c.kind === 'expense').map(c => c.period === 'year' ? (c.budget || 0) / 12 : (c.budget || 0)));
   const spendSeries = monthlySeries(m => flowSummary(lensed(txInMonth(m))).spending);
-  const keptSeries = monthlySeries(m => flowSummary(lensed(txInMonth(m))).net);
+  const K = keptWithPayroll(mk), pay = K.savedThroughPay > 0;   // what was saved through pay (on pay stubs) never reaches the bank, so Kept adds it
+  const keptSeries = monthlySeries(m => keptWithPayroll(m).kept);
   const inSeries = monthlySeries(m => flowSummary(lensed(txInMonth(m))).income), lastIn = inSeries[inSeries.length - 2] || 0;
   const inNW = id => { const a = acctById(id); return a && nwIncludes(a, true); };
   const cashSeries = monthlySeries(m => { const s = state.snapshots[m] || {}; return sum(Object.entries(s).filter(([id]) => inNW(id) && ACCOUNT_TYPES[acctById(id)?.type]?.bucket === 'cash').map(([, v]) => v)); });
@@ -116,10 +117,11 @@ function overviewDetailed(sub) {
   ${briefPanel(mk)}
 
   <section class="kpis-row">
-    <div class="month-strip" role="group" aria-label="This month: money in, less what was spent, is what was kept">
+    <div class="month-strip${pay ? ' has-pay' : ''}" role="group" aria-label="This month: money in, less what was spent${pay ? ', plus what was saved through pay,' : ''} is what was kept">
     <div class="kpi kpi-in" data-drill="in|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Money in this month</span><span class="kpi-value num ${f.income > 0 ? 'pos' : ''}">${money(f.income, { cents: false })}</span><span class="kpi-sub">${lastIn ? `${money(lastIn, { cents: false })} in ${MONTHS[+prev.slice(5) - 1]}` : 'Paychecks and other money coming in'}</span>${sparkline(inSeries, { color: 'var(--pos)' })}</div>
     <div class="kpi kpi-out" data-drill="out|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Spent in ${MONTHS[new Date().getMonth()]}</span><span class="kpi-value num">${money(f.spending, { cents: false })}</span><span class="kpi-sub">${lensActive() && UI.lens !== 'nokids' ? `${esc(lensLabel())}’s share of the spending` : planned ? `of ${money(planned, { cents: false })} planned · ${pct(f.spending / planned, 0)}` : 'No budget set'}</span>${sparkline(spendSeries, { color: 'var(--c4)' })}</div>
-    <div class="kpi kpi-kept" data-drill="kept|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Kept this month</span><span class="kpi-value num ${signClass(f.net)}">${money(f.net, { cents: false })}</span><span class="kpi-sub">${isFinite(f.rate) ? `${pct(f.rate, 0)} of income` : 'No income yet'}</span>${sparkline(keptSeries, { color: 'var(--pos)' })}</div>
+    ${pay ? `<a class="kpi kpi-pay" href="#/taxes" title="From your pay stubs: open Taxes"><span class="kpi-label">Saved through pay</span><span class="kpi-value num pos">${money(K.savedThroughPay, { cents: false })}</span><span class="kpi-sub">${esc(payrollKindsText(K.byKind))}</span></a>` : ''}
+    <div class="kpi kpi-kept" data-drill="kept|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Kept this month</span><span class="kpi-value num ${signClass(K.kept)}">${money(K.kept, { cents: false })}</span><span class="kpi-sub">${isFinite(K.rate) ? `${pct(K.rate, 0)} of income` : 'No income yet'}</span>${sparkline(keptSeries, { color: 'var(--pos)' })}</div>
     </div>
     <a class="kpi kpi-bal" href="#/cashflow"><span class="kpi-label">Cash on hand</span><span class="kpi-value num">${money(t.cash, { cents: false })}</span><span class="kpi-sub">${state.recurring.length ? `Low of ${money(fc.low.y, { cents: false })} on ${dateLabel(fc.low.x)}` : 'Add bills to forecast'}</span>${sparkline(cashSeries, { color: 'var(--c2)' })}</a>
     <a class="kpi kpi-bal" href="#/investments"><span class="kpi-label">Investments</span><span class="kpi-value num">${money(t.invest, { cents: false })}</span><span class="kpi-sub">${(() => { const p = invSeries[invSeries.length - 2]; return p ? `${money(t.invest - p, { cents: false, sign: true })} this month` : '&nbsp;'; })()}</span>${sparkline(invSeries, { color: 'var(--c1)' })}</a>
@@ -176,7 +178,7 @@ function overviewSimple(sub) {
   <section class="simple-cards">
     <div class="s-card"><span class="s-label">Came in</span><span class="s-value num">${money(f.income, { cents: false })}</span><span class="s-sub">${MONTHS[+mk.slice(5) - 1]} so far</span></div>
     <div class="s-card"><span class="s-label">Went out</span><span class="s-value num">${money(f.spending, { cents: false })}</span><span class="s-sub">${planned ? `${pct(Math.min(9.99, f.spending / planned), 0)} of the plan` : '&nbsp;'}</span></div>
-    <div class="s-card accent"><span class="s-label">Kept</span><span class="s-value num ${signClass(f.net)}">${money(f.net, { cents: false })}</span><span class="s-sub">${isFinite(f.rate) ? `${pct(f.rate, 0)} of what came in` : '&nbsp;'}</span></div>
+    ${(() => { const K = keptWithPayroll(mk); return `<div class="s-card accent"><span class="s-label">Kept</span><span class="s-value num ${signClass(K.kept)}">${money(K.kept, { cents: false })}</span><span class="s-sub">${isFinite(K.rate) ? `${pct(K.rate, 0)} of what came in${K.savedThroughPay > 0 ? `, counting ${money(K.savedThroughPay, { cents: false })} saved through pay` : ''}` : '&nbsp;'}</span></div>`; })()}
   </section>
   ${briefPanel(mk)}
   <div class="cols">

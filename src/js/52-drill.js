@@ -32,11 +32,11 @@ function drillFlow(kind, mk = thisMonth()) {
 }
 /* Kept = money in − spent, each of which opens in turn. */
 function drillKept(mk = thisMonth()) {
-  const f = flowSummary(lensed(txInMonth(mk))), M = monthLabel(mk);
+  const f = flowSummary(lensed(txInMonth(mk))), M = monthLabel(mk), K = keptWithPayroll(mk), pay = K.savedThroughPay > 0;
   const row = (label, v, d, cls = '') => `<tr class="${cls}"><th scope="row">${d ? `<button class="linklike" data-drill="${d}|${mk}">${label}</button>` : label}</th><td class="num">${money(v)}</td></tr>`;
-  openModal({ title: `Kept in ${M}`, id: 'drill', body: `<p class="drill-sub">What came in, less what went out.</p>
-    <table class="ledger compact sched drill-sum"><tbody>${row('Money in', f.income, 'in')}${row('Spent', -f.spending, 'out')}${row('Kept', f.net, '', 'net')}</tbody></table>
-    <p class="muted small drill-note">${isFinite(f.rate) ? `That is ${pct(f.rate, 0)} of what came in. ` : ''}${TRANSFER_NOTE}</p>`, actions: '<button class="btn primary" data-close>Done</button>' });
+  openModal({ title: `Kept in ${M}`, id: 'drill', body: `<p class="drill-sub">What came in, less what went out${pay ? ', plus what was saved through pay before it reached the bank' : ''}.</p>
+    <table class="ledger compact sched drill-sum"><tbody>${row('Money in', f.income, 'in')}${row('Spent', -f.spending, 'out')}${pay ? `<tr class="drill-pay"><th scope="row"><a href="#/taxes" data-close>Saved through pay</a> <span class="muted small">${esc(payrollKindsText(K.byKind))}</span></th><td class="num">${money(K.savedThroughPay)}</td></tr>` : ''}${row('Kept', K.kept, '', 'net')}</tbody></table>
+    <p class="muted small drill-note">${isFinite(K.rate) ? `That is ${pct(K.rate, 0)} of what came in${pay ? ' (counting what was saved through pay)' : ''}. ` : ''}${TRANSFER_NOTE}</p>`, actions: '<button class="btn primary" data-close>Done</button>' });
 }
 /* One slice of "Where it went": the categories of a group that have spending this month. */
 function drillGroup(label, mk = thisMonth()) {

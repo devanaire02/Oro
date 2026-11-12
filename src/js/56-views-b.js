@@ -202,6 +202,10 @@ VIEWS.review = p => {
   const avg3 = [1, 2, 3].map(i => flowSummary(txInMonth(addMonths(mk, -i))));
   const avgN = Math.max(1, [1, 2, 3].filter(i => addMonths(mk, -i) >= firstTxMonth()).length);   // fewer than three earlier months: the average of the ones there are
   const avgSpend = sum(avg3.map(x => x.spending)) / avgN, avgIncome = sum(avg3.map(x => x.income)) / avgN;
+  // Saved through pay (401(k), HSA… on pay stubs) never reaches the bank, so it's added to what was left over
+  const K = keptWithPayroll(mk, { lens: false }), Kp = keptWithPayroll(prev, { lens: false }), avgPay = sum([1, 2, 3].map(i => keptWithPayroll(addMonths(mk, -i), { lens: false }).savedThroughPay)) / avgN;
+  const pay = K.savedThroughPay > 0 || Kp.savedThroughPay > 0 || avgPay > 0;
+  const payCols = (saved, kept, cls = '') => (pay ? `<td class="num hide-sm ${cls}">${money(saved, { cents: false })}</td><td class="num ${cls}">${money(kept, { cents: false })}</td>` : '');
   const acts = categoryActuals(txs);
   const exp = state.categories.filter(c => c.kind === 'expense');
   const monthly = exp.filter(c => c.period !== 'year' && c.budget > 0).map(c => { const v = budgetView(c, mk); return { c, a: v.actual, b: round2(v.budget + (v.carry || 0)), d: Math.abs(v.available), left: v.available }; });
@@ -229,12 +233,13 @@ VIEWS.review = p => {
   return pageHead(`${monthLabel(mk)} review`, rv.completedAt ? `Reviewed ${dateLabel(rv.completedAt, true)}` : 'Not reviewed yet',
     `<label class="field inline"><span class="sr">Month</span><select data-filter="m">${months.map(m => `<option value="${m}" ${m === mk ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}</select></label><button class="btn" data-act="money-date" data-mk="${mk}">Present as Money date</button><button class="btn ghost" data-act="print">Print</button>`) + `
   <section class="flows"><table class="ledger flows-table">
-    <thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Left over</th><th class="num">Savings rate</th></tr></thead>
+    <thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num${pay ? ' hide-sm' : ''}">Left over</th>${pay ? '<th class="num hide-sm">Saved through pay</th><th class="num">Kept</th>' : ''}<th class="num">Savings rate</th></tr></thead>
     <tbody>
-      <tr><th scope="row">${MONTHS[+mk.slice(5) - 1]}</th><td class="num">${money(f.income, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td><td class="num ${signClass(f.net)}">${money(f.net, { cents: false })}</td><td class="num">${pct(f.rate, 0)}</td></tr>
-      <tr><th scope="row">${MONTHS[+prev.slice(5) - 1]}</th><td class="num muted">${money(fp.income, { cents: false })}</td><td class="num muted">${money(fp.spending, { cents: false })}</td><td class="num muted">${money(fp.net, { cents: false })}</td><td class="num muted">${pct(fp.rate, 0)}</td></tr>
-      <tr><th scope="row">${avgN < 3 ? (avgN === 1 ? 'The month before' : `Prior ${avgN}-month average`) : 'Prior 3-month average'}</th><td class="num muted">${money(avgIncome, { cents: false })}</td><td class="num muted">${money(avgSpend, { cents: false })}</td><td class="num muted">${money(avgIncome - avgSpend, { cents: false })}</td><td class="num muted">${avgIncome ? pct((avgIncome - avgSpend) / avgIncome, 0) : '—'}</td></tr>
-    </tbody></table></section>
+      <tr><th scope="row">${MONTHS[+mk.slice(5) - 1]}</th><td class="num">${money(f.income, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td><td class="num ${signClass(f.net)}${pay ? ' hide-sm' : ''}">${money(f.net, { cents: false })}</td>${payCols(K.savedThroughPay, K.kept)}<td class="num">${pct(pay ? K.rate : f.rate, 0)}</td></tr>
+      <tr><th scope="row">${MONTHS[+prev.slice(5) - 1]}</th><td class="num muted">${money(fp.income, { cents: false })}</td><td class="num muted">${money(fp.spending, { cents: false })}</td><td class="num muted${pay ? ' hide-sm' : ''}">${money(fp.net, { cents: false })}</td>${payCols(Kp.savedThroughPay, Kp.kept, 'muted')}<td class="num muted">${pct(pay ? Kp.rate : fp.rate, 0)}</td></tr>
+      <tr><th scope="row">${avgN < 3 ? (avgN === 1 ? 'The month before' : `Prior ${avgN}-month average`) : 'Prior 3-month average'}</th><td class="num muted">${money(avgIncome, { cents: false })}</td><td class="num muted">${money(avgSpend, { cents: false })}</td><td class="num muted${pay ? ' hide-sm' : ''}">${money(avgIncome - avgSpend, { cents: false })}</td>${payCols(avgPay, avgIncome - avgSpend + avgPay, 'muted')}<td class="num muted">${avgIncome + avgPay ? pct((avgIncome - avgSpend + avgPay) / (avgIncome + avgPay), 0) : '—'}</td></tr>
+    </tbody></table>
+    ${K.savedThroughPay > 0 ? `<p class="muted small pay-saved">Kept counts the ${money(K.savedThroughPay, { cents: false })} saved through pay in ${MONTHS[+mk.slice(5) - 1]} (${esc(payrollKindsText(K.byKind))}): it never reached the bank, so it isn’t in Money in.${K.employer ? ` Your employer put in ${money(K.employer, { cents: false })} more.` : ''}</p>` : ''}</section>
 
   <div class="cols">
     <section class="panel">
@@ -243,7 +248,7 @@ VIEWS.review = p => {
         <tr><th scope="row">End of ${MONTHS[+prev.slice(5) - 1]}</th><td class="num">${money(startNW, { cents: false })}</td></tr>
         ${bucketChange.filter(x => Math.abs(x.change) >= 1).map(x => `<tr><td class="indent">${esc(x.b.label)}</td><td class="num ${signClass(x.change)}">${money(x.change, { cents: false, sign: true })}</td></tr>`).join('')}
         <tr><th scope="row">${mk === thisMonth() ? 'Today' : `End of ${MONTHS[+mk.slice(5) - 1]}`}</th><td class="num total double">${money(endNW, { cents: false })}</td></tr></tbody></table>
-        <p class="muted small">Each line is its effect on net worth. Of the ${money(endNW - startNW, { cents: false, sign: true })} change, ${money(f.net, { cents: false, sign: true })} came from income left over after spending; the rest is market moves, loan paydown and revaluations.</p>`
+        <p class="muted small">Each line is its effect on net worth. Of the ${money(endNW - startNW, { cents: false, sign: true })} change, ${money(f.net, { cents: false, sign: true })} came from income left over after spending${K.savedThroughPay + K.employer > 0 ? ` and ${money(K.savedThroughPay + K.employer, { cents: false, sign: true })} from saving through pay (${money(K.savedThroughPay, { cents: false })} from your pay${K.employer ? `, ${money(K.employer, { cents: false })} from your employer` : ''})` : ''}; the rest is market moves, loan paydown and revaluations.</p>`
         : '<p class="muted">Net worth history starts once two months of balances exist. You can add past balances from each account’s History.</p>'}
     </section>
     <section class="panel">

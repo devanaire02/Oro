@@ -88,6 +88,7 @@ function txnModal(id) {
       ${t?.card ? `<p class="muted small wide">Card ending ${esc(t.card)}</p>` : ''}
       ${t?.pp ? `<p class="muted small wide">Paid through PayPal. Bank description: ${esc(t.pp.was)}</p>` : t?.rawPayee && t.rawPayee !== t.payee ? `<p class="muted small wide">Bank description: ${esc(t.rawPayee)}</p>` : ''}
       ${t?.reconciled ? '<p class="muted small wide">✓ Reconciled with a statement</p>' : ''}
+      ${t ? stubLineForTxn(t) : ''}
     </form>`,
     actions: `${t ? '<button class="btn ghost danger-text left" id="del">Delete</button>' : ''}${t && talkOn() ? `<button class="btn ghost" data-talk-open="txn:${t.id}" title="Say what to change about this transaction">${MIC_ICON} Talk</button>` : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="save">${t ? 'Save' : 'Add transaction'}</button>`,
   });

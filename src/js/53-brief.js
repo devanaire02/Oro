@@ -23,9 +23,10 @@ function whatMatters(mk = thisMonth()) {
   if (cur) for (const a of attentionItems()) if (a.k === 'off' && /Cash is projected/.test(a.text)) add('off', 5000, a.text + '.', { go: a.go });
 
   // ---- going well
-  if (f.income > 0 && f.net > 0) {
-    const xs = [1, 2, 3].map(i => flowSummary(lensed(txInMonth(addMonths(mk, -i))))), inc = sum(xs.map(x => x.income)), usual = inc > 0 ? (inc - sum(xs.map(x => x.spending))) / inc : NaN;
-    add('well', 900, `Kept ${sm(f.net)} ${cur ? 'so far this month' : `in ${M}`}, ${pct(f.rate, 0)} of what came in${!cur && isFinite(usual) && f.rate > usual + 0.03 ? `, better than the usual ${pct(usual, 0)}` : ''}.`, { drill: `kept|${mk}` });
+  const K = keptWithPayroll(mk);   // counts what was saved through pay, when there are pay stubs in the month
+  if (K.moneyIn + K.savedThroughPay > 0 && K.kept > 0) {
+    const xs = [1, 2, 3].map(i => keptWithPayroll(addMonths(mk, -i))), base = sum(xs.map(x => x.moneyIn + x.savedThroughPay)), usual = base > 0 ? sum(xs.map(x => x.kept)) / base : NaN;
+    add('well', 900, `Kept ${sm(K.kept)} ${cur ? 'so far this month' : `in ${M}`}${K.savedThroughPay > 0 ? `, counting ${sm(K.savedThroughPay)} saved through pay:` : ','} ${pct(K.rate, 0)} of what came in${!cur && isFinite(usual) && K.rate > usual + 0.03 ? `, better than the usual ${pct(usual, 0)}` : ''}.`, { drill: `kept|${mk}` });
   }
   const billCats = new Set(state.recurring.map(r => r.categoryId));
   const flex = state.categories.filter(c => c.kind === 'expense' && c.budget > 0 && c.period !== 'year' && !c.rental && !billCats.has(c.id)).map(c => budgetView(c, mk));

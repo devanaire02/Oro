@@ -41,6 +41,11 @@ async function handleImportFile(file, opts = {}) {
   try {
     if (ext === 'pdf') {
       const lines = await pdfToLines(await readFileAsBuffer(file));
+      if (isPayStubLines(lines)) {   // a pay stub adds no transactions: offer Taxes › Pay stubs instead (29-paystubs.js, 61-paystubs.js)
+        if (opts.silent) throw new Error('This looks like a pay stub. It adds no transactions: open it in Taxes › Pay stubs instead.');
+        IMP.source = 'paystub'; IMP.stubLines = lines; IMP.step = 'paystub';
+        return renderImport();
+      }
       if (isPayPalPdf(lines)) {
         IMP.source = 'paypal'; IMP.kind = 'paypal'; IMP.ppRows = parsePayPalPdf(lines); IMP.step = 'paypal';
         if (!IMP.ppRows.length) throw new Error('Ọrọ̀ found a PayPal statement but couldn’t read any payments from it.');
@@ -258,6 +263,7 @@ function renderImport() {
   if (s === 'positions') return renderPositionsStep(box);
   if (s === 'batch') return renderBatchStep(box);
   if (s === 'paypal') return renderPayPalStep(box);
+  if (s === 'paystub') return renderPayStubOffer(box);
 }
 function importFiles(files) {
   if (!files.length) return;

@@ -15,12 +15,20 @@ VIEWS.reports = p => {
   if (tab === 'flow') {
     const sk = lensActive() ? sankeyData(R.from, R.to, acts, 'From savings or shared income') : sankeyData(R.from, R.to);
     const f = flowSummary(txs);
+    // Saved through pay (401(k), HSA… on pay stubs) never reached the bank: it comes in on the left and lands in Saved
+    const K = keptWithPayrollRange(R.from, R.to), S = K.savedThroughPay;
+    if (S > 0) {
+      const at = sk.left.findIndex(n => n.drawn), saved = sk.right.find(n => n.saved);
+      sk.left = [...sk.left]; sk.left.splice(at < 0 ? sk.left.length : at, 0, { name: 'Saved through pay', value: S, title: `Saved through pay, before it reached the bank: ${money(S, { cents: false })}` });
+      sk.right = saved ? sk.right.map(n => (n.saved ? { ...n, value: n.value + S } : n)) : [...sk.right, { name: 'Saved', value: S, saved: true }];
+    }
     return head + `
     <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Left over</th><th class="num">Savings rate</th></tr></thead>
-      <tbody><tr><th scope="row">${esc(R.label)}</th><td class="num">${money(f.income, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td><td class="num ${signClass(f.net)}">${money(f.net, { cents: false })}</td><td class="num">${pct(f.rate, 0)}</td></tr></tbody></table></section>
+      <tbody><tr><th scope="row">${esc(R.label)}</th><td class="num">${money(f.income, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td><td class="num ${signClass(f.net)}">${money(f.net, { cents: false })}</td><td class="num">${pct(f.rate, 0)}</td></tr></tbody></table>
+      ${S > 0 ? `<p class="muted small pay-saved">Counting ${money(S, { cents: false })} saved through pay (${esc(payrollKindsText(K.byKind))}), which never reached the bank, you kept <strong class="num">${money(K.kept, { cents: false })}</strong>: ${pct(K.rate, 0)} of what came in.</p>` : ''}</section>
     <section class="panel"><header class="panel-head"><h2>Where the money came from and went</h2><span class="muted small">${isTouch() ? 'Tap' : 'Hover over'} a band for the amount</span></header>
-      ${chartHost({ type: 'sankey', label: 'Where the money came from and went', left: sk.left, right: sk.right, total: Math.max(sk.income, sk.spending), empty: 'No income or spending in this period.',
-        pick: R.from.slice(0, 7) === R.to.slice(0, 7) ? (n, side) => { const m = R.from.slice(0, 7); if (n.saved) drillKept(m); else if (side === 'r') drillGroup(n.name, m); else drillFlow('in', m); } : null })}</section>`;
+      ${chartHost({ type: 'sankey', label: 'Where the money came from and went', left: sk.left, right: sk.right, total: Math.max(sk.income, sk.spending) + S, empty: 'No income or spending in this period.',
+        pick: R.from.slice(0, 7) === R.to.slice(0, 7) ? (n, side) => { const m = R.from.slice(0, 7); if (n.name === 'Saved through pay') go('#/taxes'); else if (n.saved) drillKept(m); else if (side === 'r') drillGroup(n.name, m); else drillFlow('in', m); } : null })}</section>`;
   }
 
   if (tab === 'spending') {
@@ -61,6 +69,7 @@ VIEWS.reports = p => {
     const row = (label, vals, cls = '') => `<tr class="${cls}"><th scope="row">${label}</th>${vals.map(v => `<td class="num">${v ? money(v, { cents: false }) : '<span class="muted">—</span>'}</td>`).join('')}<td class="num total-col">${money(sum(vals), { cents: false })}</td></tr>`;
     const incT = ms.map((_, i) => sum(inc.map(c => per[i][c.id] || 0)) + uncIn[i]);
     const expT = ms.map((_, i) => sum(cats.filter(c => c.kind === 'expense').map(c => per[i][c.id] || 0)) + uncOut[i]);
+    const payT = ms.map(m => payrollSaving(`${m}-01`, monthEnd(m)).total), anyPay = payT.some(Boolean);   // on pay stubs: saved before it reached the bank
     return head + `<div class="toolbar"><button class="btn small" data-act="export-statement" data-from="${R.from}" data-to="${R.to}">Export CSV</button><span class="muted small">Showing ${ms.length} month${ms.length > 1 ? 's' : ''}. Transfers are left out.</span></div>
     <div class="scroll-table"><table class="ledger statement"><thead><tr><th>Category</th>${ms.map(m => `<th class="num">${monthLabel(m, true)}</th>`).join('')}<th class="num">Total</th></tr></thead><tbody>
       <tr class="sect"><th colspan="${ms.length + 2}">Income</th></tr>
@@ -72,7 +81,8 @@ VIEWS.reports = p => {
       ${uncOut.some(Boolean) ? row('<strong>Uncategorized</strong>', uncOut, 'grp') : ''}
       ${row('Total spending', expT, 'subtotal')}
       ${row('Net', ms.map((_, i) => incT[i] - expT[i]), 'net')}
-      <tr class="rate"><th scope="row">Savings rate</th>${ms.map((_, i) => `<td class="num">${incT[i] ? pct((incT[i] - expT[i]) / incT[i], 0) : '—'}</td>`).join('')}<td class="num total-col">${sum(incT) ? pct((sum(incT) - sum(expT)) / sum(incT), 0) : '—'}</td></tr>
+      ${anyPay ? row('Saved through pay', payT, 'pay-saved') + row('Kept, counting saved through pay', ms.map((_, i) => incT[i] - expT[i] + payT[i]), 'subtotal pay-kept') : ''}
+      <tr class="rate"><th scope="row">Savings rate</th>${ms.map((_, i) => `<td class="num">${incT[i] + payT[i] ? pct((incT[i] - expT[i] + payT[i]) / (incT[i] + payT[i]), 0) : '—'}</td>`).join('')}<td class="num total-col">${sum(incT) + sum(payT) ? pct((sum(incT) - sum(expT) + sum(payT)) / (sum(incT) + sum(payT)), 0) : '—'}</td></tr>
     </tbody></table></div>`;
   }
 
@@ -179,10 +189,11 @@ VIEWS.planning = p => {
   if (!P.age) return head + `<section class="panel narrow"><h2>Start with your age</h2><p class="muted">Ọrọ̀ fills in the rest from your accounts and spending, and you can adjust any of it.</p>
     <div class="form-grid"><label class="field"><span>Your age</span><input data-plan="age" inputmode="numeric" autofocus placeholder="e.g. 42"></label><label class="field"><span>Retire at</span><input data-plan="retireAge" inputmode="numeric" value="${P.retireAge}"></label></div></section>`;
   const stats = portfolioStats(D.alloc);
+  const paySave = payrollSavingForYear(new Date().getFullYear()), payTyped = +P.payrollSavings > 0;   // a blank (or 0) box uses this year's pay stubs
   const inp = {
     age: +P.age, retireAge: +P.retireAge, endAge: +P.endAge,
     start: P.start != null && P.start !== '' ? +P.start : D.start,
-    savings: (P.savings != null && P.savings !== '' ? +P.savings : D.savings) + (+P.payrollSavings || 0),
+    savings: (P.savings != null && P.savings !== '' ? +P.savings : D.savings) + (payTyped ? +P.payrollSavings : paySave.total),
     spending: P.spending != null && P.spending !== '' ? +P.spending : D.spending,
     otherIncome: +P.otherIncome || 0, otherIncomeAge: +P.otherIncomeAge || 67,
     rentalNet: P.includeRental ? D.rentalNet : 0, inflation: +P.inflation,
@@ -206,7 +217,7 @@ VIEWS.planning = p => {
       <div class="form-grid">
         ${field('start', 'Invested today', P.start, money(D.start, { cents: false }), 'Cash, investments' + (P.includePrivate ? ' and private' : ''))}
         ${field('savings', 'Saved per year from cash flow', P.savings, money(D.savings, { cents: false }), 'Last 12 months, after spending')}
-        ${field('payrollSavings', '401(k) and payroll savings per year', P.payrollSavings, '0', 'Taken out before your paycheck')}
+        ${field('payrollSavings', '401(k) and payroll savings per year', payTyped || !paySave.total ? P.payrollSavings : '', paySave.total ? money(paySave.total, { cents: false }) : '0', paySave.total ? `Taken out before your paycheck. From your pay stubs this year: ${money(paySave.mine, { cents: false })}${paySave.employer ? ` plus ${money(paySave.employer, { cents: false })} your employer puts in` : ''}` : 'Taken out before your paycheck')}
         ${field('spending', 'Spending in retirement per year', P.spending, money(D.spending, { cents: false }), 'Today’s dollars; defaults to the last 12 months')}
         ${field('otherIncome', 'Social Security or pension per year', P.otherIncome, '0', 'Today’s dollars')}
         ${field('otherIncomeAge', 'Starting at age', P.otherIncomeAge)}
@@ -255,6 +266,8 @@ function interestFromLine(from, est, loan) {
 function afterTaxPanel(X) {
   const { year, H } = X, sm = n => money(n, { cents: false }), rate = n => pct(n, 1), cur = year === new Date().getFullYear();
   const box = (attr, v, ph = '0') => `<input ${attr} data-year="${year}" inputmode="decimal" value="${v ?? ''}" placeholder="${ph}">`;
+  const typed = (id, f) => (H.typed ? H.typed[id]?.[f] : H.people[id]?.[f]), fromStub = (id, f) => !!H.stubs?.[id]?.[f];   // a blank box uses the year projected from pay stubs
+  const pbox = (id, f, help) => `${box(`data-taxp="${id}:${f}"`, typed(id, f), fromStub(id, f) ? sm(H.people[id][f]) : '0')}<small class="muted">${fromStub(id, f) ? `${sm(H.people[id][f])} from your pay stubs. ` : ''}${help}</small>`;
   const est = { federal: X.fedEst, state: X.ilEst, fica: X.ficaEst }, anyActual = Object.values(X.actual).some(v => v != null);
   const tag = k => `<span class="tag soft">${X.actual[k] != null ? 'actual' : 'estimate'}</span>`;
   const interestIn = round2(sum(txInRange(`${year}-01-01`, `${year}-12-31`).flatMap(t => txLines(t)).filter(l => /interest|dividend/i.test(catById(l.categoryId)?.name || '') && catById(l.categoryId)?.kind === 'income').map(l => l.amount)));
@@ -265,9 +278,9 @@ function afterTaxPanel(X) {
       <label class="field"><span>Filing</span><select data-taxh="status" data-year="${year}">${Object.entries(FILING).map(([k, l]) => `<option value="${k}" ${X.status === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     </div>
     ${X.earners.length ? X.earners.map(e => `<fieldset class="tax-person"><legend>${esc(e.name)}</legend><div class="form-grid three">
-      <label class="field"><span>Pay before tax</span>${box(`data-taxp="${e.id}:gross"`, H.people[e.id].gross)}<small class="muted">Salary and bonus for the year</small></label>
-      <label class="field"><span>Saved before tax</span>${box(`data-taxp="${e.id}:retire"`, H.people[e.id].retire)}<small class="muted">401(k), 403(b) or 457 from pay</small></label>
-      <label class="field"><span>Health through pay</span>${box(`data-taxp="${e.id}:health"`, H.people[e.id].health)}<small class="muted">HSA, FSA and health premiums</small></label>
+      <label class="field"><span>Pay before tax</span>${pbox(e.id, 'gross', 'Salary and bonus for the year')}</label>
+      <label class="field"><span>Saved before tax</span>${pbox(e.id, 'retire', '401(k), 403(b) or 457 from pay')}</label>
+      <label class="field"><span>Health through pay</span>${pbox(e.id, 'health', 'HSA, FSA and health premiums')}</label>
     </div></fieldset>`).join('') : '<p class="muted">Add the adults in your household in Settings › Household to enter their pay.</p>'}
     <div class="form-grid three">
       <label class="field"><span>Other income</span>${box('data-taxh="other"', H.other)}<small class="muted">Interest, dividends, rental profit.${interestIn > 0 ? ` Interest and dividends in your transactions: ${sm(interestIn)}.` : ''}${rentNet ? ` Rentals (Schedule E): ${money(rentNet, { cents: false, paren: true })}.` : ''}</small></label>
@@ -288,7 +301,12 @@ function afterTaxPanel(X) {
   const exact = n => `${Math.round(n * 10000) / 100}%`;   // 4.95%, 8.55%, 24%: rates as the tables give them
   const topParts = [X.top.federal && `${exact(X.top.federal)} federal`, X.top.state && `${exact(X.top.state)} Illinois`, X.top.fica && `${exact(X.top.fica)} Social Security and Medicare`].filter(Boolean).join(' + ');
   const meter = (label, v, cls) => `<div class="rate-row ${cls}"><span>${label}</span><div class="meter"><span style="width:${Math.min(100, v / 0.6 * 100).toFixed(1)}%"></span></div><strong class="num">${rate(v)}</strong></div>`;
-  return `<section class="panel aftertax">${head}
+  // Nothing typed yet, but there are pay stubs: the figures from the stubs in a panel of their own, then the boxes
+  const stubsOnly = !X.H.typedPay;
+  const open = stubsOnly ? `<section class="panel aftertax-est"><header class="panel-head"><h2>What you keep after tax</h2><span class="muted small">${year} · from your pay stubs, projected to the end of the year · ${FILING[X.status]}</span></header>` : `<section class="panel aftertax">${head}`;
+  const close = stubsOnly ? `</section><section class="panel aftertax"><header class="panel-head"><h2>Your own numbers</h2><span class="muted small">${year} · optional</span></header>
+    <p>These figures come from your pay stubs. Type each person’s pay before tax, or any box here, to plan with your own numbers. A blank box keeps using your pay stubs.</p>${inputs}</section>` : `${inputs}</section>`;
+  return `${open}
     <dl class="kpis">
       <div><dt>Kept after tax</dt><dd class="num">${sm(X.kept)}</dd><span class="muted small">of ${sm(X.income)}${X.other ? ' pay and other income' : ' pay'}${X.pretax ? `, after ${sm(X.pretax)} saved before tax` : ''}</span></div>
       <div><dt>Average rate</dt><dd class="num">${rate(X.average)}</dd><span class="muted small">All taxes ÷ all income (your effective rate)</span></div>
@@ -321,7 +339,7 @@ function afterTaxPanel(X) {
       <p class="muted small">${X.tableYear !== year ? `Ọrọ̀ has the tax tables for 2025 and 2026; ${year} uses ${X.tableYear}’s. ` : ''}Not counted: capital gains and dividend rates, self-employment tax, the 65-and-older deductions, tips and overtime, other credits. Organized for your CPA; not tax advice.</p>
     </details>
     ${paid > 0 ? `<p class="muted small">Paychecks that came into your accounts in ${year}${cur ? ' so far' : ''}: ${sm(paid)}.</p>` : ''}
-    ${inputs}</section>`;
+    ${close}`;
 }
 
 /* Itemized or standard: Schedule A beside the standard deduction, with the home mortgage interest. */
@@ -343,16 +361,18 @@ function scheduleAPanel(X) {
         <p class="callout">${diff > 0 ? `Itemizing is worth ${sm(diff)} more than the standard deduction, so the estimate above itemizes.` : `The standard deduction is ${sm(-diff)} more than itemizing, so the estimate above uses it.`}</p>
         ${loans || '<p class="muted small">No home mortgage in Ọrọ̀. A mortgage on a rental goes on its Schedule E below.</p>'}
         <label class="field"><span>Property tax paid on your home, ${year}</span><input data-taxh="propertyTax" data-year="${year}" inputmode="decimal" value="${X.H.propertyTax ?? ''}" placeholder="${sm(round2(deductionSummary(year).by['State and local taxes'] || 0))}"><small class="muted">Including any paid through your mortgage’s escrow (Form 1098, box 10). Blank uses your categories tagged for state and local taxes.</small></label>
+        <label class="field"><span>Gifts to charity, ${year}</span><input data-taxh="charity" data-year="${year}" inputmode="decimal" value="${X.H.charity ?? ''}" placeholder="${sm(round2(deductionSummary(year).by['Charitable'] || 0))}"><small class="muted">Blank uses your categories tagged for gifts to charity.</small></label>
+        ${X.H.interest != null || !A.loans.length ? `<label class="field"><span>Home mortgage interest, ${year}${A.loans.length ? ', all home loans' : ''}</span><input data-taxh="interest" data-year="${year}" inputmode="decimal" value="${X.H.interest ?? ''}" placeholder="${A.loans.length ? sm(round2(sum(A.loans.map(x => x.amount)))) : '0'}"><small class="muted">${A.loans.length ? 'Used instead of the figures above. Blank goes back to them.' : 'From Form 1098, if your mortgage isn’t in Ọrọ̀.'}</small></label>` : ''}
       </div>
     </div></section>`;
 }
 
 VIEWS.taxes = p => {
   const year = +(p.y || new Date().getFullYear());
-  const years = [...new Set([new Date().getFullYear(), new Date().getFullYear() - 1, ...state.transactions.map(t => yearOf(t.date))])].sort((a, b) => b - a);
+  const years = [...new Set([new Date().getFullYear(), new Date().getFullYear() - 1, ...state.transactions.map(t => yearOf(t.date)), ...stubsAll().filter(s => s.date).map(s => yearOf(s.date))])].sort((a, b) => b - a);   // and any year with a pay stub
   const rentals = activeAccounts().filter(a => a.type === 'realestate' && a.rental);
   const ded = deductionSummary(year), TX = taxEstimate(year);
-  return pageHead('Taxes', `${year} tax year. Organized for your CPA; not tax advice.`, `<label class="field inline"><span class="sr">Year</span><select data-filter="y">${years.map(y => `<option ${y === year ? 'selected' : ''}>${y}</option>`).join('')}</select></label><button class="btn" data-act="export-tax" data-year="${year}">Export for your CPA</button>`) + afterTaxPanel(TX) + scheduleAPanel(TX) + `
+  return pageHead('Taxes', `${year} tax year. Organized for your CPA; not tax advice.`, `<label class="field inline"><span class="sr">Year</span><select data-filter="y">${years.map(y => `<option ${y === year ? 'selected' : ''}>${y}</option>`).join('')}</select></label><button class="btn" data-act="export-tax" data-year="${year}">Export for your CPA</button>`) + (() => { const due = taxDuePanel(year), first = taxDue(year).withheldAny; return (first ? due : '') + afterTaxPanel(TX) + whatIfPanel(year) + payStubsPanel(year) + (first ? '' : due); })() + scheduleAPanel(TX) + `
   ${rentals.length ? rentals.map(a => {
     const E = scheduleE(a, year), g = a.rentalGroup || 'Rental property';
     const rentalCats = state.categories.filter(c => c.group === g);

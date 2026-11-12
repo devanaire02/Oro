@@ -185,6 +185,7 @@ const ACTIONS = {
         `Federal income tax,${(-X.federal).toFixed(2)},${src('federal')}`, `Illinois income tax,${(-X.state).toFixed(2)},${src('state')}`, `Social Security and Medicare,${(-X.fica).toFixed(2)},${src('fica')}`,
         `Kept after tax,${X.kept.toFixed(2)},`, `Average rate (effective),${(X.average * 100).toFixed(1)}%,`, `Top rate (marginal),${(X.top.all * 100).toFixed(1)}%,`, `Filing,${q(FILING[X.status])},`, '');
     }
+    lines.push(...payStubExportLines(year));   // pay stubs, saved through pay, the likely bill or refund (61-paystubs.js)
     lines.push('Schedule A (Ọrọ̀ estimate),Amount,Source', `4,Medical and dental over 7.5% of income,${X.A.medical.toFixed(2)},`, `5e,State and local taxes,${X.A.salt.toFixed(2)},`);
     for (const x of X.A.loans) lines.push(`8a,${q(`Home mortgage interest: ${x.prop?.name || x.loan.name}`)},${x.amount.toFixed(2)},${from(x.from)}`);
     lines.push(`14,Gifts to charity,${X.A.charity.toFixed(2)},`, `17,Itemized deductions,${X.A.total.toFixed(2)},`, `,Standard deduction,${X.std.toFixed(2)},`, '');
