@@ -159,9 +159,9 @@ VIEWS.cashflow = () => {
       <header class="panel-head"><h2>Repeating charges</h2><span class="muted small">${repNew.length ? `${money(sum(repNew.map(r => r.monthly)))} a month, ${money(sum(repNew.map(r => r.monthly)) * 12, { cents: false })} a year` : ''}</span></header>
       ${repNew.length ? `<table class="ledger compact" data-sort-id="repeating"><thead><tr><th>Payee</th><th class="hide-sm">Since</th><th class="num">Monthly</th><th></th></tr></thead><tbody>
       ${repNew.map(r => `<tr><th scope="row">${esc(r.payee)}${r.isNew ? ' <span class="tag">New</span>' : ''}<div class="muted small">${esc(catName(r.categoryId))}, ${esc(acctById(r.accountId)?.name || '')}</div></th><td class="hide-sm muted nowrap" data-v="${r.firstSeen || ''}">${dateLabel(r.firstSeen, true)}</td><td class="num">${money(r.monthly)}</td>
-        <td class="acts">${r.fromCash ? `<button class="btn small ghost" data-add-rep="${rep.indexOf(r)}">Add to forecast</button>` : ''}</td></tr>`).join('')}
+        <td class="acts">${r.fromCash ? `<button class="btn small ghost" data-add-rep="${detectRepeating().indexOf(r)}">Add to forecast</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : ''}
-      <p class="muted small">${rep.length ? `Ọrọ̀ found ${rep.length} charges that repeat at a steady amount${rep.length - repNew.length ? `; ${rep.length - repNew.length} are already scheduled and hidden here` : ''}. Card charges are covered by your card-payment estimate, so only bills paid straight from checking need adding.` : 'Ọrọ̀ looks for charges that repeat at a steady amount. Import a few months of history to see them.'}</p>
+      <p class="muted small">${rep.length ? `Ọrọ̀ found ${rep.length} charges that repeat at a steady amount${rep.length - repNew.length ? `; ${rep.length - repNew.length} ${rep.length - repNew.length === 1 ? 'is' : 'are'} already scheduled and hidden here` : ''}. Card charges are covered by your card-payment estimate, so only bills paid straight from checking need adding.` : 'Ọrọ̀ looks for charges that repeat at a steady amount. Import a few months of history to see them.'}</p>
     </section>
   </div>
 
@@ -200,11 +200,13 @@ VIEWS.review = p => {
   const txs = txInMonth(mk);
   const f = flowSummary(txs), fp = flowSummary(txInMonth(prev));
   const avg3 = [1, 2, 3].map(i => flowSummary(txInMonth(addMonths(mk, -i))));
-  const avgSpend = sum(avg3.map(x => x.spending)) / 3, avgIncome = sum(avg3.map(x => x.income)) / 3;
+  const avgN = Math.max(1, [1, 2, 3].filter(i => addMonths(mk, -i) >= firstTxMonth()).length);   // fewer than three earlier months: the average of the ones there are
+  const avgSpend = sum(avg3.map(x => x.spending)) / avgN, avgIncome = sum(avg3.map(x => x.income)) / avgN;
   const acts = categoryActuals(txs);
   const exp = state.categories.filter(c => c.kind === 'expense');
-  const over = exp.filter(c => c.period !== 'year' && c.budget > 0 && (acts[c.id] || 0) > c.budget).map(c => ({ c, a: acts[c.id] || 0, d: (acts[c.id] || 0) - c.budget })).sort((a, b) => b.d - a.d);
-  const under = exp.filter(c => c.period !== 'year' && c.budget > 0 && (acts[c.id] || 0) < c.budget).map(c => ({ c, a: acts[c.id] || 0, d: c.budget - (acts[c.id] || 0) })).sort((a, b) => b.d - a.d).slice(0, 4);
+  const monthly = exp.filter(c => c.period !== 'year' && c.budget > 0).map(c => { const v = budgetView(c, mk); return { c, a: v.actual, b: round2(v.budget + (v.carry || 0)), d: Math.abs(v.available), left: v.available }; });
+  const over = monthly.filter(x => x.left < -0.005).sort((a, b) => b.d - a.d);
+  const under = monthly.filter(x => x.left > 0.005).sort((a, b) => b.d - a.d).slice(0, 4);
   const yearly = exp.filter(c => c.period === 'year' && c.budget > 0).map(c => ({ c, v: budgetView(c, mk) }));
   const unusual = exp.map(c => ({ c, a: acts[c.id] || 0, avg: trailingAvg(c.id, mk, 3) })).filter(x => x.a > 60 && x.a > x.avg * 1.3 && x.a - x.avg > 50).sort((a, b) => (b.a - b.avg) - (a.a - a.avg)).slice(0, 5);
   const largest = txs.filter(t => t.amount < 0 && !isTransferCat(t.categoryId)).sort((a, b) => a.amount - b.amount).slice(0, 8);
@@ -212,7 +214,7 @@ VIEWS.review = p => {
   const bucketOf = id => { const a = acctById(id); return a ? ACCOUNT_TYPES[a.type]?.bucket : 'illiquid'; };
   const bucketChange = BUCKETS.map(b => {
     const e = state.snapshots[mk] || {}, s = state.snapshots[prev] || {};
-    const val = snap => sum(Object.entries(snap).filter(([id]) => bucketOf(id) === b.id).map(([, v]) => v));
+    const val = snap => sum(Object.entries(snap).filter(([id]) => bucketOf(id) === b.id && (!acctById(id) || acctInEstate(acctById(id)))).map(([, v]) => v));   // as net worth counts them: not children's, trusts' or others'
     return { b, change: val(e) - val(s) };
   });
   const unc = txs.filter(t => !t.categoryId).length;
@@ -231,7 +233,7 @@ VIEWS.review = p => {
     <tbody>
       <tr><th scope="row">${MONTHS[+mk.slice(5) - 1]}</th><td class="num">${money(f.income, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td><td class="num ${signClass(f.net)}">${money(f.net, { cents: false })}</td><td class="num">${pct(f.rate, 0)}</td></tr>
       <tr><th scope="row">${MONTHS[+prev.slice(5) - 1]}</th><td class="num muted">${money(fp.income, { cents: false })}</td><td class="num muted">${money(fp.spending, { cents: false })}</td><td class="num muted">${money(fp.net, { cents: false })}</td><td class="num muted">${pct(fp.rate, 0)}</td></tr>
-      <tr><th scope="row">Prior 3-month average</th><td class="num muted">${money(avgIncome, { cents: false })}</td><td class="num muted">${money(avgSpend, { cents: false })}</td><td class="num muted">${money(avgIncome - avgSpend, { cents: false })}</td><td class="num muted">${avgIncome ? pct((avgIncome - avgSpend) / avgIncome, 0) : '—'}</td></tr>
+      <tr><th scope="row">${avgN < 3 ? (avgN === 1 ? 'The month before' : `Prior ${avgN}-month average`) : 'Prior 3-month average'}</th><td class="num muted">${money(avgIncome, { cents: false })}</td><td class="num muted">${money(avgSpend, { cents: false })}</td><td class="num muted">${money(avgIncome - avgSpend, { cents: false })}</td><td class="num muted">${avgIncome ? pct((avgIncome - avgSpend) / avgIncome, 0) : '—'}</td></tr>
     </tbody></table></section>
 
   <div class="cols">
@@ -246,8 +248,8 @@ VIEWS.review = p => {
     </section>
     <section class="panel">
       <header class="panel-head"><h2>Over budget</h2></header>
-      ${over.length ? `<table class="ledger compact"><tbody>${over.map(x => `<tr><th scope="row">${esc(x.c.name)}</th><td class="num muted">${money(x.a, { cents: false })} of ${money(x.c.budget, { cents: false })}</td><td class="num neg">${money(x.d, { cents: false })} over</td></tr>`).join('')}</tbody></table>` : '<p class="muted">Every monthly category stayed within budget.</p>'}
-      ${under.length ? `<h3>Most room left</h3><table class="ledger compact"><tbody>${under.map(x => `<tr><th scope="row">${esc(x.c.name)}</th><td class="num muted">${money(x.a, { cents: false })} of ${money(x.c.budget, { cents: false })}</td><td class="num pos">${money(x.d, { cents: false })} under</td></tr>`).join('')}</tbody></table>` : ''}
+      ${over.length ? `<table class="ledger compact"><tbody>${over.map(x => `<tr><th scope="row">${esc(x.c.name)}</th><td class="num muted">${money(x.a, { cents: false })} of ${money(x.b, { cents: false })}</td><td class="num neg">${money(x.d, { cents: false })} over</td></tr>`).join('')}</tbody></table>` : '<p class="muted">Every monthly category stayed within budget.</p>'}
+      ${under.length ? `<h3>Most room left</h3><table class="ledger compact"><tbody>${under.map(x => `<tr><th scope="row">${esc(x.c.name)}</th><td class="num muted">${money(x.a, { cents: false })} of ${money(x.b, { cents: false })}</td><td class="num pos">${money(x.d, { cents: false })} under</td></tr>`).join('')}</tbody></table>` : ''}
       ${yearly.length ? `<h3>Yearly budgets</h3><table class="ledger compact"><tbody>${yearly.map(({ c, v }) => `<tr><th scope="row">${esc(c.name)}</th><td class="num muted">${money(v.actual, { cents: false })} of ${money(v.budget, { cents: false })}</td><td class="meter-cell">${bar(v.actual, v.budget, { pace: v.monthShare })}</td></tr>`).join('')}</tbody></table>` : ''}
     </section>
   </div>

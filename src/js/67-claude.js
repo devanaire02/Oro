@@ -494,8 +494,8 @@ function aiSpendingData(cb) {
   months.forEach((mk, i) => {
     for (const t of txInMonth(mk)) for (const l of txLines(t)) {
       const c = catById(l.categoryId); if (c?.kind === 'transfer') continue;
-      const id = l.categoryId || '_none';
-      (rows[id] ||= Array(n).fill(0))[i] += c?.kind === 'income' ? l.amount : -l.amount;
+      const id = c ? l.categoryId : l.amount > 0 ? '_in' : '_none';
+      (rows[id] ||= Array(n).fill(0))[i] += !c ? Math.abs(l.amount) : c.kind === 'income' ? l.amount : -l.amount;
       if (c?.kind !== 'income' && (c || l.amount < 0)) (people[aiPersonCode(cb, personOf(t))] ||= Array(n).fill(0))[i] += -l.amount;
     }
   });
@@ -507,9 +507,9 @@ function aiSpendingData(cb) {
     p.total += -t.amount; p.n++; const cn = catName(t.categoryId); p.cats[cn] = (p.cats[cn] || 0) + 1; if (t.date > p.last) p.last = t.date;
   }
   const r0 = v => Math.round(v);
-  const catRow = id => { const c = catById(id); return `${c ? c.name : 'Uncategorized'}${c?.kind === 'income' ? ' [income]' : ''} | ${rows[id].map(r0).join(' | ')}`; };
+  const catRow = id => { const c = catById(id); return `${c ? c.name : id === '_in' ? 'Uncategorized money in' : 'Uncategorized'}${c?.kind === 'income' || id === '_in' ? ' [income]' : ''} | ${rows[id].map(r0).join(' | ')}`; };
   const ids = Object.keys(rows).filter(id => rows[id].some(v => Math.abs(v) >= 0.5));
-  const order = id => { const c = catById(id); return `${c?.kind === 'income' ? 0 : 1}${c?.group || 'zz'}${c?.name || ''}`; };
+  const order = id => { const c = catById(id); return `${c?.kind === 'income' || id === '_in' ? 0 : 1}${c?.group || 'zz'}${c?.name || ''}`; };
   ids.sort((a, b) => order(a).localeCompare(order(b)));
   const flows = months.map(mk => flowSummary(txInMonth(mk)));
   const budgets = state.categories.filter(c => c.kind === 'expense' && c.budget > 0).map(c => `${c.name}: ${r0(c.budget)} a ${c.period === 'year' ? 'year' : 'month'}`);

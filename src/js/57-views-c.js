@@ -13,7 +13,7 @@ VIEWS.reports = p => {
   const months = monthsIn(R.from, R.to);
 
   if (tab === 'flow') {
-    const sk = lensActive() ? (() => { const all = sankeyFromActs(acts); return all; })() : sankeyData(R.from, R.to);
+    const sk = lensActive() ? sankeyData(R.from, R.to, acts, 'From savings or shared income') : sankeyData(R.from, R.to);
     const f = flowSummary(txs);
     return head + `
     <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Left over</th><th class="num">Savings rate</th></tr></thead>
@@ -56,18 +56,20 @@ VIEWS.reports = p => {
     const per = ms.map(m => categoryActuals(lensed(txInMonth(m))));
     const cats = state.categories.filter(c => c.kind !== 'transfer' && per.some(a => a[c.id]));
     const inc = cats.filter(c => c.kind === 'income'), exp = groupBy(cats.filter(c => c.kind === 'expense'), c => c.group);
-    const hasUnc = per.some(a => a._none);
+    // Uncategorized money in counts as income and uncategorized purchases as spending, as on Overview and Cash flow
+    const uncIn = per.map(a => a._in || 0), uncOut = per.map(a => a._none || 0);
     const row = (label, vals, cls = '') => `<tr class="${cls}"><th scope="row">${label}</th>${vals.map(v => `<td class="num">${v ? money(v, { cents: false }) : '<span class="muted">—</span>'}</td>`).join('')}<td class="num total-col">${money(sum(vals), { cents: false })}</td></tr>`;
-    const incT = ms.map((_, i) => sum(inc.map(c => per[i][c.id] || 0)));
-    const expT = ms.map((_, i) => sum(cats.filter(c => c.kind === 'expense').map(c => per[i][c.id] || 0)) + (per[i]._none || 0));
+    const incT = ms.map((_, i) => sum(inc.map(c => per[i][c.id] || 0)) + uncIn[i]);
+    const expT = ms.map((_, i) => sum(cats.filter(c => c.kind === 'expense').map(c => per[i][c.id] || 0)) + uncOut[i]);
     return head + `<div class="toolbar"><button class="btn small" data-act="export-statement" data-from="${R.from}" data-to="${R.to}">Export CSV</button><span class="muted small">Showing ${ms.length} month${ms.length > 1 ? 's' : ''}. Transfers are left out.</span></div>
     <div class="scroll-table"><table class="ledger statement"><thead><tr><th>Category</th>${ms.map(m => `<th class="num">${monthLabel(m, true)}</th>`).join('')}<th class="num">Total</th></tr></thead><tbody>
       <tr class="sect"><th colspan="${ms.length + 2}">Income</th></tr>
       ${inc.map(c => row(`<span class="indent-in">${esc(c.name)}</span>`, ms.map((_, i) => per[i][c.id] || 0))).join('')}
+      ${uncIn.some(Boolean) ? row('<span class="indent-in">Uncategorized</span>', uncIn) : ''}
       ${row('Total income', incT, 'subtotal')}
       <tr class="sect"><th colspan="${ms.length + 2}">Spending</th></tr>
       ${Object.entries(exp).map(([g, cs]) => row(`<strong>${esc(g)}</strong>`, ms.map((_, i) => sum(cs.map(c => per[i][c.id] || 0))), 'grp') + cs.map(c => row(`<span class="indent-in">${esc(c.name)}</span>`, ms.map((_, i) => per[i][c.id] || 0), 'detail-only')).join('')).join('')}
-      ${hasUnc ? row('<strong>Uncategorized</strong>', ms.map((_, i) => per[i]._none || 0), 'grp') : ''}
+      ${uncOut.some(Boolean) ? row('<strong>Uncategorized</strong>', uncOut, 'grp') : ''}
       ${row('Total spending', expT, 'subtotal')}
       ${row('Net', ms.map((_, i) => incT[i] - expT[i]), 'net')}
       <tr class="rate"><th scope="row">Savings rate</th>${ms.map((_, i) => `<td class="num">${incT[i] ? pct((incT[i] - expT[i]) / incT[i], 0) : '—'}</td>`).join('')}<td class="num total-col">${sum(incT) ? pct((sum(incT) - sum(expT)) / sum(incT), 0) : '—'}</td></tr>
@@ -125,14 +127,6 @@ VIEWS.reports = p => {
     ${lensAccounts().filter(a => nwIncludes(a, true)).map(a => { const then = ago ? state.snapshots[ago][a.id] : null, now = signedValue(a); return `<tr><th scope="row">${esc(a.name)}</th><td class="num muted">${then == null ? '—' : money(then, { cents: false })}</td><td class="num">${money(now, { cents: false })}</td><td class="num ${then == null ? '' : signClass(now - then)}">${then == null ? '' : money(now - then, { cents: false, sign: true })}</td><td class="spark-cell hide-sm">${sparkline(ms.slice(-13).map(m => state.snapshots[m][a.id] || 0), { w: 90, h: 22, color: isLiability(a) ? 'var(--neg)' : 'var(--ink-accent)' })}</td></tr>`; }).join('')}
   </tbody><tfoot><tr><th scope="row">${esc(nwLabel())}</th><td class="num total">${ago ? money(snapshotNW(ago, true), { cents: false }) : ''}</td><td class="num total">${money(totals(true).netWorth, { cents: false })}</td><td class="num total ${ago ? signClass(totals(true).netWorth - snapshotNW(ago, true)) : ''}">${ago ? money(totals(true).netWorth - snapshotNW(ago, true), { cents: false, sign: true }) : ''}</td><td class="hide-sm"></td></tr></tfoot></table>`;
 };
-function sankeyFromActs(acts) {
-  const inc = [], groups = {};
-  for (const [id, v] of Object.entries(acts)) { const c = catById(id); if (!c) { if (v > 0) groups.Uncategorized = (groups.Uncategorized || 0) + v; continue; } if (c.kind === 'income' && v > 0) inc.push({ name: c.name, value: v }); else if (c.kind === 'expense' && v > 0) groups[c.group] = (groups[c.group] || 0) + v; }
-  const income = sum(inc.map(x => x.value)), spending = sum(Object.values(groups));
-  const right = Object.entries(groups).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  if (income > spending) right.push({ name: 'Saved', value: income - spending, saved: true }); else if (spending > income) inc.push({ name: 'From savings or shared income', value: spending - income, drawn: true });
-  return { left: inc.sort((a, b) => (a.drawn ? 1 : 0) - (b.drawn ? 1 : 0) || b.value - a.value), right, income, spending };
-}
 
 /* ================= Planning ================= */
 VIEWS.planning = p => {
@@ -159,7 +153,7 @@ VIEWS.planning = p => {
     const P = state.plan, debts = debtList();
     if (!debts.length) return head + emptyState('No debt to pay off', P.includeMortgages ? 'There are no liabilities with a balance.' : 'No cards or loans have a balance. Mortgages are left out unless you include them.', `<label class="check"><input type="checkbox" data-plan="includeMortgages" ${P.includeMortgages ? 'checked' : ''}> Include mortgages</label>`);
     const plan = payoffPlan(debts, P.debtExtra, P.debtMethod), other = payoffPlan(debts, P.debtExtra, P.debtMethod === 'avalanche' ? 'snowball' : 'avalanche'), min = payoffPlan(debts, 0, 'avalanche');
-    const dateAt = m => { const d = new Date(); d.setMonth(d.getMonth() + m); return MONTHS[d.getMonth()] + ' ' + d.getFullYear(); };
+    const dateAt = m => monthLabel(addMonths(thisMonth(), m));   // counted in whole months, so the 31st doesn't skip a short month
     const len = Math.max(plan.series.length, min.series.length);
     const pad = (s) => Array.from({ length: len }, (_, i) => ({ x: i, y: s[i] ? s[i].y : 0 }));
     return head + `

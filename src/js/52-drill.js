@@ -42,7 +42,11 @@ function drillGroup(label, mk = thisMonth()) {
   if (label === 'Everything else') return go(`#/reports?r=spending&p=${mk === thisMonth() ? 'm' : 'lm'}`);
   const txs = lensed(txInMonth(mk)), acts = categoryActuals(txs), rows = [];
   const inGroup = id => id === '_none' ? label === 'Uncategorized' : (c => !!c && c.kind === 'expense' && c.group === label)(catById(id));
-  for (const t of txs) for (const l of txLines(t)) { const id = l.categoryId || '_none'; if ((acts[id] || 0) > 0 && inGroup(id)) rows.push({ t, categoryId: l.categoryId, amount: round2(-l.amount) }); }
+  for (const t of txs) for (const l of txLines(t)) {
+    const c = catById(l.categoryId); if (c?.kind === 'transfer' || (!c && l.amount > 0)) continue;   // uncategorized money in is income, not part of this slice
+    const id = c ? c.id : '_none';
+    if ((acts[id] || 0) > 0 && inGroup(id)) rows.push({ t, categoryId: c ? c.id : null, amount: round2(-l.amount) });
+  }
   rows.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
   const cats = [...new Set(rows.map(r => r.categoryId || '_none'))].map(id => ({ id, v: acts[id] })).sort((a, b) => b.v - a.v);
   const top = cats[0]?.v || 1;
@@ -51,7 +55,10 @@ function drillGroup(label, mk = thisMonth()) {
 }
 function drillCat(catId, mk = thisMonth()) {
   const c = catById(catId), txs = lensed(txInMonth(mk)), rows = [];
-  for (const t of txs) for (const l of txLines(t)) if ((l.categoryId || '_none') === catId) rows.push({ t, categoryId: l.categoryId, amount: round2(c?.kind === 'income' ? l.amount : -l.amount) });
+  for (const t of txs) for (const l of txLines(t)) {
+    const lc = catById(l.categoryId);
+    if (c ? lc === c : !lc && l.amount <= 0) rows.push({ t, categoryId: c ? c.id : null, amount: round2(c?.kind === 'income' ? l.amount : -l.amount) });
+  }
   rows.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
   const v = c && c.kind === 'expense' && c.budget > 0 ? budgetView(c, mk) : null;
   drill({ title: `${c ? c.name : 'Uncategorized'}, ${monthLabel(mk)}`, rows, total: round2(sum(rows.map(r => r.amount))), href: `#/transactions?m=${mk}&cat=${encodeURIComponent(catId)}`,

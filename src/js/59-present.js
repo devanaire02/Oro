@@ -65,8 +65,9 @@ function buildSlides(mk) {
   const M = MONTHS[+mk.slice(5) - 1], P = MONTHS[+prev.slice(5) - 1];
   const groups = spendByGroup(txs), items = donutItems(groups, 6), spendTotal = sum(groups.map(g => g.value));
   const exp = state.categories.filter(c => c.kind === 'expense' && c.period !== 'year' && c.budget > 0).map(c => ({ c, v: budgetView(c, mk) }));
-  const wins = exp.filter(x => x.v.actual < x.v.budget).sort((a, b) => (b.v.budget - b.v.actual) - (a.v.budget - a.v.actual)).slice(0, 4);
-  const misses = exp.filter(x => x.v.actual > x.v.budget).sort((a, b) => (b.v.actual - b.v.budget) - (a.v.actual - a.v.budget)).slice(0, 4);
+  // under or over counts what a rollover category carried, as Budget, Overview and Check-in do
+  const wins = exp.filter(x => x.v.available > 0.005).sort((a, b) => b.v.available - a.v.available).slice(0, 4);
+  const misses = exp.filter(x => x.v.available < -0.005).sort((a, b) => a.v.available - b.v.available).slice(0, 4);
   const notes = insights(mk, { limit: 4 });
   const adults = people().filter(m => roleOf(m.id) === 'adult').map(m => m.name);
   const who = adults.length === 2 ? `${adults[0]} and ${adults[1]}` : adults.length === 1 ? adults[0] : '';
@@ -111,8 +112,8 @@ function buildSlides(mk) {
       <div><h2 class="slide-h2">Where it went</h2>${legendList(items, spendTotal)}
       <p class="slide-lede">${groups[0] ? `${esc(groups[0].label)} was the biggest piece at ${pct(groups[0].value / spendTotal, 0)}.` : ''}</p></div></div>` });
   if (wins.length || misses.length) slides.push({ title: 'Budget', kind: 'budget', html: () => `<h2 class="slide-h2 center">How the budget did</h2><div class="slide-split top">
-      <div class="wins"><h3>Under budget</h3>${wins.length ? wins.map(x => `<button class="wm good" data-drill="cat|${x.c.id}|${mk}"><span>${esc(x.c.name)}</span><strong class="num">${sm(x.v.budget - x.v.actual)} under</strong>${bar(x.v.actual, x.v.budget)}</button>`).join('') : '<p class="muted">Nothing came in under.</p>'}</div>
-      <div class="misses"><h3>Over budget</h3>${misses.length ? misses.map(x => `<button class="wm bad" data-drill="cat|${x.c.id}|${mk}"><span>${esc(x.c.name)}</span><strong class="num">${sm(x.v.actual - x.v.budget)} over</strong>${bar(x.v.actual, x.v.budget)}</button>`).join('') : '<p class="slide-lede pos">Every category stayed within budget.</p>'}</div></div>` });
+      <div class="wins"><h3>Under budget</h3>${wins.length ? wins.map(x => `<button class="wm good" data-drill="cat|${x.c.id}|${mk}"><span>${esc(x.c.name)}</span><strong class="num">${sm(x.v.available)} under</strong>${bar(x.v.actual, x.v.budget + (x.v.carry || 0))}</button>`).join('') : '<p class="muted">Nothing came in under.</p>'}</div>
+      <div class="misses"><h3>Over budget</h3>${misses.length ? misses.map(x => `<button class="wm bad" data-drill="cat|${x.c.id}|${mk}"><span>${esc(x.c.name)}</span><strong class="num">${sm(-x.v.available)} over</strong>${bar(x.v.actual, x.v.budget + (x.v.carry || 0))}</button>`).join('') : '<p class="slide-lede pos">Every category stayed within budget.</p>'}</div></div>` });
   if (people().length > 1) {
     const per = people().map(m => ({ m, f: flowSummary(txs.filter(t => personOf(t) === m.id)), a: categoryActuals(txs.filter(t => personOf(t) === m.id)) })).filter(x => x.f.spending > 0);
     const tot = sum(per.map(x => x.f.spending)) || 1;

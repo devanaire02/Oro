@@ -16,18 +16,19 @@ const _fmt2 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD
 const _fmt0 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 });
 function money(n, opts = {}) {
   n = Number(n) || 0;
-  if (Object.is(round2(n), -0)) n = 0;
-  const s = (opts.cents === false || (opts.auto && Math.abs(n) >= 10000) ? _fmt0 : _fmt2).format(Math.abs(n));
+  const whole = opts.cents === false || (opts.auto && Math.abs(n) >= 10000);
+  if (Object.is(round2(n), -0) || (whole && Math.abs(n) < 0.5)) n = 0;   // an amount that shows as zero carries no sign: $0, not −$0 or +$0
+  const s = (whole ? _fmt0 : _fmt2).format(Math.abs(n));
   if (n < 0) return opts.paren ? `(${s})` : `−${s}`;
   return (opts.sign && n > 0 ? '+' : '') + s;
 }
 function moneyCompact(n) {
   const a = Math.abs(n), s = n < 0 ? '−' : '';
-  if (a >= 1e6) return `${s}$${(a / 1e6).toFixed(a >= 1e7 ? 1 : 2).replace(/\.?0+$/, '')}M`;
-  if (a >= 1e3) return `${s}$${(a / 1e3).toFixed(a >= 1e5 ? 0 : 1).replace(/\.0$/, '')}K`;
+  if (a >= 999500) return `${s}$${(a / 1e6).toFixed(a >= 1e7 ? 1 : 2).replace(/\.?0+$/, '')}M`;   // $999,500 and up reads $1M, not $1000K
+  if (a >= 999.5) return `${s}$${(a / 1e3).toFixed(a >= 1e5 ? 0 : 1).replace(/\.0$/, '')}K`;
   return `${s}$${Math.round(a)}`;
 }
-const pct = (n, d = 1) => (isFinite(n) ? (n * 100).toFixed(d) + '%' : '—');
+const pct = (n, d = 1) => (isFinite(n) ? (n * 100).toFixed(d).replace(/^-(0(\.0+)?)$/, '$1') + '%' : '—');   // 0%, not -0%
 const signClass = n => (n > 0.004 ? 'pos' : n < -0.004 ? 'neg' : '');
 
 /* Parse "$1,234.56", "(12.34)", "12.34-", "-$5", "12.34 CR" */
@@ -997,13 +998,16 @@ function flowSummary(txs) {
   const net = income - spending;
   return { income: round2(income), spending: round2(spending), net: round2(net), rate: income > 0 ? net / income : NaN, uncategorized };
 }
-/* Category → actual (spending positive for expense categories, income positive for income). */
+/* Category → actual (spending positive for expense categories, income positive for income). Lines with no category
+   are kept apart by direction, the way flowSummary counts them: purchases add up under '_none' and money in under
+   '_in' (both positive), so a deposit waiting for a category never hides uncategorized spending. */
 function categoryActuals(txs) {
   const m = {};
   for (const t of txs) for (const l of txLines(t)) {
-    const id = l.categoryId || '_none', c = catById(l.categoryId);
+    const c = catById(l.categoryId);
     if (c?.kind === 'transfer') continue;
-    m[id] = (m[id] || 0) + (c?.kind === 'income' ? l.amount : -l.amount);
+    const id = c ? c.id : l.amount > 0 ? '_in' : '_none';
+    m[id] = (m[id] || 0) + (!c ? Math.abs(l.amount) : c.kind === 'income' ? l.amount : -l.amount);
   }
   for (const k in m) m[k] = round2(m[k]);
   return m;
@@ -1069,23 +1073,27 @@ function investableAllocation(includePrivate = true, accts) {
 }
 
 /* ---------- recurring + forecast ---------- */
-function nextOccurrence(date, freq) {
-  const d = fromISO(date);
+/* The next date for something that repeats. A day a shorter month doesn't have falls on that month's last day and goes
+   back to its own day afterwards (the 31st: Jan 31, Feb 28, Mar 31), so `day` is the day of the month it started on.
+   Twice a month is that day and 15 days later (the 1st and 16th, the 15th and 30th). */
+function nextOccurrence(date, freq, day = +date.slice(8)) {
+  const [y, m, d] = date.split('-').map(Number);
+  const on = (months, dd) => { const k = addMonths(`${y}-${pad2(m)}`, months); return `${k}-${pad2(Math.min(dd, +monthEnd(k).slice(8)))}`; };
   switch (freq) {
-    case 'weekly': d.setDate(d.getDate() + 7); break;
-    case 'biweekly': d.setDate(d.getDate() + 14); break;
-    case 'semimonthly': if (d.getDate() < 15) d.setDate(d.getDate() + 15); else { d.setMonth(d.getMonth() + 1); d.setDate(Math.max(1, d.getDate() - 15)); } break;
-    case 'quarterly': d.setMonth(d.getMonth() + 3); break;
-    case 'semiannual': d.setMonth(d.getMonth() + 6); break;
-    case 'annual': d.setFullYear(d.getFullYear() + 1); break;
-    default: d.setMonth(d.getMonth() + 1);
+    case 'weekly': return addDays(date, 7);
+    case 'biweekly': return addDays(date, 14);
+    case 'semimonthly': { const lo = day <= 15 ? day : day - 15; return d === lo ? on(0, lo + 15) : on(1, lo); }
+    case 'quarterly': return on(3, day);
+    case 'semiannual': return on(6, day);
+    case 'annual': return on(12, day);
+    default: return on(1, day);
   }
-  return toISO(d);
 }
 function occurrences(r, from, to) {
   const out = []; let d = r.nextDate, guard = 0;
-  while (d && d < from && guard++ < 800) d = nextOccurrence(d, r.freq);
-  while (d && d <= to && guard++ < 1600) { out.push(d); d = nextOccurrence(d, r.freq); }
+  const day = d ? +d.slice(8) : 0;
+  while (d && d < from && guard++ < 800) d = nextOccurrence(d, r.freq, day);
+  while (d && d <= to && guard++ < 1600) { out.push(d); d = nextOccurrence(d, r.freq, day); }
   return out;
 }
 function forecastAccounts(useLens = false) { return (useLens ? lensAccounts() : activeAccounts()).filter(a => a.forecast ?? ACCOUNT_TYPES[a.type]?.forecast); }
@@ -1158,7 +1166,9 @@ function goalProgress(g) {
   let status = 'on';
   if (current >= target) status = 'done';
   else if (g.monthly != null && g.monthly !== '' && needed != null && Number(g.monthly) + 0.01 < needed) status = 'behind';
-  return { current: round2(current), target, remaining: round2(remaining), monthsLeft, needed: needed == null ? null : round2(needed), share, status, source };
+  const past = !!g.targetDate && g.targetDate.slice(0, 7) < thisMonth() && status !== 'done';
+  if (past) status = 'behind';
+  return { current: round2(current), target, remaining: round2(remaining), monthsLeft, needed: needed == null ? null : round2(needed), share, status, source, past };
 }
 
 /* ---------- attention items ---------- */
@@ -1283,7 +1293,7 @@ function runRetirement(inputs, opts = {}) {
         const inc = (a >= otherIncomeAge ? otherIncome : 0) + rentalNet;
         v -= Math.max(0, spending - inc);
       }
-      if (v <= 0 && !failed) { failed = true; depletedAges.push(age + y); v = 0; }
+      if (v <= 0) { if (!failed) { failed = true; depletedAges.push(age + y); } v = 0; }   // once the money is gone it stays at zero, not below
       paths[y][s] = v;
     }
     if (!failed) success++;
@@ -1463,22 +1473,23 @@ function periodRange(p, from, to) {
 }
 function monthsIn(from, to) { const out = []; for (let m = from.slice(0, 7); m <= to.slice(0, 7) && out.length < 60; m = addMonths(m, 1)) out.push(m); return out; }
 
-/* Sankey: income categories → total income → spending groups (+ saved, or drawn from savings). */
-function sankeyData(from, to) {
-  const acts = rangeActuals(from, to);
+/* Sankey: income categories → total income → spending groups (+ saved, or drawn from savings). `acts` are the category
+   totals to draw (the whose-money menu's people); without them, everyone's for the period. Whatever the mix, what
+   comes in on the left equals what goes out on the right, and Saved equals Left over (flowSummary's net). */
+function sankeyData(from, to, acts = rangeActuals(from, to), drawnLabel = 'From savings') {
   const inc = [], groups = {};
   for (const [id, v] of Object.entries(acts)) {
     const c = catById(id);
-    if (id === '_none') { if (v > 0) groups.Uncategorized = (groups.Uncategorized || 0) + v; else inc.push({ name: 'Uncategorized income', value: -v }); continue; }
-    if (!c) continue;
+    if (!c) { if (id === '_in') { if (v > 0) inc.push({ name: 'Uncategorized income', value: v }); } else if (v > 0) groups.Uncategorized = (groups.Uncategorized || 0) + v; continue; }
     if (c.kind === 'income' && v > 0) inc.push({ name: c.name, value: v });
+    else if (c.kind === 'income' && v < 0) groups[`${c.name} paid back`] = -v;   // income taken back (a reversed paycheck) is money out
     else if (c.kind === 'expense' && v > 0) groups[c.group] = (groups[c.group] || 0) + v;
     else if (c.kind === 'expense' && v < 0) inc.push({ name: `${c.name} refunds`, value: -v });
   }
   const income = sum(inc.map(x => x.value)), spending = sum(Object.values(groups));
   const outs = Object.entries(groups).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
   if (income > spending) outs.push({ name: 'Saved', value: income - spending, saved: true });
-  else if (spending > income) inc.push({ name: 'From savings', value: spending - income, drawn: true });
+  else if (spending > income) inc.push({ name: drawnLabel, value: spending - income, drawn: true });
   inc.sort((a, b) => (a.drawn ? 1 : 0) - (b.drawn ? 1 : 0) || b.value - a.value);
   return { left: inc, right: outs, income, spending };
 }
@@ -1818,7 +1829,8 @@ function scheduleA(year, agi, stateTax, H, T, tableYear) {
   const by = deductionSummary(year).by, st = H.status, half = st === 'mfs' ? 0.5 : 1;
   const medicalPaid = round2(by['Medical'] || 0), medical = round2(Math.max(0, medicalPaid - 0.075 * agi));
   const propertyTax = H.propertyTax != null ? H.propertyTax : round2(by['State and local taxes'] || 0);
-  const saltCap = Math.max(10000 * half, T.saltCap * half - 0.3 * Math.max(0, agi - T.saltPhase * half));
+  // Schedule A's worksheet: the full cap less 30% of income over the threshold, never under $10,000; married filing separately gets half of the result
+  const saltCap = half * Math.max(10000, T.saltCap - 0.3 * Math.max(0, agi - T.saltPhase * half));
   const saltPaid = round2(stateTax + propertyTax), salt = round2(Math.min(saltCap, saltPaid));
   const loans = homeLoansForTax().map(x => ({ ...x, ...mortgageInterestFor(x.key, x.loan, year) }));
   const interest = round2(sum(loans.map(x => x.amount)));
@@ -1846,7 +1858,7 @@ function taxEstimate(year, over = {}) {
   const B = bracketTax(taxable, T.brackets[st]);
   const ctcStart = st === 'mfj' ? 400000 : 200000;
   const ctcFull = (H.kids || 0) * T.ctc, ctc = Math.max(0, ctcFull - 50 * Math.ceil(Math.max(0, agi - ctcStart) / 1000));
-  const ctcUsed = Math.min(ctc, B.tax), refund = Math.min(ctc - ctcUsed, (H.kids || 0) * T.ctcRefund, Math.max(0, 0.15 * (gross - 2500)));
+  const ctcUsed = Math.min(ctc, B.tax), refund = Math.min(ctc - ctcUsed, (H.kids || 0) * T.ctcRefund, Math.max(0, 0.15 * (gross - pretax - 2500)));   // earned income is taxable pay (W-2 box 1)
   const fedEst = round2(B.tax - ctcUsed - refund);
   // Social Security (up to the wage base, per person) and Medicare (plus 0.9% above $250,000 joint, $200,000 single)
   const addlAt = st === 'mfj' ? 250000 : st === 'mfs' ? 125000 : 200000;
@@ -1861,7 +1873,7 @@ function taxEstimate(year, over = {}) {
   const ctcPhase = ctcFull > 0 && agi > ctcStart && ctc > 0;
   if (ctcPhase) fedTop += 0.05;
   const saltPhase = itemize && agi > T.saltPhase * (st === 'mfs' ? 0.5 : 1) && A.saltCap > 10000 * (st === 'mfs' ? 0.5 : 1) && A.saltPaid > A.saltCap;
-  if (saltPhase) fedTop += 0.3 * topBracket(taxable, T.brackets[st]);
+  if (saltPhase) fedTop += 0.3 * (st === 'mfs' ? 0.5 : 1) * topBracket(taxable, T.brackets[st]);
   const ficaTop = top ? (Math.max(0, top.gross - top.health) < T.ssBase ? 0.062 : 0) + 0.0145 + (allWages > addlAt ? 0.009 : 0) : 0;
   const ilTop = agi > ilExempt ? IL_RATE : 0;
   return {
@@ -4575,7 +4587,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '4900753';
+const ORO_BUILD = 'aa296cd';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -4855,7 +4867,11 @@ function drillGroup(label, mk = thisMonth()) {
   if (label === 'Everything else') return go(`#/reports?r=spending&p=${mk === thisMonth() ? 'm' : 'lm'}`);
   const txs = lensed(txInMonth(mk)), acts = categoryActuals(txs), rows = [];
   const inGroup = id => id === '_none' ? label === 'Uncategorized' : (c => !!c && c.kind === 'expense' && c.group === label)(catById(id));
-  for (const t of txs) for (const l of txLines(t)) { const id = l.categoryId || '_none'; if ((acts[id] || 0) > 0 && inGroup(id)) rows.push({ t, categoryId: l.categoryId, amount: round2(-l.amount) }); }
+  for (const t of txs) for (const l of txLines(t)) {
+    const c = catById(l.categoryId); if (c?.kind === 'transfer' || (!c && l.amount > 0)) continue;   // uncategorized money in is income, not part of this slice
+    const id = c ? c.id : '_none';
+    if ((acts[id] || 0) > 0 && inGroup(id)) rows.push({ t, categoryId: c ? c.id : null, amount: round2(-l.amount) });
+  }
   rows.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
   const cats = [...new Set(rows.map(r => r.categoryId || '_none'))].map(id => ({ id, v: acts[id] })).sort((a, b) => b.v - a.v);
   const top = cats[0]?.v || 1;
@@ -4864,7 +4880,10 @@ function drillGroup(label, mk = thisMonth()) {
 }
 function drillCat(catId, mk = thisMonth()) {
   const c = catById(catId), txs = lensed(txInMonth(mk)), rows = [];
-  for (const t of txs) for (const l of txLines(t)) if ((l.categoryId || '_none') === catId) rows.push({ t, categoryId: l.categoryId, amount: round2(c?.kind === 'income' ? l.amount : -l.amount) });
+  for (const t of txs) for (const l of txLines(t)) {
+    const lc = catById(l.categoryId);
+    if (c ? lc === c : !lc && l.amount <= 0) rows.push({ t, categoryId: c ? c.id : null, amount: round2(c?.kind === 'income' ? l.amount : -l.amount) });
+  }
   rows.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
   const v = c && c.kind === 'expense' && c.budget > 0 ? budgetView(c, mk) : null;
   drill({ title: `${c ? c.name : 'Uncategorized'}, ${monthLabel(mk)}`, rows, total: round2(sum(rows.map(r => r.amount))), href: `#/transactions?m=${mk}&cat=${encodeURIComponent(catId)}`,
@@ -5021,7 +5040,7 @@ function insights(mk = thisMonth(), opts = {}) {
     if (!isCur && a > 150 && avg > 0 && a > avg * 1.4 && !out.some(o => o.text.startsWith(c.name))) out.push({ tone: 'info', w: (a - avg) / 2, drill: `cat|${c.id}|${mk}`, text: `${c.name} came to ${money(a, { cents: false })}, versus a usual ${money(avg, { cents: false })}.` });
   }
   if (isCur) for (const u of upcoming(35).filter(u => u.amount <= -1000 && !/mortgage|rent\b|card payment/i.test(u.name))) out.push({ tone: 'info', w: -u.amount / 3, go: '#/cashflow', text: `${u.name} of ${money(-u.amount, { cents: false })} is due ${dateLabel(u.date)}.` });
-  for (const g of state.goals) { const p = goalProgress(g); if (p.status === 'behind') out.push({ tone: 'warn', w: 400, go: '#/planning', text: `${g.name} needs ${money(p.needed, { cents: false })} a month to hit ${dateLabel(g.targetDate, true)}; you’re putting in ${money(g.monthly, { cents: false })}.` }); else if (p.status === 'done') out.push({ tone: 'good', w: 300, go: '#/planning', text: `${g.name} is fully funded. Nice work.` }); }
+  for (const g of state.goals) { const p = goalProgress(g); if (p.past) out.push({ tone: 'warn', w: 450, go: '#/planning', text: `${g.name} is past its date (${dateLabel(g.targetDate, true)}) with ${money(p.remaining, { cents: false })} still to go.` }); else if (p.status === 'behind') out.push({ tone: 'warn', w: 400, go: '#/planning', text: `${g.name} needs ${money(p.needed, { cents: false })} a month to hit ${dateLabel(g.targetDate, true)}; you’re putting in ${money(g.monthly, { cents: false })}.` }); else if (p.status === 'done') out.push({ tone: 'good', w: 300, go: '#/planning', text: `${g.name} is fully funded. Nice work.` }); }
   for (const d of detectRepeating().filter(d => d.isNew)) out.push({ tone: 'info', w: d.monthly * 6, go: '#/cashflow', text: `New subscription: ${d.payee}, ${money(d.monthly)} a month (${money(d.monthly * 12, { cents: false })} a year).` });
   const f = flowSummary(txInMonth(mk)), avgRate = (() => { const xs = [1, 2, 3].map(i => flowSummary(txInMonth(addMonths(mk, -i)))); const inc = sum(xs.map(x => x.income)), sp = sum(xs.map(x => x.spending)); return inc ? (inc - sp) / inc : NaN; })();
   if (!isCur && isFinite(f.rate) && isFinite(avgRate) && Math.abs(f.rate - avgRate) > 0.05) out.push({ tone: f.rate > avgRate ? 'good' : 'warn', w: 500, drill: `kept|${mk}`, text: `You kept ${pct(f.rate, 0)} of income, ${f.rate > avgRate ? 'better than' : 'below'} the recent ${pct(avgRate, 0)}.` });
@@ -5118,7 +5137,7 @@ function overviewDetailed(sub) {
   <section class="kpis-row">
     <div class="month-strip" role="group" aria-label="This month: money in, less what was spent, is what was kept">
     <div class="kpi kpi-in" data-drill="in|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Money in this month</span><span class="kpi-value num ${f.income > 0 ? 'pos' : ''}">${money(f.income, { cents: false })}</span><span class="kpi-sub">${lastIn ? `${money(lastIn, { cents: false })} in ${MONTHS[+prev.slice(5) - 1]}` : 'Paychecks and other money coming in'}</span>${sparkline(inSeries, { color: 'var(--pos)' })}</div>
-    <div class="kpi kpi-out" data-drill="out|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Spent in ${MONTHS[new Date().getMonth()]}</span><span class="kpi-value num">${money(f.spending, { cents: false })}</span><span class="kpi-sub">${planned ? `of ${money(planned, { cents: false })} planned · ${pct(f.spending / planned, 0)}` : 'No budget set'}</span>${sparkline(spendSeries, { color: 'var(--c4)' })}</div>
+    <div class="kpi kpi-out" data-drill="out|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Spent in ${MONTHS[new Date().getMonth()]}</span><span class="kpi-value num">${money(f.spending, { cents: false })}</span><span class="kpi-sub">${lensActive() && UI.lens !== 'nokids' ? `${esc(lensLabel())}’s share of the spending` : planned ? `of ${money(planned, { cents: false })} planned · ${pct(f.spending / planned, 0)}` : 'No budget set'}</span>${sparkline(spendSeries, { color: 'var(--c4)' })}</div>
     <div class="kpi kpi-kept" data-drill="kept|${mk}" role="button" tabindex="0" title="See what’s behind it"><span class="kpi-label">Kept this month</span><span class="kpi-value num ${signClass(f.net)}">${money(f.net, { cents: false })}</span><span class="kpi-sub">${isFinite(f.rate) ? `${pct(f.rate, 0)} of income` : 'No income yet'}</span>${sparkline(keptSeries, { color: 'var(--pos)' })}</div>
     </div>
     <a class="kpi kpi-bal" href="#/cashflow"><span class="kpi-label">Cash on hand</span><span class="kpi-value num">${money(t.cash, { cents: false })}</span><span class="kpi-sub">${state.recurring.length ? `Low of ${money(fc.low.y, { cents: false })} on ${dateLabel(fc.low.x)}` : 'Add bills to forecast'}</span>${sparkline(cashSeries, { color: 'var(--c2)' })}</a>
@@ -5161,7 +5180,7 @@ function goalTile(g) {
   const p = goalProgress(g);
   return `<button class="goal-tile" data-edit-goal="${g.id}">${ring(p.share, { size: 74, width: 8, label: pct(p.share, 0), color: p.status === 'behind' ? 'var(--warn)' : p.status === 'done' ? 'var(--pos)' : 'var(--ink-accent)' })}
     <span class="goal-name">${esc(g.name)}</span><span class="goal-sub num">${money(p.current, { cents: false })} of ${money(p.target, { cents: false })}</span>
-    <span class="goal-status ${p.status}">${p.status === 'done' ? 'Funded' : p.status === 'behind' ? `Needs ${money(p.needed, { cents: false })}/mo` : p.needed != null ? `${money(p.needed, { cents: false })}/mo to finish` : 'On track'}</span></button>`;
+    <span class="goal-status ${p.status}">${p.status === 'done' ? 'Funded' : p.past ? `Past its date, ${money(p.remaining, { cents: false })} to go` : p.status === 'behind' ? `Needs ${money(p.needed, { cents: false })}/mo` : p.needed != null ? `${money(p.needed, { cents: false })}/mo to finish` : 'On track'}</span></button>`;
 }
 
 function overviewSimple(sub) {
@@ -5567,9 +5586,9 @@ VIEWS.cashflow = () => {
       <header class="panel-head"><h2>Repeating charges</h2><span class="muted small">${repNew.length ? `${money(sum(repNew.map(r => r.monthly)))} a month, ${money(sum(repNew.map(r => r.monthly)) * 12, { cents: false })} a year` : ''}</span></header>
       ${repNew.length ? `<table class="ledger compact" data-sort-id="repeating"><thead><tr><th>Payee</th><th class="hide-sm">Since</th><th class="num">Monthly</th><th></th></tr></thead><tbody>
       ${repNew.map(r => `<tr><th scope="row">${esc(r.payee)}${r.isNew ? ' <span class="tag">New</span>' : ''}<div class="muted small">${esc(catName(r.categoryId))}, ${esc(acctById(r.accountId)?.name || '')}</div></th><td class="hide-sm muted nowrap" data-v="${r.firstSeen || ''}">${dateLabel(r.firstSeen, true)}</td><td class="num">${money(r.monthly)}</td>
-        <td class="acts">${r.fromCash ? `<button class="btn small ghost" data-add-rep="${rep.indexOf(r)}">Add to forecast</button>` : ''}</td></tr>`).join('')}
+        <td class="acts">${r.fromCash ? `<button class="btn small ghost" data-add-rep="${detectRepeating().indexOf(r)}">Add to forecast</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : ''}
-      <p class="muted small">${rep.length ? `Ọrọ̀ found ${rep.length} charges that repeat at a steady amount${rep.length - repNew.length ? `; ${rep.length - repNew.length} are already scheduled and hidden here` : ''}. Card charges are covered by your card-payment estimate, so only bills paid straight from checking need adding.` : 'Ọrọ̀ looks for charges that repeat at a steady amount. Import a few months of history to see them.'}</p>
+      <p class="muted small">${rep.length ? `Ọrọ̀ found ${rep.length} charges that repeat at a steady amount${rep.length - repNew.length ? `; ${rep.length - repNew.length} ${rep.length - repNew.length === 1 ? 'is' : 'are'} already scheduled and hidden here` : ''}. Card charges are covered by your card-payment estimate, so only bills paid straight from checking need adding.` : 'Ọrọ̀ looks for charges that repeat at a steady amount. Import a few months of history to see them.'}</p>
     </section>
   </div>
 
@@ -5608,11 +5627,13 @@ VIEWS.review = p => {
   const txs = txInMonth(mk);
   const f = flowSummary(txs), fp = flowSummary(txInMonth(prev));
   const avg3 = [1, 2, 3].map(i => flowSummary(txInMonth(addMonths(mk, -i))));
-  const avgSpend = sum(avg3.map(x => x.spending)) / 3, avgIncome = sum(avg3.map(x => x.income)) / 3;
+  const avgN = Math.max(1, [1, 2, 3].filter(i => addMonths(mk, -i) >= firstTxMonth()).length);   // fewer than three earlier months: the average of the ones there are
+  const avgSpend = sum(avg3.map(x => x.spending)) / avgN, avgIncome = sum(avg3.map(x => x.income)) / avgN;
   const acts = categoryActuals(txs);
   const exp = state.categories.filter(c => c.kind === 'expense');
-  const over = exp.filter(c => c.period !== 'year' && c.budget > 0 && (acts[c.id] || 0) > c.budget).map(c => ({ c, a: acts[c.id] || 0, d: (acts[c.id] || 0) - c.budget })).sort((a, b) => b.d - a.d);
-  const under = exp.filter(c => c.period !== 'year' && c.budget > 0 && (acts[c.id] || 0) < c.budget).map(c => ({ c, a: acts[c.id] || 0, d: c.budget - (acts[c.id] || 0) })).sort((a, b) => b.d - a.d).slice(0, 4);
+  const monthly = exp.filter(c => c.period !== 'year' && c.budget > 0).map(c => { const v = budgetView(c, mk); return { c, a: v.actual, b: round2(v.budget + (v.carry || 0)), d: Math.abs(v.available), left: v.available }; });
+  const over = monthly.filter(x => x.left < -0.005).sort((a, b) => b.d - a.d);
+  const under = monthly.filter(x => x.left > 0.005).sort((a, b) => b.d - a.d).slice(0, 4);
   const yearly = exp.filter(c => c.period === 'year' && c.budget > 0).map(c => ({ c, v: budgetView(c, mk) }));
   const unusual = exp.map(c => ({ c, a: acts[c.id] || 0, avg: trailingAvg(c.id, mk, 3) })).filter(x => x.a > 60 && x.a > x.avg * 1.3 && x.a - x.avg > 50).sort((a, b) => (b.a - b.avg) - (a.a - a.avg)).slice(0, 5);
   const largest = txs.filter(t => t.amount < 0 && !isTransferCat(t.categoryId)).sort((a, b) => a.amount - b.amount).slice(0, 8);
@@ -5620,7 +5641,7 @@ VIEWS.review = p => {
   const bucketOf = id => { const a = acctById(id); return a ? ACCOUNT_TYPES[a.type]?.bucket : 'illiquid'; };
   const bucketChange = BUCKETS.map(b => {
     const e = state.snapshots[mk] || {}, s = state.snapshots[prev] || {};
-    const val = snap => sum(Object.entries(snap).filter(([id]) => bucketOf(id) === b.id).map(([, v]) => v));
+    const val = snap => sum(Object.entries(snap).filter(([id]) => bucketOf(id) === b.id && (!acctById(id) || acctInEstate(acctById(id)))).map(([, v]) => v));   // as net worth counts them: not children's, trusts' or others'
     return { b, change: val(e) - val(s) };
   });
   const unc = txs.filter(t => !t.categoryId).length;
@@ -5639,7 +5660,7 @@ VIEWS.review = p => {
     <tbody>
       <tr><th scope="row">${MONTHS[+mk.slice(5) - 1]}</th><td class="num">${money(f.income, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td><td class="num ${signClass(f.net)}">${money(f.net, { cents: false })}</td><td class="num">${pct(f.rate, 0)}</td></tr>
       <tr><th scope="row">${MONTHS[+prev.slice(5) - 1]}</th><td class="num muted">${money(fp.income, { cents: false })}</td><td class="num muted">${money(fp.spending, { cents: false })}</td><td class="num muted">${money(fp.net, { cents: false })}</td><td class="num muted">${pct(fp.rate, 0)}</td></tr>
-      <tr><th scope="row">Prior 3-month average</th><td class="num muted">${money(avgIncome, { cents: false })}</td><td class="num muted">${money(avgSpend, { cents: false })}</td><td class="num muted">${money(avgIncome - avgSpend, { cents: false })}</td><td class="num muted">${avgIncome ? pct((avgIncome - avgSpend) / avgIncome, 0) : '—'}</td></tr>
+      <tr><th scope="row">${avgN < 3 ? (avgN === 1 ? 'The month before' : `Prior ${avgN}-month average`) : 'Prior 3-month average'}</th><td class="num muted">${money(avgIncome, { cents: false })}</td><td class="num muted">${money(avgSpend, { cents: false })}</td><td class="num muted">${money(avgIncome - avgSpend, { cents: false })}</td><td class="num muted">${avgIncome ? pct((avgIncome - avgSpend) / avgIncome, 0) : '—'}</td></tr>
     </tbody></table></section>
 
   <div class="cols">
@@ -5654,8 +5675,8 @@ VIEWS.review = p => {
     </section>
     <section class="panel">
       <header class="panel-head"><h2>Over budget</h2></header>
-      ${over.length ? `<table class="ledger compact"><tbody>${over.map(x => `<tr><th scope="row">${esc(x.c.name)}</th><td class="num muted">${money(x.a, { cents: false })} of ${money(x.c.budget, { cents: false })}</td><td class="num neg">${money(x.d, { cents: false })} over</td></tr>`).join('')}</tbody></table>` : '<p class="muted">Every monthly category stayed within budget.</p>'}
-      ${under.length ? `<h3>Most room left</h3><table class="ledger compact"><tbody>${under.map(x => `<tr><th scope="row">${esc(x.c.name)}</th><td class="num muted">${money(x.a, { cents: false })} of ${money(x.c.budget, { cents: false })}</td><td class="num pos">${money(x.d, { cents: false })} under</td></tr>`).join('')}</tbody></table>` : ''}
+      ${over.length ? `<table class="ledger compact"><tbody>${over.map(x => `<tr><th scope="row">${esc(x.c.name)}</th><td class="num muted">${money(x.a, { cents: false })} of ${money(x.b, { cents: false })}</td><td class="num neg">${money(x.d, { cents: false })} over</td></tr>`).join('')}</tbody></table>` : '<p class="muted">Every monthly category stayed within budget.</p>'}
+      ${under.length ? `<h3>Most room left</h3><table class="ledger compact"><tbody>${under.map(x => `<tr><th scope="row">${esc(x.c.name)}</th><td class="num muted">${money(x.a, { cents: false })} of ${money(x.b, { cents: false })}</td><td class="num pos">${money(x.d, { cents: false })} under</td></tr>`).join('')}</tbody></table>` : ''}
       ${yearly.length ? `<h3>Yearly budgets</h3><table class="ledger compact"><tbody>${yearly.map(({ c, v }) => `<tr><th scope="row">${esc(c.name)}</th><td class="num muted">${money(v.actual, { cents: false })} of ${money(v.budget, { cents: false })}</td><td class="meter-cell">${bar(v.actual, v.budget, { pace: v.monthShare })}</td></tr>`).join('')}</tbody></table>` : ''}
     </section>
   </div>
@@ -5918,7 +5939,7 @@ VIEWS.reports = p => {
   const months = monthsIn(R.from, R.to);
 
   if (tab === 'flow') {
-    const sk = lensActive() ? (() => { const all = sankeyFromActs(acts); return all; })() : sankeyData(R.from, R.to);
+    const sk = lensActive() ? sankeyData(R.from, R.to, acts, 'From savings or shared income') : sankeyData(R.from, R.to);
     const f = flowSummary(txs);
     return head + `
     <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Left over</th><th class="num">Savings rate</th></tr></thead>
@@ -5961,18 +5982,20 @@ VIEWS.reports = p => {
     const per = ms.map(m => categoryActuals(lensed(txInMonth(m))));
     const cats = state.categories.filter(c => c.kind !== 'transfer' && per.some(a => a[c.id]));
     const inc = cats.filter(c => c.kind === 'income'), exp = groupBy(cats.filter(c => c.kind === 'expense'), c => c.group);
-    const hasUnc = per.some(a => a._none);
+    // Uncategorized money in counts as income and uncategorized purchases as spending, as on Overview and Cash flow
+    const uncIn = per.map(a => a._in || 0), uncOut = per.map(a => a._none || 0);
     const row = (label, vals, cls = '') => `<tr class="${cls}"><th scope="row">${label}</th>${vals.map(v => `<td class="num">${v ? money(v, { cents: false }) : '<span class="muted">—</span>'}</td>`).join('')}<td class="num total-col">${money(sum(vals), { cents: false })}</td></tr>`;
-    const incT = ms.map((_, i) => sum(inc.map(c => per[i][c.id] || 0)));
-    const expT = ms.map((_, i) => sum(cats.filter(c => c.kind === 'expense').map(c => per[i][c.id] || 0)) + (per[i]._none || 0));
+    const incT = ms.map((_, i) => sum(inc.map(c => per[i][c.id] || 0)) + uncIn[i]);
+    const expT = ms.map((_, i) => sum(cats.filter(c => c.kind === 'expense').map(c => per[i][c.id] || 0)) + uncOut[i]);
     return head + `<div class="toolbar"><button class="btn small" data-act="export-statement" data-from="${R.from}" data-to="${R.to}">Export CSV</button><span class="muted small">Showing ${ms.length} month${ms.length > 1 ? 's' : ''}. Transfers are left out.</span></div>
     <div class="scroll-table"><table class="ledger statement"><thead><tr><th>Category</th>${ms.map(m => `<th class="num">${monthLabel(m, true)}</th>`).join('')}<th class="num">Total</th></tr></thead><tbody>
       <tr class="sect"><th colspan="${ms.length + 2}">Income</th></tr>
       ${inc.map(c => row(`<span class="indent-in">${esc(c.name)}</span>`, ms.map((_, i) => per[i][c.id] || 0))).join('')}
+      ${uncIn.some(Boolean) ? row('<span class="indent-in">Uncategorized</span>', uncIn) : ''}
       ${row('Total income', incT, 'subtotal')}
       <tr class="sect"><th colspan="${ms.length + 2}">Spending</th></tr>
       ${Object.entries(exp).map(([g, cs]) => row(`<strong>${esc(g)}</strong>`, ms.map((_, i) => sum(cs.map(c => per[i][c.id] || 0))), 'grp') + cs.map(c => row(`<span class="indent-in">${esc(c.name)}</span>`, ms.map((_, i) => per[i][c.id] || 0), 'detail-only')).join('')).join('')}
-      ${hasUnc ? row('<strong>Uncategorized</strong>', ms.map((_, i) => per[i]._none || 0), 'grp') : ''}
+      ${uncOut.some(Boolean) ? row('<strong>Uncategorized</strong>', uncOut, 'grp') : ''}
       ${row('Total spending', expT, 'subtotal')}
       ${row('Net', ms.map((_, i) => incT[i] - expT[i]), 'net')}
       <tr class="rate"><th scope="row">Savings rate</th>${ms.map((_, i) => `<td class="num">${incT[i] ? pct((incT[i] - expT[i]) / incT[i], 0) : '—'}</td>`).join('')}<td class="num total-col">${sum(incT) ? pct((sum(incT) - sum(expT)) / sum(incT), 0) : '—'}</td></tr>
@@ -6030,14 +6053,6 @@ VIEWS.reports = p => {
     ${lensAccounts().filter(a => nwIncludes(a, true)).map(a => { const then = ago ? state.snapshots[ago][a.id] : null, now = signedValue(a); return `<tr><th scope="row">${esc(a.name)}</th><td class="num muted">${then == null ? '—' : money(then, { cents: false })}</td><td class="num">${money(now, { cents: false })}</td><td class="num ${then == null ? '' : signClass(now - then)}">${then == null ? '' : money(now - then, { cents: false, sign: true })}</td><td class="spark-cell hide-sm">${sparkline(ms.slice(-13).map(m => state.snapshots[m][a.id] || 0), { w: 90, h: 22, color: isLiability(a) ? 'var(--neg)' : 'var(--ink-accent)' })}</td></tr>`; }).join('')}
   </tbody><tfoot><tr><th scope="row">${esc(nwLabel())}</th><td class="num total">${ago ? money(snapshotNW(ago, true), { cents: false }) : ''}</td><td class="num total">${money(totals(true).netWorth, { cents: false })}</td><td class="num total ${ago ? signClass(totals(true).netWorth - snapshotNW(ago, true)) : ''}">${ago ? money(totals(true).netWorth - snapshotNW(ago, true), { cents: false, sign: true }) : ''}</td><td class="hide-sm"></td></tr></tfoot></table>`;
 };
-function sankeyFromActs(acts) {
-  const inc = [], groups = {};
-  for (const [id, v] of Object.entries(acts)) { const c = catById(id); if (!c) { if (v > 0) groups.Uncategorized = (groups.Uncategorized || 0) + v; continue; } if (c.kind === 'income' && v > 0) inc.push({ name: c.name, value: v }); else if (c.kind === 'expense' && v > 0) groups[c.group] = (groups[c.group] || 0) + v; }
-  const income = sum(inc.map(x => x.value)), spending = sum(Object.values(groups));
-  const right = Object.entries(groups).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  if (income > spending) right.push({ name: 'Saved', value: income - spending, saved: true }); else if (spending > income) inc.push({ name: 'From savings or shared income', value: spending - income, drawn: true });
-  return { left: inc.sort((a, b) => (a.drawn ? 1 : 0) - (b.drawn ? 1 : 0) || b.value - a.value), right, income, spending };
-}
 
 /* ================= Planning ================= */
 VIEWS.planning = p => {
@@ -6064,7 +6079,7 @@ VIEWS.planning = p => {
     const P = state.plan, debts = debtList();
     if (!debts.length) return head + emptyState('No debt to pay off', P.includeMortgages ? 'There are no liabilities with a balance.' : 'No cards or loans have a balance. Mortgages are left out unless you include them.', `<label class="check"><input type="checkbox" data-plan="includeMortgages" ${P.includeMortgages ? 'checked' : ''}> Include mortgages</label>`);
     const plan = payoffPlan(debts, P.debtExtra, P.debtMethod), other = payoffPlan(debts, P.debtExtra, P.debtMethod === 'avalanche' ? 'snowball' : 'avalanche'), min = payoffPlan(debts, 0, 'avalanche');
-    const dateAt = m => { const d = new Date(); d.setMonth(d.getMonth() + m); return MONTHS[d.getMonth()] + ' ' + d.getFullYear(); };
+    const dateAt = m => monthLabel(addMonths(thisMonth(), m));   // counted in whole months, so the 31st doesn't skip a short month
     const len = Math.max(plan.series.length, min.series.length);
     const pad = (s) => Array.from({ length: len }, (_, i) => ({ x: i, y: s[i] ? s[i].y : 0 }));
     return head + `
@@ -7186,8 +7201,9 @@ function buildSlides(mk) {
   const M = MONTHS[+mk.slice(5) - 1], P = MONTHS[+prev.slice(5) - 1];
   const groups = spendByGroup(txs), items = donutItems(groups, 6), spendTotal = sum(groups.map(g => g.value));
   const exp = state.categories.filter(c => c.kind === 'expense' && c.period !== 'year' && c.budget > 0).map(c => ({ c, v: budgetView(c, mk) }));
-  const wins = exp.filter(x => x.v.actual < x.v.budget).sort((a, b) => (b.v.budget - b.v.actual) - (a.v.budget - a.v.actual)).slice(0, 4);
-  const misses = exp.filter(x => x.v.actual > x.v.budget).sort((a, b) => (b.v.actual - b.v.budget) - (a.v.actual - a.v.budget)).slice(0, 4);
+  // under or over counts what a rollover category carried, as Budget, Overview and Check-in do
+  const wins = exp.filter(x => x.v.available > 0.005).sort((a, b) => b.v.available - a.v.available).slice(0, 4);
+  const misses = exp.filter(x => x.v.available < -0.005).sort((a, b) => a.v.available - b.v.available).slice(0, 4);
   const notes = insights(mk, { limit: 4 });
   const adults = people().filter(m => roleOf(m.id) === 'adult').map(m => m.name);
   const who = adults.length === 2 ? `${adults[0]} and ${adults[1]}` : adults.length === 1 ? adults[0] : '';
@@ -7232,8 +7248,8 @@ function buildSlides(mk) {
       <div><h2 class="slide-h2">Where it went</h2>${legendList(items, spendTotal)}
       <p class="slide-lede">${groups[0] ? `${esc(groups[0].label)} was the biggest piece at ${pct(groups[0].value / spendTotal, 0)}.` : ''}</p></div></div>` });
   if (wins.length || misses.length) slides.push({ title: 'Budget', kind: 'budget', html: () => `<h2 class="slide-h2 center">How the budget did</h2><div class="slide-split top">
-      <div class="wins"><h3>Under budget</h3>${wins.length ? wins.map(x => `<button class="wm good" data-drill="cat|${x.c.id}|${mk}"><span>${esc(x.c.name)}</span><strong class="num">${sm(x.v.budget - x.v.actual)} under</strong>${bar(x.v.actual, x.v.budget)}</button>`).join('') : '<p class="muted">Nothing came in under.</p>'}</div>
-      <div class="misses"><h3>Over budget</h3>${misses.length ? misses.map(x => `<button class="wm bad" data-drill="cat|${x.c.id}|${mk}"><span>${esc(x.c.name)}</span><strong class="num">${sm(x.v.actual - x.v.budget)} over</strong>${bar(x.v.actual, x.v.budget)}</button>`).join('') : '<p class="slide-lede pos">Every category stayed within budget.</p>'}</div></div>` });
+      <div class="wins"><h3>Under budget</h3>${wins.length ? wins.map(x => `<button class="wm good" data-drill="cat|${x.c.id}|${mk}"><span>${esc(x.c.name)}</span><strong class="num">${sm(x.v.available)} under</strong>${bar(x.v.actual, x.v.budget + (x.v.carry || 0))}</button>`).join('') : '<p class="muted">Nothing came in under.</p>'}</div>
+      <div class="misses"><h3>Over budget</h3>${misses.length ? misses.map(x => `<button class="wm bad" data-drill="cat|${x.c.id}|${mk}"><span>${esc(x.c.name)}</span><strong class="num">${sm(-x.v.available)} over</strong>${bar(x.v.actual, x.v.budget + (x.v.carry || 0))}</button>`).join('') : '<p class="slide-lede pos">Every category stayed within budget.</p>'}</div></div>` });
   if (people().length > 1) {
     const per = people().map(m => ({ m, f: flowSummary(txs.filter(t => personOf(t) === m.id)), a: categoryActuals(txs.filter(t => personOf(t) === m.id)) })).filter(x => x.f.spending > 0);
     const tot = sum(per.map(x => x.f.spending)) || 1;
@@ -7520,6 +7536,9 @@ const ACTIONS = {
     const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const lines = [['Group', 'Category', ...ms, 'Total'].join(',')];
     for (const c of state.categories.filter(c => c.kind !== 'transfer')) { const vals = per.map(a => a[c.id] || 0); if (vals.some(Boolean)) lines.push([q(c.group), q(c.name), ...vals.map(v => v.toFixed(2)), sum(vals).toFixed(2)].join(',')); }
+    const uncIn = per.map(a => a._in || 0), uncOut = per.map(a => a._none || 0);
+    if (uncIn.some(Boolean)) lines.push([q('Income'), q('Uncategorized'), ...uncIn.map(v => v.toFixed(2)), sum(uncIn).toFixed(2)].join(','));
+    if (uncOut.some(Boolean)) lines.push([q('Uncategorized'), q('Uncategorized'), ...uncOut.map(v => v.toFixed(2)), sum(uncOut).toFixed(2)].join(','));
     saveExport(`oro-income-statement-${ms[0]}-to-${ms[ms.length - 1]}.csv`, lines.join('\n'));
   },
   'export-tax': el => {
@@ -8506,7 +8525,7 @@ function ciLastDue(r, now = today()) {
   let d = r.nextDate, guard = 0;
   if (!d) return null;
   if (d > hi) while (d > hi && guard++ < 400) d = prevOccurrence(d, r.freq);
-  else while (guard++ < 1600) { const n = nextOccurrence(d, r.freq); if (n > hi) break; d = n; }
+  else while (guard++ < 1600) { const n = nextOccurrence(d, r.freq, +r.nextDate.slice(8)); if (n > hi) break; d = n; }
   return d >= lo && d <= hi ? d : null;
 }
 function ciQuiet(key, last) {
@@ -11004,8 +11023,8 @@ function aiSpendingData(cb) {
   months.forEach((mk, i) => {
     for (const t of txInMonth(mk)) for (const l of txLines(t)) {
       const c = catById(l.categoryId); if (c?.kind === 'transfer') continue;
-      const id = l.categoryId || '_none';
-      (rows[id] ||= Array(n).fill(0))[i] += c?.kind === 'income' ? l.amount : -l.amount;
+      const id = c ? l.categoryId : l.amount > 0 ? '_in' : '_none';
+      (rows[id] ||= Array(n).fill(0))[i] += !c ? Math.abs(l.amount) : c.kind === 'income' ? l.amount : -l.amount;
       if (c?.kind !== 'income' && (c || l.amount < 0)) (people[aiPersonCode(cb, personOf(t))] ||= Array(n).fill(0))[i] += -l.amount;
     }
   });
@@ -11017,9 +11036,9 @@ function aiSpendingData(cb) {
     p.total += -t.amount; p.n++; const cn = catName(t.categoryId); p.cats[cn] = (p.cats[cn] || 0) + 1; if (t.date > p.last) p.last = t.date;
   }
   const r0 = v => Math.round(v);
-  const catRow = id => { const c = catById(id); return `${c ? c.name : 'Uncategorized'}${c?.kind === 'income' ? ' [income]' : ''} | ${rows[id].map(r0).join(' | ')}`; };
+  const catRow = id => { const c = catById(id); return `${c ? c.name : id === '_in' ? 'Uncategorized money in' : 'Uncategorized'}${c?.kind === 'income' || id === '_in' ? ' [income]' : ''} | ${rows[id].map(r0).join(' | ')}`; };
   const ids = Object.keys(rows).filter(id => rows[id].some(v => Math.abs(v) >= 0.5));
-  const order = id => { const c = catById(id); return `${c?.kind === 'income' ? 0 : 1}${c?.group || 'zz'}${c?.name || ''}`; };
+  const order = id => { const c = catById(id); return `${c?.kind === 'income' || id === '_in' ? 0 : 1}${c?.group || 'zz'}${c?.name || ''}`; };
   ids.sort((a, b) => order(a).localeCompare(order(b)));
   const flows = months.map(mk => flowSummary(txInMonth(mk)));
   const budgets = state.categories.filter(c => c.kind === 'expense' && c.budget > 0).map(c => `${c.name}: ${r0(c.budget)} a ${c.period === 'year' ? 'year' : 'month'}`);

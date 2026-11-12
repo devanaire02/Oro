@@ -141,13 +141,16 @@ function flowSummary(txs) {
   const net = income - spending;
   return { income: round2(income), spending: round2(spending), net: round2(net), rate: income > 0 ? net / income : NaN, uncategorized };
 }
-/* Category → actual (spending positive for expense categories, income positive for income). */
+/* Category → actual (spending positive for expense categories, income positive for income). Lines with no category
+   are kept apart by direction, the way flowSummary counts them: purchases add up under '_none' and money in under
+   '_in' (both positive), so a deposit waiting for a category never hides uncategorized spending. */
 function categoryActuals(txs) {
   const m = {};
   for (const t of txs) for (const l of txLines(t)) {
-    const id = l.categoryId || '_none', c = catById(l.categoryId);
+    const c = catById(l.categoryId);
     if (c?.kind === 'transfer') continue;
-    m[id] = (m[id] || 0) + (c?.kind === 'income' ? l.amount : -l.amount);
+    const id = c ? c.id : l.amount > 0 ? '_in' : '_none';
+    m[id] = (m[id] || 0) + (!c ? Math.abs(l.amount) : c.kind === 'income' ? l.amount : -l.amount);
   }
   for (const k in m) m[k] = round2(m[k]);
   return m;
@@ -213,23 +216,27 @@ function investableAllocation(includePrivate = true, accts) {
 }
 
 /* ---------- recurring + forecast ---------- */
-function nextOccurrence(date, freq) {
-  const d = fromISO(date);
+/* The next date for something that repeats. A day a shorter month doesn't have falls on that month's last day and goes
+   back to its own day afterwards (the 31st: Jan 31, Feb 28, Mar 31), so `day` is the day of the month it started on.
+   Twice a month is that day and 15 days later (the 1st and 16th, the 15th and 30th). */
+function nextOccurrence(date, freq, day = +date.slice(8)) {
+  const [y, m, d] = date.split('-').map(Number);
+  const on = (months, dd) => { const k = addMonths(`${y}-${pad2(m)}`, months); return `${k}-${pad2(Math.min(dd, +monthEnd(k).slice(8)))}`; };
   switch (freq) {
-    case 'weekly': d.setDate(d.getDate() + 7); break;
-    case 'biweekly': d.setDate(d.getDate() + 14); break;
-    case 'semimonthly': if (d.getDate() < 15) d.setDate(d.getDate() + 15); else { d.setMonth(d.getMonth() + 1); d.setDate(Math.max(1, d.getDate() - 15)); } break;
-    case 'quarterly': d.setMonth(d.getMonth() + 3); break;
-    case 'semiannual': d.setMonth(d.getMonth() + 6); break;
-    case 'annual': d.setFullYear(d.getFullYear() + 1); break;
-    default: d.setMonth(d.getMonth() + 1);
+    case 'weekly': return addDays(date, 7);
+    case 'biweekly': return addDays(date, 14);
+    case 'semimonthly': { const lo = day <= 15 ? day : day - 15; return d === lo ? on(0, lo + 15) : on(1, lo); }
+    case 'quarterly': return on(3, day);
+    case 'semiannual': return on(6, day);
+    case 'annual': return on(12, day);
+    default: return on(1, day);
   }
-  return toISO(d);
 }
 function occurrences(r, from, to) {
   const out = []; let d = r.nextDate, guard = 0;
-  while (d && d < from && guard++ < 800) d = nextOccurrence(d, r.freq);
-  while (d && d <= to && guard++ < 1600) { out.push(d); d = nextOccurrence(d, r.freq); }
+  const day = d ? +d.slice(8) : 0;
+  while (d && d < from && guard++ < 800) d = nextOccurrence(d, r.freq, day);
+  while (d && d <= to && guard++ < 1600) { out.push(d); d = nextOccurrence(d, r.freq, day); }
   return out;
 }
 function forecastAccounts(useLens = false) { return (useLens ? lensAccounts() : activeAccounts()).filter(a => a.forecast ?? ACCOUNT_TYPES[a.type]?.forecast); }
@@ -302,7 +309,9 @@ function goalProgress(g) {
   let status = 'on';
   if (current >= target) status = 'done';
   else if (g.monthly != null && g.monthly !== '' && needed != null && Number(g.monthly) + 0.01 < needed) status = 'behind';
-  return { current: round2(current), target, remaining: round2(remaining), monthsLeft, needed: needed == null ? null : round2(needed), share, status, source };
+  const past = !!g.targetDate && g.targetDate.slice(0, 7) < thisMonth() && status !== 'done';
+  if (past) status = 'behind';
+  return { current: round2(current), target, remaining: round2(remaining), monthsLeft, needed: needed == null ? null : round2(needed), share, status, source, past };
 }
 
 /* ---------- attention items ---------- */

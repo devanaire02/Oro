@@ -89,7 +89,8 @@ function scheduleA(year, agi, stateTax, H, T, tableYear) {
   const by = deductionSummary(year).by, st = H.status, half = st === 'mfs' ? 0.5 : 1;
   const medicalPaid = round2(by['Medical'] || 0), medical = round2(Math.max(0, medicalPaid - 0.075 * agi));
   const propertyTax = H.propertyTax != null ? H.propertyTax : round2(by['State and local taxes'] || 0);
-  const saltCap = Math.max(10000 * half, T.saltCap * half - 0.3 * Math.max(0, agi - T.saltPhase * half));
+  // Schedule A's worksheet: the full cap less 30% of income over the threshold, never under $10,000; married filing separately gets half of the result
+  const saltCap = half * Math.max(10000, T.saltCap - 0.3 * Math.max(0, agi - T.saltPhase * half));
   const saltPaid = round2(stateTax + propertyTax), salt = round2(Math.min(saltCap, saltPaid));
   const loans = homeLoansForTax().map(x => ({ ...x, ...mortgageInterestFor(x.key, x.loan, year) }));
   const interest = round2(sum(loans.map(x => x.amount)));
@@ -117,7 +118,7 @@ function taxEstimate(year, over = {}) {
   const B = bracketTax(taxable, T.brackets[st]);
   const ctcStart = st === 'mfj' ? 400000 : 200000;
   const ctcFull = (H.kids || 0) * T.ctc, ctc = Math.max(0, ctcFull - 50 * Math.ceil(Math.max(0, agi - ctcStart) / 1000));
-  const ctcUsed = Math.min(ctc, B.tax), refund = Math.min(ctc - ctcUsed, (H.kids || 0) * T.ctcRefund, Math.max(0, 0.15 * (gross - 2500)));
+  const ctcUsed = Math.min(ctc, B.tax), refund = Math.min(ctc - ctcUsed, (H.kids || 0) * T.ctcRefund, Math.max(0, 0.15 * (gross - pretax - 2500)));   // earned income is taxable pay (W-2 box 1)
   const fedEst = round2(B.tax - ctcUsed - refund);
   // Social Security (up to the wage base, per person) and Medicare (plus 0.9% above $250,000 joint, $200,000 single)
   const addlAt = st === 'mfj' ? 250000 : st === 'mfs' ? 125000 : 200000;
@@ -132,7 +133,7 @@ function taxEstimate(year, over = {}) {
   const ctcPhase = ctcFull > 0 && agi > ctcStart && ctc > 0;
   if (ctcPhase) fedTop += 0.05;
   const saltPhase = itemize && agi > T.saltPhase * (st === 'mfs' ? 0.5 : 1) && A.saltCap > 10000 * (st === 'mfs' ? 0.5 : 1) && A.saltPaid > A.saltCap;
-  if (saltPhase) fedTop += 0.3 * topBracket(taxable, T.brackets[st]);
+  if (saltPhase) fedTop += 0.3 * (st === 'mfs' ? 0.5 : 1) * topBracket(taxable, T.brackets[st]);
   const ficaTop = top ? (Math.max(0, top.gross - top.health) < T.ssBase ? 0.062 : 0) + 0.0145 + (allWages > addlAt ? 0.009 : 0) : 0;
   const ilTop = agi > ilExempt ? IL_RATE : 0;
   return {
