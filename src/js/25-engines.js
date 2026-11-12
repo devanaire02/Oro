@@ -254,7 +254,7 @@ function sankeyData(from, to, acts = rangeActuals(from, to), drawnLabel = 'From 
   const inc = [], groups = {};
   for (const [id, v] of Object.entries(acts)) {
     const c = catById(id);
-    if (!c) { if (v > 0) groups.Uncategorized = (groups.Uncategorized || 0) + v; else if (v < 0) inc.push({ name: 'Uncategorized income', value: -v }); continue; }
+    if (!c) { if (id === '_in') { if (v > 0) inc.push({ name: 'Uncategorized income', value: v }); } else if (v > 0) groups.Uncategorized = (groups.Uncategorized || 0) + v; continue; }
     if (c.kind === 'income' && v > 0) inc.push({ name: c.name, value: v });
     else if (c.kind === 'income' && v < 0) groups[`${c.name} paid back`] = -v;   // income taken back (a reversed paycheck) is money out
     else if (c.kind === 'expense' && v > 0) groups[c.group] = (groups[c.group] || 0) + v;

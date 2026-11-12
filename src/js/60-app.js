@@ -171,7 +171,7 @@ const ACTIONS = {
     const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const lines = [['Group', 'Category', ...ms, 'Total'].join(',')];
     for (const c of state.categories.filter(c => c.kind !== 'transfer')) { const vals = per.map(a => a[c.id] || 0); if (vals.some(Boolean)) lines.push([q(c.group), q(c.name), ...vals.map(v => v.toFixed(2)), sum(vals).toFixed(2)].join(',')); }
-    const uncIn = ms.map(m => round2(sum(lensed(txInMonth(m)).flatMap(txLines).filter(l => !l.categoryId && l.amount > 0).map(l => l.amount)))), uncOut = per.map((a, i) => round2((a._none || 0) + uncIn[i]));
+    const uncIn = per.map(a => a._in || 0), uncOut = per.map(a => a._none || 0);
     if (uncIn.some(Boolean)) lines.push([q('Income'), q('Uncategorized'), ...uncIn.map(v => v.toFixed(2)), sum(uncIn).toFixed(2)].join(','));
     if (uncOut.some(Boolean)) lines.push([q('Uncategorized'), q('Uncategorized'), ...uncOut.map(v => v.toFixed(2)), sum(uncOut).toFixed(2)].join(','));
     saveExport(`oro-income-statement-${ms[0]}-to-${ms[ms.length - 1]}.csv`, lines.join('\n'));

@@ -56,8 +56,7 @@ VIEWS.reports = p => {
     const cats = state.categories.filter(c => c.kind !== 'transfer' && per.some(a => a[c.id]));
     const inc = cats.filter(c => c.kind === 'income'), exp = groupBy(cats.filter(c => c.kind === 'expense'), c => c.group);
     // Uncategorized money in counts as income and uncategorized purchases as spending, as on Overview and Cash flow
-    const uncIn = ms.map(m => round2(sum(lensed(txInMonth(m)).flatMap(txLines).filter(l => !l.categoryId && l.amount > 0).map(l => l.amount))));
-    const uncOut = ms.map((_, i) => round2((per[i]._none || 0) + uncIn[i]));
+    const uncIn = per.map(a => a._in || 0), uncOut = per.map(a => a._none || 0);
     const row = (label, vals, cls = '') => `<tr class="${cls}"><th scope="row">${label}</th>${vals.map(v => `<td class="num">${v ? money(v, { cents: false }) : '<span class="muted">—</span>'}</td>`).join('')}<td class="num total-col">${money(sum(vals), { cents: false })}</td></tr>`;
     const incT = ms.map((_, i) => sum(inc.map(c => per[i][c.id] || 0)) + uncIn[i]);
     const expT = ms.map((_, i) => sum(cats.filter(c => c.kind === 'expense').map(c => per[i][c.id] || 0)) + uncOut[i]);

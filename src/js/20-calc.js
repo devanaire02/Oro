@@ -141,13 +141,16 @@ function flowSummary(txs) {
   const net = income - spending;
   return { income: round2(income), spending: round2(spending), net: round2(net), rate: income > 0 ? net / income : NaN, uncategorized };
 }
-/* Category → actual (spending positive for expense categories, income positive for income). */
+/* Category → actual (spending positive for expense categories, income positive for income). Lines with no category
+   are kept apart by direction, the way flowSummary counts them: purchases add up under '_none' and money in under
+   '_in' (both positive), so a deposit waiting for a category never hides uncategorized spending. */
 function categoryActuals(txs) {
   const m = {};
   for (const t of txs) for (const l of txLines(t)) {
-    const id = l.categoryId || '_none', c = catById(l.categoryId);
+    const c = catById(l.categoryId);
     if (c?.kind === 'transfer') continue;
-    m[id] = (m[id] || 0) + (c?.kind === 'income' ? l.amount : -l.amount);
+    const id = c ? c.id : l.amount > 0 ? '_in' : '_none';
+    m[id] = (m[id] || 0) + (!c ? Math.abs(l.amount) : c.kind === 'income' ? l.amount : -l.amount);
   }
   for (const k in m) m[k] = round2(m[k]);
   return m;
