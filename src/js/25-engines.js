@@ -67,7 +67,7 @@ function runRetirement(inputs, opts = {}) {
         const inc = (a >= otherIncomeAge ? otherIncome : 0) + rentalNet;
         v -= Math.max(0, spending - inc);
       }
-      if (v <= 0 && !failed) { failed = true; depletedAges.push(age + y); v = 0; }
+      if (v <= 0) { if (!failed) { failed = true; depletedAges.push(age + y); } v = 0; }   // once the money is gone it stays at zero, not below
       paths[y][s] = v;
     }
     if (!failed) success++;
