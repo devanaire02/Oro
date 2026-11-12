@@ -13,7 +13,7 @@ VIEWS.reports = p => {
   const months = monthsIn(R.from, R.to);
 
   if (tab === 'flow') {
-    const sk = lensActive() ? (() => { const all = sankeyFromActs(acts); return all; })() : sankeyData(R.from, R.to);
+    const sk = lensActive() ? sankeyData(R.from, R.to, acts, 'From savings or shared income') : sankeyData(R.from, R.to);
     const f = flowSummary(txs);
     return head + `
     <section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Left over</th><th class="num">Savings rate</th></tr></thead>
@@ -124,14 +124,6 @@ VIEWS.reports = p => {
     ${lensAccounts().filter(a => nwIncludes(a, true)).map(a => { const then = ago ? state.snapshots[ago][a.id] : null, now = signedValue(a); return `<tr><th scope="row">${esc(a.name)}</th><td class="num muted">${then == null ? '—' : money(then, { cents: false })}</td><td class="num">${money(now, { cents: false })}</td><td class="num ${then == null ? '' : signClass(now - then)}">${then == null ? '' : money(now - then, { cents: false, sign: true })}</td><td class="spark-cell hide-sm">${sparkline(ms.slice(-13).map(m => state.snapshots[m][a.id] || 0), { w: 90, h: 22, color: isLiability(a) ? 'var(--neg)' : 'var(--ink-accent)' })}</td></tr>`; }).join('')}
   </tbody><tfoot><tr><th scope="row">${esc(nwLabel())}</th><td class="num total">${ago ? money(snapshotNW(ago, true), { cents: false }) : ''}</td><td class="num total">${money(totals(true).netWorth, { cents: false })}</td><td class="num total ${ago ? signClass(totals(true).netWorth - snapshotNW(ago, true)) : ''}">${ago ? money(totals(true).netWorth - snapshotNW(ago, true), { cents: false, sign: true }) : ''}</td><td class="hide-sm"></td></tr></tfoot></table>`;
 };
-function sankeyFromActs(acts) {
-  const inc = [], groups = {};
-  for (const [id, v] of Object.entries(acts)) { const c = catById(id); if (!c) { if (v > 0) groups.Uncategorized = (groups.Uncategorized || 0) + v; continue; } if (c.kind === 'income' && v > 0) inc.push({ name: c.name, value: v }); else if (c.kind === 'expense' && v > 0) groups[c.group] = (groups[c.group] || 0) + v; }
-  const income = sum(inc.map(x => x.value)), spending = sum(Object.values(groups));
-  const right = Object.entries(groups).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  if (income > spending) right.push({ name: 'Saved', value: income - spending, saved: true }); else if (spending > income) inc.push({ name: 'From savings or shared income', value: spending - income, drawn: true });
-  return { left: inc.sort((a, b) => (a.drawn ? 1 : 0) - (b.drawn ? 1 : 0) || b.value - a.value), right, income, spending };
-}
 
 /* ================= Planning ================= */
 VIEWS.planning = p => {

@@ -247,22 +247,23 @@ function periodRange(p, from, to) {
 }
 function monthsIn(from, to) { const out = []; for (let m = from.slice(0, 7); m <= to.slice(0, 7) && out.length < 60; m = addMonths(m, 1)) out.push(m); return out; }
 
-/* Sankey: income categories → total income → spending groups (+ saved, or drawn from savings). */
-function sankeyData(from, to) {
-  const acts = rangeActuals(from, to);
+/* Sankey: income categories → total income → spending groups (+ saved, or drawn from savings). `acts` are the category
+   totals to draw (the whose-money menu's people); without them, everyone's for the period. Whatever the mix, what
+   comes in on the left equals what goes out on the right, and Saved equals Left over (flowSummary's net). */
+function sankeyData(from, to, acts = rangeActuals(from, to), drawnLabel = 'From savings') {
   const inc = [], groups = {};
   for (const [id, v] of Object.entries(acts)) {
     const c = catById(id);
-    if (id === '_none') { if (v > 0) groups.Uncategorized = (groups.Uncategorized || 0) + v; else inc.push({ name: 'Uncategorized income', value: -v }); continue; }
-    if (!c) continue;
+    if (!c) { if (v > 0) groups.Uncategorized = (groups.Uncategorized || 0) + v; else if (v < 0) inc.push({ name: 'Uncategorized income', value: -v }); continue; }
     if (c.kind === 'income' && v > 0) inc.push({ name: c.name, value: v });
+    else if (c.kind === 'income' && v < 0) groups[`${c.name} paid back`] = -v;   // income taken back (a reversed paycheck) is money out
     else if (c.kind === 'expense' && v > 0) groups[c.group] = (groups[c.group] || 0) + v;
     else if (c.kind === 'expense' && v < 0) inc.push({ name: `${c.name} refunds`, value: -v });
   }
   const income = sum(inc.map(x => x.value)), spending = sum(Object.values(groups));
   const outs = Object.entries(groups).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
   if (income > spending) outs.push({ name: 'Saved', value: income - spending, saved: true });
-  else if (spending > income) inc.push({ name: 'From savings', value: spending - income, drawn: true });
+  else if (spending > income) inc.push({ name: drawnLabel, value: spending - income, drawn: true });
   inc.sort((a, b) => (a.drawn ? 1 : 0) - (b.drawn ? 1 : 0) || b.value - a.value);
   return { left: inc, right: outs, income, spending };
 }
