@@ -71,6 +71,8 @@ function diffInto(ops, b, c, path) {
 
 function opLabel(o, target) {
   if (o.path[0] === 'settings' && (o.path[1] === 'checkinQuiet' || o.k === 'checkinQuiet')) return 'check-in: a bill or charge you set aside';
+  if (o.path[0] === 'tax' && o.path[1] === 'whatif') return `taxes: What if… for ${o.path[2] || 'the year'}`;
+  if (o.path[0] === 'tax' && o.path[1] === 'payInfo') return 'taxes: how often someone is paid, a birth year or what an HSA covers';
   const v = o.v || (o.op === 'del' ? null : undefined);
   const where = { transactions: 'transaction', accounts: 'account', categories: 'category', goals: 'goal', holdings: 'holding', recurring: 'recurring item', rules: 'rule', paystubs: 'pay stub' }[o.path[0]] || o.path.join(' › ');
   if (o.op === 'put' || o.op === 'del') {
