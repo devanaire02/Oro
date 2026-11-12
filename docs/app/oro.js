@@ -1096,15 +1096,22 @@ function investableAllocation(includePrivate = true, accts) {
 
 /* ---------- recurring + forecast ---------- */
 /* The next date for something that repeats. A day a shorter month doesn't have falls on that month's last day and goes
-   back to its own day afterwards (the 31st: Jan 31, Feb 28, Mar 31), so `day` is the day of the month it started on.
-   Twice a month is that day and 15 days later (the 1st and 16th, the 15th and 30th). */
-function nextOccurrence(date, freq, day = +date.slice(8)) {
+   back to its own day afterwards (the 31st: Jan 31, Feb 28, Mar 31), so `day` is the day of the month it started on. */
+/* Twice a month is the 15th and the last day of the month (Deejay's choice, Nov 12, 2026) whenever the schedule sits on
+   the 15th, on the 30th or 31st, or on a month's last day. Any other day pairs with the day 15 later: the 1st and 16th,
+   the 5th and 20th. semiDay gives the day such a schedule is counted from (15 = the 15th and the last day). */
+const semiDay = iso => { const d = +iso.slice(8); return d === 15 || d >= 30 || iso === monthEnd(iso.slice(0, 7)) ? 15 : d; };
+const scheduleDay = (iso, freq) => (freq === 'semimonthly' ? semiDay(iso) : +iso.slice(8));
+function nextOccurrence(date, freq, day = scheduleDay(date, freq)) {
   const [y, m, d] = date.split('-').map(Number);
   const on = (months, dd) => { const k = addMonths(`${y}-${pad2(m)}`, months); return `${k}-${pad2(Math.min(dd, +monthEnd(k).slice(8)))}`; };
   switch (freq) {
     case 'weekly': return addDays(date, 7);
     case 'biweekly': return addDays(date, 14);
-    case 'semimonthly': { const lo = day <= 15 ? day : day - 15; return d === lo ? on(0, lo + 15) : on(1, lo); }
+    case 'semimonthly': {
+      if (day === 15) return d === 15 ? monthEnd(`${y}-${pad2(m)}`) : on(1, 15);   // the 15th, the last day, the 15th…
+      const lo = day < 15 ? day : day - 15; return d === lo ? on(0, lo + 15) : on(1, lo);
+    }
     case 'quarterly': return on(3, day);
     case 'semiannual': return on(6, day);
     case 'annual': return on(12, day);
@@ -1113,7 +1120,7 @@ function nextOccurrence(date, freq, day = +date.slice(8)) {
 }
 function occurrences(r, from, to) {
   const out = []; let d = r.nextDate, guard = 0;
-  const day = d ? +d.slice(8) : 0;
+  const day = d ? scheduleDay(d, r.freq) : 0;
   while (d && d < from && guard++ < 800) d = nextOccurrence(d, r.freq, day);
   while (d && d <= to && guard++ < 1600) { out.push(d); d = nextOccurrence(d, r.freq, day); }
   return out;
@@ -5357,7 +5364,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '7b97092';
+const ORO_BUILD = 'ff392e0';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -9866,7 +9873,11 @@ function prevOccurrence(iso, freq) {
   switch (freq) {
     case 'weekly': return addDays(iso, -7);
     case 'biweekly': return addDays(iso, -14);
-    case 'semimonthly': { const d = +iso.slice(8); return d >= 16 ? addDays(iso, -15) : shiftMonthsISO(iso.slice(0, 8) + pad2(Math.min(28, d + 15)), -1); }
+    case 'semimonthly': {
+      const d = +iso.slice(8), mk = iso.slice(0, 7);
+      if (semiDay(iso) === 15) return d === 15 ? monthEnd(addMonths(mk, -1)) : `${mk}-15`;   // the 15th and the last day of the month
+      return d >= 16 ? addDays(iso, -15) : shiftMonthsISO(iso.slice(0, 8) + pad2(Math.min(28, d + 15)), -1);
+    }
     case 'quarterly': return shiftMonthsISO(iso, -3);
     case 'semiannual': return shiftMonthsISO(iso, -6);
     case 'annual': return shiftMonthsISO(iso, -12);
@@ -9879,7 +9890,7 @@ function ciLastDue(r, now = today()) {
   let d = r.nextDate, guard = 0;
   if (!d) return null;
   if (d > hi) while (d > hi && guard++ < 400) d = prevOccurrence(d, r.freq);
-  else while (guard++ < 1600) { const n = nextOccurrence(d, r.freq, +r.nextDate.slice(8)); if (n > hi) break; d = n; }
+  else while (guard++ < 1600) { const n = nextOccurrence(d, r.freq, scheduleDay(r.nextDate, r.freq)); if (n > hi) break; d = n; }
   return d >= lo && d <= hi ? d : null;
 }
 function ciQuiet(key, last) {

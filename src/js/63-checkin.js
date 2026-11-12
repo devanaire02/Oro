@@ -167,7 +167,11 @@ function prevOccurrence(iso, freq) {
   switch (freq) {
     case 'weekly': return addDays(iso, -7);
     case 'biweekly': return addDays(iso, -14);
-    case 'semimonthly': { const d = +iso.slice(8); return d >= 16 ? addDays(iso, -15) : shiftMonthsISO(iso.slice(0, 8) + pad2(Math.min(28, d + 15)), -1); }
+    case 'semimonthly': {
+      const d = +iso.slice(8), mk = iso.slice(0, 7);
+      if (semiDay(iso) === 15) return d === 15 ? monthEnd(addMonths(mk, -1)) : `${mk}-15`;   // the 15th and the last day of the month
+      return d >= 16 ? addDays(iso, -15) : shiftMonthsISO(iso.slice(0, 8) + pad2(Math.min(28, d + 15)), -1);
+    }
     case 'quarterly': return shiftMonthsISO(iso, -3);
     case 'semiannual': return shiftMonthsISO(iso, -6);
     case 'annual': return shiftMonthsISO(iso, -12);
@@ -180,7 +184,7 @@ function ciLastDue(r, now = today()) {
   let d = r.nextDate, guard = 0;
   if (!d) return null;
   if (d > hi) while (d > hi && guard++ < 400) d = prevOccurrence(d, r.freq);
-  else while (guard++ < 1600) { const n = nextOccurrence(d, r.freq, +r.nextDate.slice(8)); if (n > hi) break; d = n; }
+  else while (guard++ < 1600) { const n = nextOccurrence(d, r.freq, scheduleDay(r.nextDate, r.freq)); if (n > hi) break; d = n; }
   return d >= lo && d <= hi ? d : null;
 }
 function ciQuiet(key, last) {
