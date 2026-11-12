@@ -21,7 +21,7 @@ function whatIfPanel(year) {
       ${box(e.id, 'retire', '401(k), 403(b) or 457', p.retire)}
       ${box(e.id, 'hsa', 'HSA', p.hsa)}
       ${box(e.id, 'health', 'Other before-tax', p.health, lumped(e.id) ? 'FSA and premiums. Your plan has all of health through pay here' : 'FSA and health premiums')}
-      ${box(e.id, 'fedWh', 'Federal income tax taken out', p.fedWh, 'For the year')}
+      ${box(e.id, 'fedWh', 'Federal tax taken out', p.fedWh, 'Income tax, for the year')}
       ${box(e.id, 'stateWh', 'Illinois taken out', p.stateWh, 'For the year')}
     </div></fieldset>`; }).join('');
   const house = `<div class="form-grid three">
@@ -428,7 +428,7 @@ function payStubExportLines(year) {
 /* ---------- buttons and boxes ---------- */
 ACTIONS['add-paystub'] = el => payStubModal(null, { person: el?.dataset.person });
 ACTIONS['whatif-plan'] = el => { const n = whatIfMakePlan(+el.dataset.year); if (n) toast('Your plan now uses the what-if numbers.', { label: 'Undo', fn: undo }); };
-ACTIONS['whatif-clear'] = el => { if (state.tax.whatif?.[+el.dataset.year]) { delete state.tax.whatif[+el.dataset.year]; commit(); toast('What if… cleared.', { label: 'Undo', fn: undo }); } };
+ACTIONS['whatif-clear'] = el => { if (state.tax.whatif?.[+el.dataset.year]) { whatIfForget(+el.dataset.year); commit(); toast('What if… cleared.', { label: 'Undo', fn: undo }); } };
 ACTIONS['paystub-from-import'] = () => {
   const lines = IMP?.stubLines, R = lines ? parsePayStub(lines) : null;
   closeModal(true); IMP = null;

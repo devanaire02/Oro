@@ -444,6 +444,12 @@ function whatIfSentence(year, W, plan, [who, f, was, now]) {
   if (f === 'interest') return `Mortgage interest of ${money(now, { cents: false })} (${m(d)} ${moreLess}) ${taxSay}${itemNote}.`;
   return '';
 }
+/* Drop a year's what-if (and the holder itself once it's empty, so nothing is left behind to sync). */
+function whatIfForget(year) {
+  if (!state.tax?.whatif) return;
+  delete state.tax.whatif[year];
+  if (!Object.keys(state.tax.whatif).length) delete state.tax.whatif;
+}
 /* Copy the what-if into the typed numbers and empty it. One commit, so one Undo puts everything back. */
 function whatIfMakePlan(year) {
   const W = state.tax?.whatif?.[year], plan = whatIfPlan(year), changes = whatIfChanges(year, W, plan);
@@ -451,6 +457,7 @@ function whatIfMakePlan(year) {
   const over = whatIfOver(year, W, plan), H = ((state.tax.household = state.tax.household || {})[year] = state.tax.household[year] || {});
   const touched = (id, fs) => changes.some(c => c[0] === id && fs.includes(c[1]));
   for (const [id, o] of Object.entries(over.people)) {
+    if (!touched(id, WI_PERSON)) continue;
     const p = ((H.people = H.people || {})[id] = H.people[id] || {});
     if (touched(id, ['gross', 'bonus'])) p.gross = o.gross;
     if (touched(id, ['retire'])) p.retire = o.retire;
@@ -468,7 +475,7 @@ function whatIfMakePlan(year) {
     if (loans.length === 1) { ((state.tax[loans[0].key] = state.tax[loans[0].key] || {})[year] = state.tax[loans[0].key][year] || {}).interest = over.interest; delete H.interest; }
     else H.interest = over.interest;
   }
-  delete state.tax.whatif[year];
+  whatIfForget(year);
   commit();
   return changes.length;
 }
@@ -548,24 +555,29 @@ function parsePayStub(lines) {
     }
     return toks.filter(t => t.s !== '$').map(t => (STUB_AMT.test(t.s) ? { ...t, amt: stubNum(t.s), star: /\*$/.test(t.s) } : t));
   });
-  // column headings: where "this paycheck" and "year to date" amounts sit
-  const heads = [];
-  rows.forEach(toks => {
-    if (toks.some(t => t.amt != null)) return;
+  // Column headings: where "this paycheck" and "year to date" amounts sit. Each table has its own, so an amount goes
+  // by the headings on the nearest heading line above it (a line of two blocks side by side carries both blocks').
+  const word = t => (t?.s || '').toLowerCase().replace(/[^a-z/-]/g, '');
+  const lineHeads = rows.map(toks => {
+    const hs = [];
+    if (toks.some(t => t.amt != null)) return hs;
     for (let i = 0; i < toks.length; i++) {
-      const one = toks[i].s.toLowerCase().replace(/[^a-z-]/g, ''), two = `${one} ${(toks[i + 1]?.s || '').toLowerCase().replace(/[^a-z]/g, '')}`, three = `${two} ${(toks[i + 2]?.s || '').toLowerCase().replace(/[^a-z]/g, '')}`;
-      if (/^(ytd|y-t-d|year-to-date)$/.test(one)) heads.push({ col: 'ytd', x0: toks[i].x0, x1: toks[i].x1 });
-      else if (/^year to date$/.test(three) || /^total to date$/.test(three)) heads.push({ col: 'ytd', x0: toks[i].x0, x1: toks[i + 2].x1 });
-      else if (one === 'current' || one === 'amount') heads.push({ col: 'cur', x0: toks[i].x0, x1: toks[i].x1 });
-      else if (two === 'this period') heads.push({ col: 'cur', x0: toks[i].x0, x1: toks[i + 1].x1 });
+      const one = word(toks[i]), next = word(toks[i + 1]), three = `${one} ${next} ${word(toks[i + 2])}`;
+      if (/^(hours?|hrs|units?|hrs\/units|rate|qty)$/.test(one)) hs.push({ col: 'x', x0: (/^(ytd|current)$/.test(word(toks[i - 1])) ? toks[i - 1] : toks[i]).x0, x1: toks[i].x1 });   // hours and rates: not money
+      else if (/^(ytd|y-t-d|year-to-date|current)$/.test(one) && /^(hours?|hrs|units?)$/.test(next)) continue;   // "YTD Hours": taken with the next word
+      else if (/^(ytd|y-t-d|year-to-date)$/.test(one)) hs.push({ col: 'ytd', x0: toks[i].x0, x1: toks[i].x1 });
+      else if (three === 'year to date' || three === 'total to date') hs.push({ col: 'ytd', x0: toks[i].x0, x1: toks[i + 2].x1 });
+      else if (one === 'current' || one === 'amount') hs.push({ col: 'cur', x0: toks[i].x0, x1: toks[i].x1 });
+      else if (`${one} ${next}` === 'this period') hs.push({ col: 'cur', x0: toks[i].x0, x1: toks[i + 1].x1 });
     }
+    return hs.some(h => h.col !== 'x') ? hs : [];
   });
+  let heads = [], useCols = false;
   const colOf = t => {   // the heading an amount sits under (right edges line up, or it overlaps the heading)
     let best = null, bd = 1e9;
     for (const h of heads) { const d = Math.min(Math.abs(h.x1 - t.x1), Math.abs((h.x0 + h.x1) / 2 - (t.x0 + t.x1) / 2)); if (d < bd) { bd = d; best = h; } }
-    return best && bd <= 40 ? best.col : null;
+    return best && bd <= 40 ? best.col : null;   // 'cur', 'ytd', or 'x' for a column of hours or rates
   };
-  const useCols = heads.some(h => h.col === 'cur') && heads.some(h => h.col === 'ytd') && lines.pos;
   const seen = {};
   const put = (what, label, cur, ytd) => {
     if (cur == null && ytd == null) return;
@@ -577,11 +589,12 @@ function parsePayStub(lines) {
     const r = { kind, label: clean || STUB_BLOCKS[block][kind], cur: cur ?? null, ytd: ytd ?? null };
     out[block].push(r); seen[single ? `${block}:${kind}` : key] = r;
   };
-  let section = null, deposited = null;
+  let section = null, deposited = null, alone = null, aloneLabel = '';
   rows.forEach((toks, li) => {
     const line = lines[li].trim(); if (!line) return;
+    if (lineHeads[li].length) { heads = lineHeads[li]; useCols = !!lines.pos && heads.some(h => h.col === 'cur') && heads.some(h => h.col === 'ytd'); }
     if (!toks.some(t => t.amt != null)) {
-      const s = stubSection(line.replace(/\s{2,}.*$/, '')) || stubSection(line); if (s) section = s;
+      const s = stubSection(line.replace(/\s{2,}.*$/, '')) || (line.length < 40 ? stubSection(line) : null); if (s) section = s;
     }
     // a summary across the page: "Gross Pay  Pre Tax Deductions  Employee Taxes  Post Tax Deductions  Net Pay" over "Current …" and "YTD …"
     if (/gross/i.test(line) && /net pay/i.test(line) && !toks.some(t => t.amt != null)) {
@@ -598,8 +611,11 @@ function parsePayStub(lines) {
       return;
     }
     if (/^(current|this period|ytd|year to date)\b/i.test(line) && /gross/i.test((lines[li - 1] || '') + (lines[li - 2] || '')) && /net pay/i.test((lines[li - 1] || '') + (lines[li - 2] || ''))) return;
-    // label, then its amounts; a line can hold two blocks side by side
-    let words = [];
+    // label, then its amounts; a line can hold two blocks side by side. A line of amounts alone belongs to the pay
+    // before tax or take-home named alone on the line above ("NET PAY" over "3,045.61   56,866.59").
+    let words = toks.length && toks.every(t => t.amt != null) && ['gross', 'net'].includes(alone) ? [aloneLabel] : [];
+    if (toks.some(t => t.amt != null)) alone = null;
+    else if (!lineHeads[li].length) { alone = stubClassify(line.replace(/[:.\s]+$/, ''), null, false); aloneLabel = line; }   // a line of column headings between the two doesn't break it
     for (let i = 0; i < toks.length;) {
       if (toks[i].amt == null) { words.push(toks[i].s); i++; continue; }
       const nums = []; while (i < toks.length && toks[i].amt != null) nums.push(toks[i++]);
@@ -630,7 +646,7 @@ function parsePayStub(lines) {
   }
   // dates: "Pay Date: 11/20/2026", "Period Beginning 11/02/2026", or a row of headings over a row of dates
   const iso = s => parseDateFlexible(s) || '';
-  const DATE_KEYS = [['date', /\b(pay|check|payment|advice|paid)\s*date\b|\bdate paid\b|\bpay day\b/i], ['from', /\b(period|pay)\s*(begin(ning)?|start|beg|from)\b|\bbegin(ning)? date\b|\bstart date\b|\bperiod begin\b/i], ['to', /\b(period|pay)\s*(end(ing)?|thru|through|to)\b|\bend(ing)? date\b/i]];
+  const DATE_KEYS = [['date', /\b(pay|check|payment|advice|paid)\s*date\b|\bdate paid\b|\bpay day\b/i], ['from', /\b(period|pay)\s*(begin(ning)?|start|beg)\b|\bbegin(ning)? date\b|\bstart date\b/i], ['to', /\b(period|pay)\s*(end(ing)?|thru|through)\b|\bend(ing)? date\b/i]];
   lines.forEach((line, li) => {
     for (const [k, re] of DATE_KEYS) {
       if (out[k]) continue;

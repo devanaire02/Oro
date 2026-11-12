@@ -1430,6 +1430,7 @@ p.stub-from { margin: 0; }
   .stub-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px; }
   .stub-row .stub-what { grid-column: 1 / -1; }
   .stub-row.stub-cols { display: none; }
+  .stub-row[data-one] .stub-what { display: none; }   /* its heading already says what it is */
   .stub-fixed { padding-top: 2px; }
   .whatif-table, .taxdue-table, .stub-year, .stub-table { font-size: 13px; }
   .whatif-table th, .whatif-table td, .taxdue-table th, .taxdue-table td, .stub-year th, .stub-year td, .stub-table th, .stub-table td { padding: 6px 4px; }
@@ -1442,3 +1443,4 @@ p.stub-from { margin: 0; }
   .whatif-table thead th, .taxdue-table thead th, .stub-year thead th, .stub-table thead th { font-size: 11px; }
   .stub-body { padding: 10px 6px; }
 }
+@media (max-width: 360px) { .whatif .form-grid.four { grid-template-columns: 1fr; } }
