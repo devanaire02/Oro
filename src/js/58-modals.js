@@ -73,7 +73,7 @@ function txnModal(id) {
   openModal({
     title: t ? 'Edit transaction' : 'Add transaction', wide: false,
     body: `<form id="f" class="form-grid">
-      <label class="field"><span>Date</span><input type="date" name="date" value="${v.date}" required></label>
+      <label class="field"><span>Date</span><input type="date" name="date" value="${esc(v.date)}" required></label>
       <label class="field"><span>Amount</span><input name="amount" id="tx-amount" inputmode="decimal" value="${v.amount === '' ? '' : round2(v.amount)}" placeholder="-42.50" required><small class="muted">Negative for money out</small></label>
       <label class="field wide"><span>Payee</span><input name="payee" value="${esc(v.payee)}" required autofocus></label>
       <label class="field"><span>Account</span><select name="accountId">${acctOptions(v.accountId)}</select></label>
@@ -181,14 +181,14 @@ function acctModal(id, presetType) {
   const curVal = a ? (tracked ? round2(Math.abs(Number(a.balance) || 0)) : accountValue(a)) : '';
   openModal({
     title: a ? 'Edit account' : 'Add account',
-    body: `<form id="f" class="form-grid" data-type="${v.type}">
+    body: `<form id="f" class="form-grid" data-type="${esc(v.type)}">
       <label class="field wide"><span>Account name</span><input name="acct-label" data-key="name" value="${esc(v.name)}" placeholder="e.g. Joint checking" autocomplete="off" required autofocus></label>
       <label class="field"><span>Type</span><select name="type" id="acct-type">${BUCKETS.map(b => `<optgroup label="${esc(b.label)}">${b.types.map(t => `<option value="${t}" ${t === v.type ? 'selected' : ''}>${ACCOUNT_TYPES[t].label}</option>`).join('')}</optgroup>`).join('')}</select></label>
       <label class="field"><span>Institution</span><input name="institution" value="${esc(v.institution || '')}" placeholder="Optional"></label>
       ${members().length > 1 ? `<label class="field"><span>Owner</span><select name="owner">${memberOptions(v.owner || 'joint')}</select></label>` : ''}
       <label class="field"><span>Last 4 digits</span><input name="last4" value="${esc(v.last4 || '')}" maxlength="4" inputmode="numeric" placeholder="Matches imports"></label>
       ${hasHoldings ? `<p class="muted small wide">Value comes from ${hasHoldings} holding${hasHoldings > 1 ? 's' : ''}: ${money(accountValue(a))}.</p><label class="field"><span>Uninvested cash</span><input name="cash" inputmode="decimal" value="${a.cash || ''}" placeholder="0"></label>`
-        : `<label class="field"><span id="bal-label">${tracked ? 'Statement balance' : ACCOUNT_TYPES[v.type].side === 'liability' ? 'Amount owed' : 'Balance or value'}</span><input name="balance" inputmode="decimal" value="${curVal === '' ? (v.balance === '' ? '' : round2(v.balance)) : round2(curVal)}" placeholder="0.00"></label>
+        : `<label class="field"><span id="bal-label">${tracked ? 'Statement balance' : ACCOUNT_TYPES[v.type]?.side === 'liability' ? 'Amount owed' : 'Balance or value'}</span><input name="balance" inputmode="decimal" value="${curVal === '' ? (v.balance === '' ? '' : round2(v.balance)) : round2(curVal)}" placeholder="0.00"></label>
            <label class="field"><span>As of</span><input type="date" name="balanceDate" value="${(a && a.ledger ? a.anchorDate : v.balanceDate) || today()}"></label>`}
       <div class="when-ledger wide"><label class="check"><input type="checkbox" name="ledger" ${(v.ledger ?? ACCOUNT_TYPES[v.type].ledger) ? 'checked' : ''}> Keep the balance up to date from transactions</label><small class="muted">The balance above is the starting point; imported transactions after that date move it. Lets you reconcile against statements.</small></div>
       <div class="when-cash wide"><label class="check"><input type="checkbox" name="forecast" ${(v.forecast ?? ACCOUNT_TYPES[v.type].forecast) ? 'checked' : ''}> Include in the cash-flow forecast</label></div>
@@ -355,8 +355,8 @@ function holdingModal(id, presetAcct) {
       <label class="field">${lbl('Symbol or short name', 'Coin')}<input name="symbol" id="h-sym" value="${esc(v.symbol)}" ${crypto0 ? 'list="coin-list"' : ''} required autofocus autocomplete="off" placeholder="${crypto0 ? 'Bitcoin, ETH…' : ''}"></label>
       <datalist id="coin-list">${CRYPTO_COINS.map(c => `<option value="${c[0]}">${c[1]}</option>`).join('')}</datalist>
       <label class="field wide"><span>Description</span><input name="desc-label" data-key="name" id="h-name" value="${esc(v.name || '')}" autocomplete="off"></label>
-      <label class="field">${lbl('Shares or units', 'Amount (coins)')}<input name="shares" inputmode="decimal" value="${v.shares}" autocomplete="off"></label>
-      <label class="field">${lbl('Price per share', 'Price per coin')}<input name="price" id="h-price" inputmode="decimal" value="${v.price}" autocomplete="off"></label>
+      <label class="field">${lbl('Shares or units', 'Amount (coins)')}<input name="shares" inputmode="decimal" value="${esc(v.shares)}" autocomplete="off"></label>
+      <label class="field">${lbl('Price per share', 'Price per coin')}<input name="price" id="h-price" inputmode="decimal" value="${esc(v.price)}" autocomplete="off"></label>
       <label class="field"><span>Total cost basis</span><input name="costBasis" inputmode="decimal" value="${v.costBasis ?? ''}" placeholder="Optional"></label>
       <label class="field not-crypto"><span>Expense ratio (%)</span><input name="er" inputmode="decimal" value="${v.er ?? ''}" placeholder="${known != null ? known + ' (on file, approximate)' : 'e.g. 0.03'}"></label>
       <label class="field"><span>Asset class</span><select name="assetClass" id="h-class">${ASSET_CLASSES.map(c => `<option ${c === v.assetClass ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
@@ -413,9 +413,9 @@ function recModal(id, preset) {
     title: r ? 'Edit bill or income' : 'Add a bill or paycheck',
     body: `<form id="f" class="form-grid">
       <label class="field wide"><span>Bill or paycheck</span><input name="rec-label" data-key="name" value="${esc(v.name)}" autocomplete="off" required autofocus></label>
-      <label class="field"><span>Amount</span><input name="amount" inputmode="decimal" value="${v.amount}" placeholder="-1,250.00"><small class="muted">Negative for bills, positive for income</small></label>
+      <label class="field"><span>Amount</span><input name="amount" inputmode="decimal" value="${esc(v.amount)}" placeholder="-1,250.00"><small class="muted">Negative for bills, positive for income</small></label>
       <label class="field"><span>How often</span><select name="freq">${Object.entries(FREQS).map(([k, l]) => `<option value="${k}" ${k === v.freq ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-      <label class="field"><span>Next date</span><input type="date" name="nextDate" value="${v.nextDate}"></label>
+      <label class="field"><span>Next date</span><input type="date" name="nextDate" value="${esc(v.nextDate)}"></label>
       <label class="field"><span>Category</span><select name="categoryId">${catOptions(v.categoryId)}</select></label>
       <label class="field"><span>Paid from or into</span><select name="accountId"><option value="">Household (no particular account)</option>${forecastAccounts().map(a => `<option value="${a.id}" ${a.id === v.accountId ? 'selected' : ''}>${esc(a.name)}${people().length > 1 ? ` (${esc(memberName(a.owner || 'joint'))})` : ''}</option>`).join('')}</select><small class="muted">Lets Cash flow show it when the menu at the top picks one person</small></label>
     </form>`,
@@ -440,7 +440,7 @@ function goalModal(id) {
     title: g ? `Edit ${g.name}` : 'Add a goal',
     body: `<form id="f" class="form-grid">
       <label class="field wide"><span>Goal</span><input name="goal-label" data-key="name" autocomplete="off" value="${esc(v.name)}" placeholder="e.g. Emergency fund, Italy 2027, New car" required autofocus></label>
-      <label class="field"><span>Target amount</span><input name="target" inputmode="decimal" value="${v.target}"></label>
+      <label class="field"><span>Target amount</span><input name="target" inputmode="decimal" value="${esc(v.target)}"></label>
       <label class="field"><span>Target date</span><input type="date" name="targetDate" value="${v.targetDate || ''}"></label>
       <label class="field"><span>Track progress with</span><select name="src" id="g-src"><option value="manual" ${src === 'manual' ? 'selected' : ''}>An amount I update</option><option value="account" ${src === 'account' ? 'selected' : ''}>An account’s balance</option><option value="category" ${src === 'category' ? 'selected' : ''}>A rollover budget category</option></select></label>
       <label class="field g-src g-manual"><span>Saved so far</span><input name="saved" inputmode="decimal" value="${v.saved ?? ''}"></label>
