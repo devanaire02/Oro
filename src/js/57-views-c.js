@@ -374,7 +374,7 @@ function scheduleAPanel(X) {
 
 VIEWS.taxes = p => {
   const year = +(p.y || new Date().getFullYear());
-  const years = [...new Set([new Date().getFullYear(), new Date().getFullYear() - 1, ...state.transactions.map(t => yearOf(t.date))])].sort((a, b) => b - a);
+  const years = [...new Set([new Date().getFullYear(), new Date().getFullYear() - 1, ...state.transactions.map(t => yearOf(t.date)), ...stubsAll().filter(s => s.date).map(s => yearOf(s.date))])].sort((a, b) => b - a);   // and any year with a pay stub
   const rentals = activeAccounts().filter(a => a.type === 'realestate' && a.rental);
   const ded = deductionSummary(year), TX = taxEstimate(year);
   return pageHead('Taxes', `${year} tax year. Organized for your CPA; not tax advice.`, `<label class="field inline"><span class="sr">Year</span><select data-filter="y">${years.map(y => `<option ${y === year ? 'selected' : ''}>${y}</option>`).join('')}</select></label><button class="btn" data-act="export-tax" data-year="${year}">Export for your CPA</button>`) + afterTaxPanel(TX) + whatIfPanel(year) + payStubsPanel(year) + taxDuePanel(year) + scheduleAPanel(TX) + `

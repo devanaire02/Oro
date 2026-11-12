@@ -136,6 +136,7 @@ function stubYearNotes(Y, year) {
   if (Y.ask) out.push('<strong>How often are you paid?</strong> Choose it below and Ọrọ̀ projects the rest of the year.');
   else if (j?.regular && j.freq) out.push(`Paid ${FREQS[j.freq].toLowerCase()}${j.typedFreq ? '' : ' (worked out from the stubs)'}: ${Y.left} regular paycheck${Y.left === 1 ? '' : 's'} left through December 31, at the latest regular paycheck’s amounts.`);
   else if (!j?.regular) out.push('Only bonus or one-time stubs so far, so nothing more is projected.');
+  if (Y.jobs.length > 1) out.push(`Counted as ${Y.jobs.length} employers (${Y.jobs.map(x => esc(x.employer || 'no name')).join(', ')}), each with its own year-to-date. If two are the same employer, give their stubs the same name.`);
   if (Y.capped.ss) out.push(`Social Security stops at ${sm(taxTables(year).T.ssBase)} of pay (${money(Y.ssMax)} of tax): the projection stops it there.`);
   if (Y.capped.retire) out.push(`The 401(k) limit for ${year} is ${sm(Y.limits.deferral)}${Y.age == null ? ' (under 50)' : ''}: the projection stops there.`);
   if (Y.capped.hsa) out.push(`The HSA limit for ${year} is ${sm(Y.limits.hsa)}: the projection stops there.`);
@@ -147,7 +148,7 @@ function stubPersonBlock(m, year) {
   if (!Y) return `<div class="stub-person" data-stub-person="${esc(m.id)}"><h3>${esc(m.name)}</h3><p class="muted small">No pay stubs for ${year} yet.</p><div class="actions">${add}</div></div>`;
   const list = stubsAll().filter(s => s.person === m.id && yearOf(s.date) === year).sort((a, b) => b.date.localeCompare(a.date)), first = list.slice(0, 3), rest = list.slice(3);
   const moreKey = `more:${m.id}:${year}`;
-  const freqs = Y.jobs.filter(j => j.regular).map(j => `<label class="field"><span>How often ${Y.jobs.length > 1 && j.employer ? `${esc(j.employer)} pays` : 'you’re paid'}</span><select data-payinfo="${esc(m.id)}:freq" data-job="${esc(j.key)}">
+  const freqs = Y.jobs.filter(j => j.regular).map(j => `<label class="field"><span>How often ${Y.jobs.length > 1 && j.employer ? `${esc(j.employer)} pays` : 'you’re paid'}</span><select data-payinfo="${esc(m.id)}:freq:${esc(j.key)}">
       <option value="">${j.guess ? `${FREQS[j.guess]} (from the stubs)` : 'Choose…'}</option>${PAY_FREQS.map(f => `<option value="${f}" ${j.typedFreq === f ? 'selected' : ''}>${FREQS[f]}</option>`).join('')}</select></label>`).join('');
   return `<div class="stub-person" data-stub-person="${esc(m.id)}"><h3>${esc(m.name)}</h3>
     ${stubYearTable(Y, 'Where the year stands', year)}
@@ -312,7 +313,10 @@ function payStubModal(id, preset = {}) {
     f.oninput = () => { read(); adds(); };
     f.onchange = e => {
       if (e.target.id === 'ps-pdf') { const file = e.target.files[0]; if (file) fromPdf(file); return; }
-      if (e.target.id === 'ps-person' && !old && !filled.size) { read(); const keep = { gross: M.gross, net: M.net }; Object.assign(M, start(M.person), keep); return paint(); }   // that person's usual rows
+      if (e.target.id === 'ps-person' && !old && !filled.size) {   // that person's usual rows and employer, unless rows are already typed
+        read();
+        if (['pre', 'tax', 'post', 'er'].every(b => M[b].every(r => r.cur === '' && r.ytd === ''))) { const typedEmp = M.employer, st = start(M.person); Object.assign(M, st, st.employer ? {} : { employer: typedEmp }); return paint(); }
+      }
       read(); adds();
     };
     f.onclick = e => {
@@ -464,10 +468,10 @@ document.addEventListener('change', e => {
     commit({ silent: true }); setTimeout(render, 0); return;
   }
   if (d.payinfo) {   // how often someone is paid, their birth year, what their HSA covers
-    const [id, f] = d.payinfo.split(':'), all = (state.tax.payInfo = state.tax.payInfo || {}), info = (all[id] = all[id] || {});
+    const [id, f, ...rest] = d.payinfo.split(':'), job = rest.join(':'), all = (state.tax.payInfo = state.tax.payInfo || {}), info = (all[id] = all[id] || {});
     if (f === 'born') { const y = Math.round(parseAmount(el.value)); if (y > 1900 && y <= new Date().getFullYear()) info.born = y; else delete info.born; }
     else if (f === 'hsa') { if (el.value === 'self') info.hsa = 'self'; else delete info.hsa; }
-    else if (f === 'freq' && !UNSAFE_KEYS.has(d.job)) { info.freq = info.freq || {}; if (PAY_FREQS.includes(el.value)) info.freq[d.job] = el.value; else delete info.freq[d.job]; if (!Object.keys(info.freq).length) delete info.freq; }
+    else if (f === 'freq' && !UNSAFE_KEYS.has(job)) { info.freq = info.freq || {}; if (PAY_FREQS.includes(el.value)) info.freq[job] = el.value; else delete info.freq[job]; if (!Object.keys(info.freq).length) delete info.freq; }
     if (!Object.keys(info).length) delete all[id];
     if (!Object.keys(all).length) delete state.tax.payInfo;
     if (isTouch() && el.tagName === 'SELECT') el.blur();

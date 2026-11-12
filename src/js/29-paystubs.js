@@ -9,10 +9,11 @@
    The limits used when projecting are in 28-tax.js (TAX_TABLES[year].save, with their IRS sources): Social Security
    stops at the wage base; 401(k), 403(b) and 457 deferrals (before tax and Roth together) stop at the year's limit, with
    the extra at 50 and at 60 to 63 once a birth year is given; an HSA (yours plus your employer's) stops at its limit.
-   A what-if bonus assumes the usual flat 22% federal withholding on bonuses (IRS Publication 15, supplemental wages
-   up to $1 million) and Illinois's 4.95%.
+   A what-if bonus counts the usual flat 22% federal withholding on bonuses (IRS Publication 15 (2026): "the withholding
+   rate on supplemental wages remains 22%"; the 37% above $1 million in a year isn't modeled) and Illinois's 4.95%.
    Not modeled: a 457 plan's separate limit, an HSA limit for part of a year, the extra 0.9% Medicare withholding above
-   $200,000, withholding rising after a 401(k) limit is reached, a payday moved across New Year's by a holiday. */
+   $200,000 in what's projected as taken out, withholding rising after a 401(k) limit is reached, a payday moved across
+   New Year's by a holiday, Social Security taken out twice by two employers. */
 const STUB_PRE = { retire: '401(k), 403(b) or 457', hsa: 'HSA', fsa: 'FSA', premium: 'Health, dental or vision', other: 'Something else before tax' };
 const STUB_TAX = { federal: 'Federal income tax', ss: 'Social Security', medicare: 'Medicare', state: 'Illinois income tax', other: 'Another tax' };
 const STUB_POST = { roth: 'Roth 401(k)', stock: 'Stock or savings plan', life: 'Life or disability insurance', other: 'Something else' };
@@ -26,7 +27,9 @@ const stubsAll = () => state.paystubs || [];
 const cents = n => Math.round((Number(n) || 0) * 100);
 const stubById = id => stubsAll().find(s => s.id === id);
 const stubNum = v => { if (v === '' || v == null) return null; const n = typeof v === 'number' ? v : parseAmount(String(v).replace(/\*+$/, '')); return isFinite(n) ? round2(Math.abs(n)) : null; };
-const stubEmpKey = s => String(s.employer || '').trim().toLowerCase();
+/* One employer, however its name was typed: "ACME CORP, INC." and "Acme" are the same job (year-to-date is per employer,
+   so two spellings must not be counted twice). */
+const stubEmpKey = s => String(s.employer || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(' ').filter(w => w && !/^(the|inc|incorporated|llc|corp|corporation|co|company|ltd|lp|llp|pllc|pc)$/.test(w)).join(' ');
 /* "Acme Corp, Nov 20": how a stub is named in lists and in what's waiting to go to the Mac */
 const stubName = s => `${s.employer || memberName(s.person)}, ${dateLabel(s.date)}`;
 const isPayCat = c => !!c && c.kind === 'income' && !c.rental && /pay|salary|wage|bonus/i.test(c.name);
@@ -206,7 +209,12 @@ function stubYear(personId, year) {
     if (!all.length) return null;
     const { T } = taxTables(year), info = payInfo(personId), age = ageIn(personId, year);
     const lastDate = all[all.length - 1].date;
-    const jobs = Object.entries(groupBy(all, stubEmpKey)).map(([key, list]) => {
+    // A stub with no employer named belongs with one that has a name: the only one there is, else the one with the same
+    // regular paycheck, else the one with the nearest pay date.
+    const withName = all.filter(stubEmpKey), named = [...new Set(withName.map(stubEmpKey))];
+    const jobOf = s => stubEmpKey(s) || (named.length < 2 ? named[0] || '' : stubEmpKey(withName.filter(x => !x.bonus && !s.bonus && cents(x.gross) === cents(s.gross)).pop()
+      || withName.slice().sort((x, y) => Math.abs(daysBetween(x.date, s.date)) - Math.abs(daysBetween(y.date, s.date)))[0]));
+    const jobs = Object.entries(groupBy(all, jobOf)).map(([key, list]) => {
       const latest = list[list.length - 1], regs = list.filter(s => !s.bonus), regular = regs[regs.length - 1] || null;
       const sums = {}; for (const k of STUB_LINES) sums[k] = round2(sum(list.map(s => stubLines(s)[k])));
       const ytdMode = latest.grossYtd != null, sofar = {};
@@ -219,7 +227,7 @@ function stubYear(personId, year) {
       const typed = info.freq?.[key], guess = stubFreqGuess(regs), freq = PAY_FREQS.includes(typed) ? typed : guess;
       const active = !!regular && daysBetween(regular.date, lastDate) <= Math.max(35, freq === 'monthly' ? 62 : 0);
       const left = active && freq ? payDatesLeft(regular.date, freq, year, regs) : 0;
-      return { key, employer: latest.employer || '', n: list.length, latest, regular, ytdMode, sofar, freq, guess, typedFreq: PAY_FREQS.includes(typed) ? typed : '', ask: !!regular && !freq, active, left, cur: regular ? stubLines(regular) : null };
+      return { key, employer: list.map(s => s.employer).filter(Boolean).pop() || '', n: list.length, latest, regular, ytdMode, sofar, freq, guess, typedFreq: PAY_FREQS.includes(typed) ? typed : '', ask: !!regular && !freq, active, left, cur: regular ? stubLines(regular) : null };
     });
     const sofar = {}, projected = {}, capped = {};
     for (const k of STUB_LINES) sofar[k] = round2(sum(jobs.map(j => j.sofar[k])));
@@ -548,9 +556,15 @@ function parsePayStub(lines) {
   const pos = lines.pos || [];
   // each line as words and amounts with where they sit; a text run is split on spaces, each word placed by its share of the run
   const rows = lines.map((line, i) => {
-    const items = pos[i] && pos[i].length ? pos[i] : [{ x: 0, w: line.length, s: line }], toks = [];
+    const toks = [], items = [];
+    for (const it of pos[i] && pos[i].length ? pos[i] : [{ x: 0, w: line.length, s: line }]) {   // pieces that touch are one run (some PDFs draw a number a few characters at a time)
+      const last = items[items.length - 1];
+      if (last && it.x - (last.x + last.w) <= (it.fs || 10) * 0.15) { last.s += it.s; last.w = Math.max(last.w, it.x + (it.w || 0) - last.x); }
+      else items.push({ x: it.x, w: it.w || 0, s: String(it.s) });
+    }
     for (const it of items) {
-      const str = String(it.s), per = str.length ? (it.w || 0) / str.length : 0;
+      // "6 6 0 . 3 3" (an amount drawn one character at a time) is put back together
+      const str = String(it.s).replace(/(?:^|(?<=\s))[-$(]?\d(?: [\d,.)*-]){3,}(?=\s|$)/g, m => (STUB_AMT.test(m.replace(/ /g, '')) ? m.replace(/ /g, '') : m)), per = str.length ? (it.w || 0) / str.length : 0;
       for (const m of str.matchAll(/\S+/g)) toks.push({ s: m[0], x0: it.x + m.index * per, x1: it.x + (m.index + m[0].length) * per });
     }
     return toks.filter(t => t.s !== '$').map(t => (STUB_AMT.test(t.s) ? { ...t, amt: stubNum(t.s), star: /\*$/.test(t.s) } : t));
@@ -663,7 +677,7 @@ function parsePayStub(lines) {
   });
   // the employer: a line that says so, else the first line near the top that reads like a company's name
   const emp = /\b(?:employer|company)(?: name)?\s*[:\-]\s*([^\n]+?)(?:\s{3,}|$)/im.exec(text);
-  const co = lines.slice(0, 14).map(l => l.split(/\s{3,}/)[0].trim()).find(l => /\b(inc|llc|l\.l\.c|corp|corporation|company|co|ltd|lp|llp|pllc|pc|group|associates|partners|university|college|hospital|schools?|district|foundation|bank)\b\.?,?$/i.test(l) && l.length <= 60 && !STUB_DATE.test(l));
+  const co = lines.slice(0, 14).map(l => l.split(/\s{3,}/)[0].trim()).filter(l => l.length >= 5 && /\S \S/.test(l)).find(l => /\b(inc|llc|l\.l\.c|corp|corporation|company|co|ltd|lp|llp|pllc|pc|group|associates|partners|university|college|hospital|schools?|district|foundation|bank)\b\.?,?$/i.test(l) && l.length <= 60 && !STUB_DATE.test(l));
   out.employer = stubScrub((emp ? emp[1] : co) || '');
   for (const b of ['pre', 'tax', 'post', 'er']) out[b] = out[b].filter(r => r.cur != null || r.ytd != null);
   out.found = [out.gross.cur, out.net.cur, ...['pre', 'tax', 'post', 'er'].flatMap(b => out[b].map(r => r.cur ?? r.ytd))].filter(v => v != null).length;

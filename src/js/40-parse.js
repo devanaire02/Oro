@@ -223,7 +223,7 @@ async function pdfToLines(buffer) {
         if (prevEnd != null) text += (it.x - prevEnd > it.fs * 1.2) ? '   ' : (it.x - prevEnd > it.fs * 0.15 ? ' ' : '');
         text += it.s; prevEnd = it.x + it.w;
       }
-      lines.push(text.replace(/\s+$/, '')); pos.push(r.items.map(it => ({ x: it.x, w: it.w, s: it.s })));
+      lines.push(text.replace(/\s+$/, '')); pos.push(r.items.map(it => ({ x: it.x, w: it.w, s: it.s, fs: it.fs })));
     }
   }
   lines.pos = pos;
