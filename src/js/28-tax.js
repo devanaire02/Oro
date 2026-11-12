@@ -118,7 +118,7 @@ function taxEstimate(year, over = {}) {
   const B = bracketTax(taxable, T.brackets[st]);
   const ctcStart = st === 'mfj' ? 400000 : 200000;
   const ctcFull = (H.kids || 0) * T.ctc, ctc = Math.max(0, ctcFull - 50 * Math.ceil(Math.max(0, agi - ctcStart) / 1000));
-  const ctcUsed = Math.min(ctc, B.tax), refund = Math.min(ctc - ctcUsed, (H.kids || 0) * T.ctcRefund, Math.max(0, 0.15 * (gross - 2500)));
+  const ctcUsed = Math.min(ctc, B.tax), refund = Math.min(ctc - ctcUsed, (H.kids || 0) * T.ctcRefund, Math.max(0, 0.15 * (gross - pretax - 2500)));   // earned income is taxable pay (W-2 box 1)
   const fedEst = round2(B.tax - ctcUsed - refund);
   // Social Security (up to the wage base, per person) and Medicare (plus 0.9% above $250,000 joint, $200,000 single)
   const addlAt = st === 'mfj' ? 250000 : st === 'mfs' ? 125000 : 200000;
