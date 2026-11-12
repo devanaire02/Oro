@@ -16,18 +16,19 @@ const _fmt2 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD
 const _fmt0 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 });
 function money(n, opts = {}) {
   n = Number(n) || 0;
-  if (Object.is(round2(n), -0)) n = 0;
-  const s = (opts.cents === false || (opts.auto && Math.abs(n) >= 10000) ? _fmt0 : _fmt2).format(Math.abs(n));
+  const whole = opts.cents === false || (opts.auto && Math.abs(n) >= 10000);
+  if (Object.is(round2(n), -0) || (whole && Math.abs(n) < 0.5)) n = 0;   // an amount that shows as zero carries no sign: $0, not −$0 or +$0
+  const s = (whole ? _fmt0 : _fmt2).format(Math.abs(n));
   if (n < 0) return opts.paren ? `(${s})` : `−${s}`;
   return (opts.sign && n > 0 ? '+' : '') + s;
 }
 function moneyCompact(n) {
   const a = Math.abs(n), s = n < 0 ? '−' : '';
-  if (a >= 1e6) return `${s}$${(a / 1e6).toFixed(a >= 1e7 ? 1 : 2).replace(/\.?0+$/, '')}M`;
-  if (a >= 1e3) return `${s}$${(a / 1e3).toFixed(a >= 1e5 ? 0 : 1).replace(/\.0$/, '')}K`;
+  if (a >= 999500) return `${s}$${(a / 1e6).toFixed(a >= 1e7 ? 1 : 2).replace(/\.?0+$/, '')}M`;   // $999,500 and up reads $1M, not $1000K
+  if (a >= 999.5) return `${s}$${(a / 1e3).toFixed(a >= 1e5 ? 0 : 1).replace(/\.0$/, '')}K`;
   return `${s}$${Math.round(a)}`;
 }
-const pct = (n, d = 1) => (isFinite(n) ? (n * 100).toFixed(d) + '%' : '—');
+const pct = (n, d = 1) => (isFinite(n) ? (n * 100).toFixed(d).replace(/^-(0(\.0+)?)$/, '$1') + '%' : '—');   // 0%, not -0%
 const signClass = n => (n > 0.004 ? 'pos' : n < -0.004 ? 'neg' : '');
 
 /* Parse "$1,234.56", "(12.34)", "12.34-", "-$5", "12.34 CR" */
