@@ -212,7 +212,7 @@ VIEWS.review = p => {
   const bucketOf = id => { const a = acctById(id); return a ? ACCOUNT_TYPES[a.type]?.bucket : 'illiquid'; };
   const bucketChange = BUCKETS.map(b => {
     const e = state.snapshots[mk] || {}, s = state.snapshots[prev] || {};
-    const val = snap => sum(Object.entries(snap).filter(([id]) => bucketOf(id) === b.id).map(([, v]) => v));
+    const val = snap => sum(Object.entries(snap).filter(([id]) => bucketOf(id) === b.id && (!acctById(id) || acctInEstate(acctById(id)))).map(([, v]) => v));   // as net worth counts them: not children's, trusts' or others'
     return { b, change: val(e) - val(s) };
   });
   const unc = txs.filter(t => !t.categoryId).length;
