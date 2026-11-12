@@ -86,6 +86,13 @@ function buildSlides(mk) {
         <button class="md-fig" data-drill="in|${mk}"><span>Came in</span><strong class="num">${sm(f.income)}</strong></button>
         <button class="md-fig" data-drill="out|${mk}"><span>Went out</span><strong class="num">${sm(f.spending)}</strong></button>
         <button class="md-fig" data-drill="kept|${mk}"><span>Kept</span><strong class="num ${signClass(f.net)}">${sm(f.net)}</strong></button></div></div>` });
+  const lastMk = Object.keys(state.reviews).filter(k => k < mk && (state.reviews[k]?.notes || '').trim()).sort().pop();
+  if (lastMk) {
+    const lines = state.reviews[lastMk].notes.split(/\n+/).map(x => x.replace(/^\s*[-•*]\s*/, '').trim()).filter(Boolean), done = state.reviews[lastMk].done || {};
+    slides.push({ title: 'Last time', kind: 'last', html: () => `<div class="slide-narrow"><h2 class="slide-h2">Last time we decided</h2>
+      <p class="slide-lede">From ${monthLabel(lastMk)}’s Money date. Tick what got done.</p>
+      <ul class="md-last">${lines.map((t, i) => `<li><label><input type="checkbox" data-md-done="${lastMk}:${i}" ${done[i] ? 'checked' : ''}><span>${esc(t)}</span></label></li>`).join('')}</ul></div>` });
+  }
   slides.push({ title: 'What matters', kind: 'matters', html: () => `<h2 class="slide-h2">What matters ${cur ? 'now' : `from ${M}`}</h2>${briefPanel(mk, { head: false, big: true, inert: true, max: 3 })}` });
   if (endNW != null) {
     const series = netWorthSeries().filter(p => p.x <= mk).slice(-13);
@@ -137,6 +144,13 @@ function buildSlides(mk) {
       <p class="slide-sign"><span class="wordmark">Ọrọ̀</span> · ${ORO_TAGLINE}</p></div>`; } });
   return slides;
 }
+/* A tick beside something decided last time is kept with that month's review. */
+document.addEventListener('change', e => {
+  const el = e.target.closest?.('[data-md-done]'); if (!el) return;
+  const [k, i] = el.dataset.mdDone.split(':'), r = state.reviews[k]; if (!r) return;
+  r.done = { ...(r.done || {}) }; if (el.checked) r.done[i] = true; else delete r.done[i];
+  commit({ silent: true });
+});
 function mdAction(a) {
   if (a === 'close') return endMoneyDate();
   if (a === 'full') { if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.().catch(() => {}); return; }

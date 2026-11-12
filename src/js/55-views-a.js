@@ -321,6 +321,7 @@ VIEWS.budget = p => {
     `<button class="btn ghost detail-only" data-act="budget-avg">Fill from averages</button>`);
   const summary = `<section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Expected income</th><th class="num">Planned spending</th><th class="num">Unplanned</th><th class="num">Spent in ${MONTHS[+mk.slice(5) - 1]}</th></tr></thead>
     <tbody><tr><th scope="row">Per month</th><td class="num">${money(expIncome, { cents: false })}</td><td class="num">${money(planned, { cents: false })}</td><td class="num ${signClass(expIncome - planned)}">${money(expIncome - planned, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td></tr></tbody></table>
+    ${mk === thisMonth() && planned > 0 ? (() => { const day = new Date().getDate(), dim = +monthEnd(mk).slice(8); return `<div class="pace"><div class="pace-row"><span>Day ${day} of ${dim}</span><span>${pct(f.spending / planned, 0)} of the plan spent, ${pct(day / dim, 0)} of the month gone</span></div>${bar(f.spending, planned, { pace: planned * day / dim })}</div>`; })() : ''}
     <p class="muted small">Planned spending includes one-twelfth of each yearly budget. Unplanned is what’s left for saving and investing.</p></section>`;
 
   if (UI.mode === 'simple') {
@@ -350,7 +351,8 @@ VIEWS.budget = p => {
       <td class="spark-cell hide-sm">${sparkline(trend, { w: 70, h: 20, color: inc ? 'var(--pos)' : 'var(--muted)' })}</td></tr>`;
   }).join('');
   const groupTotal = cs => { const m = cs.filter(c => c.period !== 'year'); return { b: sum(m.map(c => c.budget || 0)), a: sum(m.map(c => budgetView(c, mk).actual)) }; };
-  return head + summary + order.map(g => {
+  const pace = paceChart(mk);
+  return head + summary + (pace ? `<section class="panel pace-panel"><header class="panel-head"><h2>The pace of ${MONTHS[+mk.slice(5) - 1]}’s spending</h2><span class="muted small">Added up day by day, against last month and the usual</span></header>${pace}</section>` : '') + order.map(g => {
     const cs = groups[g], tt = groupTotal(cs.filter(c => c.kind === 'expense'));
     const isRental = cs.some(c => c.rental);
     const pnl = isRental ? rentalPnL(g, `${mk}-01`, monthEnd(mk)) : null;
@@ -379,6 +381,8 @@ VIEWS.accounts = p => {
   return pageHead('Accounts', updating ? `Type in current balances from your statements, then save.${cryptoHeld().length ? ' Crypto accounts follow their coin prices: update those on Investments › Crypto prices.' : ''}` : 'Everything you own and owe.',
     updating ? `<a class="btn ghost" href="#/accounts">Cancel</a><button class="btn primary" data-act="save-balances">Save balances</button>`
       : `${multi ? `<div class="seg small" role="group" aria-label="Group by"><button class="${byOwner ? '' : 'on'}" data-by="">By type</button><button class="${byOwner ? 'on' : ''}" data-by="owner">By owner</button></div>` : ''}<a class="btn" href="#/accounts?update=1">Update balances</a>${checkinOn() ? '<a class="btn" href="#/checkin?talk=1">Add or update by talking</a>' : ''}<button class="btn primary" data-act="add-account">Add account</button>`) + lensNote() + `
+  ${updating ? '' : `<section class="flows acct-lead"><table class="ledger flows-table"><thead><tr><th></th><th class="num">${esc(nwLabel())}</th><th class="num">Assets</th><th class="num">Liabilities</th><th class="num hide-sm">Cash and investments</th></tr></thead>
+    <tbody><tr><th scope="row">Today</th><td class="num">${money(t.netWorth, { cents: false })}</td><td class="num">${money(t.assets, { cents: false })}</td><td class="num">${money(t.liabilities, { cents: false })}</td><td class="num hide-sm">${money(t.liquid, { cents: false })}</td></tr></tbody></table></section>`}
   <section class="alloc-bar-wrap detail-only">${(() => { const segs = [['Cash', t.cash, 'var(--c2)'], ['Investments', t.invest, 'var(--c1)'], ['Property and private', t.illiquid, 'var(--c4)']]; const tot = t.assets || 1; return `<div class="stack tall" role="img" aria-label="Assets by type">${segs.map(([l, v, c]) => v > 0 ? `<span style="width:${v / tot * 100}%;background:${c}" title="${l} ${pct(v / tot, 0)}"></span>` : '').join('')}</div><p class="legend">${segs.map(([l, v, c]) => `<span><i style="background:${c}"></i>${l} ${pct(v / tot, 0)}</span>`).join('')}<span><i style="background:var(--neg)"></i>Debt is ${pct(t.liabilities / tot, 0)} of assets</span></p>`; })()}</section>
   ${groups.map(g => {
     const subtotal = sum(g.accts.map(a => g.signed ? signedValue(a) : accountValue(a)));

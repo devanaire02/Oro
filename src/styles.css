@@ -1648,3 +1648,80 @@ body.presenting .modal-wrap { z-index: 90; }
     :root:not([data-look="classic"]) .present { .present-top { padding: 12px 14px; gap: 10px; } .present-title { font-size: 13px; } .present-nav { padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); } .slide { padding: 18px 20px; } }
   }
 }
+
+/* ================= Second weave, page by page (November 2026) =================
+   The same cloth carried to every page: the summary at the head of a page as one sheet with its figures in the serif,
+   the strip on windows and on Check-in's card, meters and rings that fill once as you arrive, calmer tables. */
+.pace { margin: 10px 10px 6px; }
+.pace-row { display: flex; justify-content: space-between; gap: 4px 12px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+@media (prefers-reduced-motion: no-preference) {
+  #main.arrive .meter span, #main.arrive .stack span { animation: grow-x .7s cubic-bezier(.3, .7, .2, 1) both; transform-origin: 0 50%; }
+  #main.arrive .ring-arc { animation: ring-in .9s cubic-bezier(.3, .7, .2, 1) both; }
+}
+@keyframes grow-x { from { transform: scaleX(0); } }
+@keyframes ring-in { from { stroke-dasharray: 0 100; } }
+@media screen {
+  :root:not([data-look="classic"]) {
+    /* the summary at the head of a page */
+    .flows { background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 12px 10px; }
+    .flows .flows-table thead th { border-bottom: 0; padding-bottom: 0; }
+    .flows .flows-table tbody th, .flows .flows-table tbody td { border-bottom: 0; }
+    .flows .flows-table tbody tr:first-child td { font: 600 clamp(16px, 4.3vw, 25px) var(--serif); }
+    .flows .flows-table tbody tr:first-child th { color: var(--muted); font-weight: 500; vertical-align: bottom; padding-bottom: 12px; }
+    .flows .flows-table tbody tr + tr th, .flows .flows-table tbody tr + tr td { border-top: 1px solid var(--rule); font-size: 14.5px; font-weight: 400; }
+    .flows .flows-table tbody tr:hover > * { background: none; }
+    .flows > p { margin: 4px 10px; }
+    .flows-title { margin: 0 10px 4px; }
+
+    /* windows and Check-in's card carry the strip */
+    .modal-head { background-image: var(--band); background-size: 100% 4px; background-repeat: no-repeat; padding-top: 19px; border-radius: 16px 16px 0 0; }
+    .ci-card { position: relative; overflow: hidden; padding-top: 25px; }
+    .ci-card::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 5px; background-image: var(--threads), var(--band); background-size: auto, 100% 100%; }
+
+    /* notes, the calendar, cards */
+    .notice { border-radius: 10px; padding: 11px 14px; border: 1px solid color-mix(in srgb, var(--warn) 22%, transparent); }
+    .notice.bad { border-color: color-mix(in srgb, var(--neg) 26%, transparent); }
+    .lens-note { border-radius: 10px; padding: 9px 14px; }
+    .cal-cell { border-radius: 8px; }
+    .cal-cell.today { border-color: var(--margin); box-shadow: inset 0 0 0 1px var(--margin); }
+    .goal-card, .b-card, .s-card, .person-card { border-radius: var(--radius); }
+    .empty { position: relative; overflow: hidden; padding-top: 46px; border-radius: 18px; }
+    .empty::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 8px; background-image: var(--threads), var(--weave); }
+    .ledger tbody tr:hover > * { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
+    .toast { border-radius: 12px; }
+    .fee-src { display: inline-block; min-width: 34px; margin-left: 4px; font: 500 11px/16px var(--sans); text-align: center; color: var(--muted); background: var(--pad); border-radius: 999px; padding: 0 6px; }
+    .fee-src.typed { color: var(--ink-accent); background: var(--accent-soft); }
+    .fee-more { margin: 6px 0; } .fee-more summary { cursor: pointer; font-size: 13.5px; color: var(--ink-accent); padding: 4px 0; }
+    .fee-note { margin-top: 8px; }
+  }
+  /* on a phone a one-line summary drops its row name so the figures fit */
+  @media (max-width: 640px) {
+    :root:not([data-look="classic"]) {
+      .flows { padding: 12px 6px 8px; }
+      .flows .flows-table th, .flows .flows-table td { padding: 5px 6px; }
+      .flows .flows-table:has(tbody tr:only-child) thead th:first-child, .flows .flows-table tbody tr:only-child > th { display: none; }
+    }
+  }
+  @media (max-width: 360px) {
+    :root:not([data-look="classic"]) {
+      .flows { padding: 10px 2px 6px; }
+      .flows .flows-table th, .flows .flows-table td { padding: 4px 4px; }
+      .flows .flows-table tbody tr:first-child td { font-size: 14px; letter-spacing: -0.01em; }
+      .flows .flows-table thead th { font-size: 11.5px; }
+    }
+  }
+  /* the phone's tab bar: a piece of the strip marks where you are */
+  @media (max-width: 860px) {
+    :root:not([data-look="classic"]) {
+      .tabbar .on::after { width: 20px; height: 3px; border-radius: 2px; background: var(--band); margin-top: 2px; }
+      .tabbar a:not(.on)::after, .tabbar button:not(.on)::after { width: 20px; height: 3px; margin-top: 2px; }
+    }
+  }
+}
+
+/* ---------- ideas from other money apps (November 2026): the pace of the month, what was decided last time ---------- */
+.pace-panel .legend { margin: 8px 0 0; }
+.md-last { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 10px; }
+.md-last label { display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--rule); background: var(--sheet); font-size: clamp(16px, 1.6vw, 20px); line-height: 1.4; cursor: pointer; }
+.md-last input { width: 22px; height: 22px; margin: 3px 0 0; flex: none; accent-color: var(--ink-accent); }
+.md-last input:checked + span { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }

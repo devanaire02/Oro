@@ -366,3 +366,27 @@ function concentration() {
   const top = inv.map(h => ({ symbol: h.symbol, share: holdingValue(h) / total })).sort((a, b) => b.share - a.share)[0];
   return top && top.share >= 0.1 ? top : null;
 }
+
+/* ---------- repeating charges whose price changed ----------
+   The same payee once a month, the same amount three times running, then a different amount the last time (by at least
+   2% and 50 cents). Worked out from your own transactions; nothing is looked up. */
+function priceChanges() {
+  return memo('pricechg', () => {
+    const since = `${addMonths(thisMonth(), -7)}-01`, by = {};
+    for (const t of state.transactions) {
+      if (t.amount >= 0 || t.date < since || isTransferCat(t.categoryId)) continue;
+      const k = normPayee(t.payee); if (k) (by[k] = by[k] || []).push(t);
+    }
+    const out = [];
+    for (const list of Object.values(by)) {
+      if (list.length < 4 || new Set(list.map(t => monthKey(t.date))).size !== list.length) continue;   // once a month, four times or more
+      list.sort((a, b) => a.date.localeCompare(b.date));
+      const last = list[list.length - 1], before = list.slice(-4, -1).map(t => -t.amount), was = before[2], now = -last.amount;
+      if (daysBetween(last.date, today()) > 45) continue;
+      if (Math.max(...before) - Math.min(...before) > 0.011) continue;   // steady before
+      if (Math.abs(now - was) < Math.max(0.5, was * 0.02)) continue;
+      out.push({ payee: last.payee, was: round2(was), now: round2(now), date: last.date, id: last.id, accountId: last.accountId });
+    }
+    return out.sort((a, b) => Math.abs(b.now - b.was) - Math.abs(a.now - a.was));
+  });
+}

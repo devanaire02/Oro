@@ -42,6 +42,14 @@ function whatMatters(mk = thisMonth()) {
     const fc = forecast(60, true);
     if (fc.low.y > 0 && fc.low.y >= (state.settings.lowCash || 0)) add('well', 300, `Cash on hand stays above ${sm(Math.floor(fc.low.y / 100) * 100)} for the next 60 days.`, { go: '#/cashflow' });
   }
+  if (cur) {   // how long the cash on hand would cover the usual month's spending
+    const usual = sum([1, 2, 3].map(i => flowSummary(lensed(txInMonth(addMonths(mk, -i)))).spending)) / 3, cash = totals(true).cash;
+    if (usual > 0 && cash > 0) {
+      const n = cash / usual;
+      if (n >= 3) add('well', 250, `Cash on hand would cover about ${n >= 10 ? Math.round(n) : Math.round(n * 2) / 2} months of usual spending.`, { go: '#/accounts' });
+      else if (n < 1) add('off', 800, `Cash on hand covers less than a month of usual spending.`, { go: '#/cashflow' });
+    }
+  }
   for (const n of notes) if (n.tone === 'good' && !/fully funded|^You kept/.test(n.text)) add('well', n.w, n.text, { go: n.go || '#/reports' });
 
   // ---- what changed
@@ -58,6 +66,7 @@ function whatMatters(mk = thisMonth()) {
     if (avg > 0 && Math.abs(f.spending - avg) >= Math.max(150, avg * 0.08)) add('changed', 700, `Spending was ${sm(Math.abs(f.spending - avg))} ${f.spending > avg ? 'more' : 'less'} than a usual month.`, { drill: `out|${mk}` });
   }
   for (const n of notes) if (n.tone === 'info') add('changed', n.w, n.text, n.drill ? { drill: n.drill } : { go: n.go || '#/reports' });
+  if (cur) for (const c of priceChanges().slice(0, 3)) add('changed', 600 + Math.abs(c.now - c.was) * 12, `${prettyPayee(c.payee) || c.payee} went from ${money(c.was)} to ${money(c.now)} a month, ${sm(Math.abs(c.now - c.was) * 12)} ${c.now > c.was ? 'more' : 'less'} a year.`, { drill: `tx|${c.id}` });
 
   for (const k in G) G[k].sort((a, b) => b.w - a.w);
   return G;

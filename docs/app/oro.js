@@ -1224,6 +1224,30 @@ function concentration() {
   return top && top.share >= 0.1 ? top : null;
 }
 
+/* ---------- repeating charges whose price changed ----------
+   The same payee once a month, the same amount three times running, then a different amount the last time (by at least
+   2% and 50 cents). Worked out from your own transactions; nothing is looked up. */
+function priceChanges() {
+  return memo('pricechg', () => {
+    const since = `${addMonths(thisMonth(), -7)}-01`, by = {};
+    for (const t of state.transactions) {
+      if (t.amount >= 0 || t.date < since || isTransferCat(t.categoryId)) continue;
+      const k = normPayee(t.payee); if (k) (by[k] = by[k] || []).push(t);
+    }
+    const out = [];
+    for (const list of Object.values(by)) {
+      if (list.length < 4 || new Set(list.map(t => monthKey(t.date))).size !== list.length) continue;   // once a month, four times or more
+      list.sort((a, b) => a.date.localeCompare(b.date));
+      const last = list[list.length - 1], before = list.slice(-4, -1).map(t => -t.amount), was = before[2], now = -last.amount;
+      if (daysBetween(last.date, today()) > 45) continue;
+      if (Math.max(...before) - Math.min(...before) > 0.011) continue;   // steady before
+      if (Math.abs(now - was) < Math.max(0.5, was * 0.02)) continue;
+      out.push({ payee: last.payee, was: round2(was), now: round2(now), date: last.date, id: last.id, accountId: last.accountId });
+    }
+    return out.sort((a, b) => Math.abs(b.now - b.was) - Math.abs(a.now - a.was));
+  });
+}
+
 /* ================= planning, tax and analytics engines ================= */
 
 /* ---------- capital market assumptions → portfolio return and volatility ---------- */
@@ -4318,6 +4342,7 @@ function render() {
   const keepY = fromField && UI.renderedPage === page && !document.body.classList.contains('page-held') ? Math.max(window.scrollY, changed ? UI.lastChange.y : 0) : 0;
   // Every device: the page drawn again because of a box you just changed: keep that box where it was on screen (keepPlace)
   const anchor = changed && UI.lastChange.sel && UI.renderedPage === page && !document.body.classList.contains('page-held') ? UI.lastChange : null;
+  const arrived = UI.renderedPage !== page;
   UI.renderedPage = page;
   for (const k in ChartSpecs) delete ChartSpecs[k];
   document.body.classList.toggle('simple', UI.mode === 'simple');
@@ -4334,6 +4359,8 @@ function render() {
   const kept = keep && patchAround($('#main'), html, keep, focusSel);
   if (!kept) $('#main').innerHTML = html;
   if (kept) focusSel = null;
+  // arriving on a page, its meters and rings fill once (not on every redraw after that, and not with Reduce Motion)
+  if (arrived && !reduceMotion()) { const m = $('#main'); m.classList.add('arrive'); clearTimeout(UI.arriveT); UI.arriveT = setTimeout(() => m.classList.remove('arrive'), 1100); }
   wrapTables($('#main'));
   decorateSortable($('#main'));   // headings you can click to sort (51-sort.js)
   if (UI.navCheckin !== (state.settings.checkin !== false)) buildShell();   // Check-in was turned on or off
@@ -4587,7 +4614,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = 'aa296cd';
+const ORO_BUILD = '6e9c21f';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -4617,11 +4644,11 @@ function bar(actual, budget, opts = {}) {
 }
 /* Progress ring (inline SVG). */
 function ring(share, opts = {}) {
-  const s = opts.size || 64, w = opts.width || 7, r = (s - w) / 2, c = 2 * Math.PI * r, p = clamp(share, 0, 1);
+  const s = opts.size || 64, w = opts.width || 7, r = (s - w) / 2, p = clamp(share, 0, 1);
   const color = opts.color || (share > 1.0001 ? 'var(--neg)' : 'var(--ink-accent)');
   return `<svg class="ring" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" role="img" aria-label="${pct(share, 0)}">
     <circle cx="${s / 2}" cy="${s / 2}" r="${r}" fill="none" stroke="var(--rule)" stroke-width="${w}"/>
-    <circle cx="${s / 2}" cy="${s / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${w}" stroke-linecap="round" stroke-dasharray="${(c * p).toFixed(2)} ${c.toFixed(2)}" transform="rotate(-90 ${s / 2} ${s / 2})"/>
+    <circle class="ring-arc" cx="${s / 2}" cy="${s / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${w}" stroke-linecap="round" pathLength="100" stroke-dasharray="${(p * 100).toFixed(2)} 100" transform="rotate(-90 ${s / 2} ${s / 2})"/>
     ${opts.label != null ? `<text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" class="ring-label">${esc(opts.label)}</text>` : ''}</svg>`;
 }
 /* Sparkline (inline SVG). */
@@ -4833,7 +4860,8 @@ function drill({ title, sub, head, rows, total, href, hrefLabel, note, empty }) 
       <tbody>${shown.map(r => `<tr class="drill-row" data-edit-txn="${esc(r.t.id)}" tabindex="0"><td class="nowrap muted">${dateLabel(r.t.date)}</td><th scope="row">${esc(r.t.payee)}<span class="drill-meta muted small">${esc(r.categoryId ? catName(r.categoryId) : 'Uncategorized')}, ${esc(acctById(r.t.accountId)?.name || 'an account that was removed')}</span></th><td class="num ${r.amount < 0 ? 'drill-back' : ''}">${money(r.amount)}</td></tr>`).join('')}</tbody>
       <tfoot><tr><th colspan="2" scope="row">${rows.length > shown.length ? `The ${shown.length} largest of ${rows.length}. All ${rows.length} add up to` : `${rows.length === 1 ? 'One transaction' : `${rows.length} transactions`}, adding up to`}</th><td class="num total">${money(total)}</td></tr></tfoot></table></div>` : `<p class="muted">${empty || 'Nothing here yet.'}</p>`}
     ${note ? `<p class="muted small drill-note">${note}</p>` : ''}`;
-  openModal({ title, body, wide: true, id: 'drill', actions: `${href ? `<a class="btn" href="${href}" data-close>${hrefLabel || 'Open in Transactions'}</a>` : ''}<button class="btn primary" data-close>Done</button>` });
+  const wrap = openModal({ title, body, wide: true, id: 'drill', actions: `${href ? `<a class="btn" href="${href}" data-close>${hrefLabel || 'Open in Transactions'}</a>` : ''}<button class="btn primary" data-close>Done</button>` });
+  drawCharts(wrap);
 }
 /* The lines flowSummary counts as money in ('in') or as spending ('out'), each with what it adds to the figure. */
 function flowLines(txs, kind) {
@@ -4850,7 +4878,7 @@ const TRANSFER_NOTE = 'Card payments and moves between your own accounts are lef
 function drillFlow(kind, mk = thisMonth()) {
   if (kind === 'kept') return drillKept(mk);
   const txs = lensed(txInMonth(mk)), rows = flowLines(txs, kind), total = round2(sum(rows.map(r => r.amount))), M = monthLabel(mk);
-  drill({ title: kind === 'in' ? `Money in, ${M}` : `Spent in ${M}`, rows, total, href: `#/transactions?m=${mk}`,
+  drill({ title: kind === 'in' ? `Money in, ${M}` : `Spent in ${M}`, rows, total, href: `#/transactions?m=${mk}`, head: kind === 'out' && rows.length ? paceChart(mk, true, 170) : '',
     sub: kind === 'in' ? `Everything that came in${lensActive() ? ` for ${esc(lensLabel())}` : ''}: paychecks, rent, interest and anything else filed as money in.` : `Everything that went out${lensActive() ? ` for ${esc(lensLabel())}` : ''}. Money back shows with a minus and comes off the total.`,
     note: TRANSFER_NOTE, empty: kind === 'in' ? 'No money in recorded this month yet.' : 'No spending recorded this month yet.' });
 }
@@ -4938,6 +4966,35 @@ document.addEventListener('keydown', e => {
   if (el?.matches?.('[data-drill]:not(button), tr.drill-row[tabindex]')) { e.preventDefault(); el.click(); }
 });
 
+/* ---------- the pace of a month's spending ----------
+   Spending added up day by day: this month so far, last month, and the usual (the three months before, averaged).
+   The same lines Spent counts (transfers left out, money back taken off). */
+function spendCumulative(mk, useLens) {
+  const txs = useLens ? lensed(txInMonth(mk)) : txInMonth(mk), dim = +monthEnd(mk).slice(8), day = new Array(dim + 1).fill(0);
+  for (const r of flowLines(txs, 'out')) day[+r.t.date.slice(8)] += r.amount;
+  const out = []; let run = 0;
+  for (let d = 1; d <= dim; d++) { run += day[d]; out.push(round2(run)); }
+  return out;
+}
+function spendPace(mk = thisMonth(), useLens = false) {
+  const cur = mk === thisMonth(), dim = +monthEnd(mk).slice(8), upto = cur ? new Date().getDate() : dim;
+  const at = (arr, d) => arr[Math.min(d, arr.length) - 1];   // a shorter month holds its last day's total
+  const prior = [1, 2, 3].map(i => addMonths(mk, -i)).filter(m => m >= firstTxMonth()).map(m => spendCumulative(m, useLens));
+  const days = Array.from({ length: dim }, (_, i) => i + 1);
+  return { dim, upto, days, now: spendCumulative(mk, useLens).slice(0, upto), last: prior[0] ? days.map(d => at(prior[0], d)) : [],
+    usual: prior.length ? days.map(d => round2(sum(prior.map(a => at(a, d))) / prior.length)) : [], months: prior.length };
+}
+function paceChart(mk = thisMonth(), useLens = false, h = 190) {
+  const P = spendPace(mk, useLens), M = MONTHS[+mk.slice(5) - 1], L = MONTHS[+addMonths(mk, -1).slice(5) - 1], sm = n => money(n, { cents: false });
+  if (!P.usual.length) return '';
+  const pts = arr => arr.map((y, i) => ({ x: i + 1, y }));
+  return chartHost({ h, padL: 52, label: `Spending day by day in ${M}, against ${L} and the usual`, xFmt: x => `${x}`,
+    series: [{ name: 'The usual', points: pts(P.usual), color: 'var(--muted-2)', dash: true, nodots: true }, { name: L, points: pts(P.last), color: 'var(--c3)', nodots: true }, { name: M, points: pts(P.now), color: 'var(--ink-accent)', area: true, nodots: true }],
+    tip: i => `<strong>${M} ${i + 1}</strong>${P.now[i] != null ? `<br><i class="tip-key" style="background:var(--ink-accent)"></i>${sm(P.now[i])} so far` : ''}<br><i class="tip-key" style="background:var(--muted-2)"></i>${sm(P.usual[i])} usual by now${P.last[i] != null ? `<br><i class="tip-key" style="background:var(--c3)"></i>${sm(P.last[i])} in ${L}` : ''}` }) +
+    `<p class="legend"><span><i style="background:var(--ink-accent)"></i>${M}</span><span><i style="background:var(--c3)"></i>${L}</span><span><i style="background:var(--muted-2)"></i>The usual (the ${P.months === 1 ? 'month' : `${P.months} months`} before, averaged)</span></p>`;
+}
+DRILLS.tx = id => txnModal(id);
+
 /* ================= What matters now =================
    The few things worth seeing first, in four plain groups: what needs a decision, what's off track, what's going well
    and what changed. Each line opens the page or the numbers behind it. It leads Overview and the Money date, so the
@@ -4982,6 +5039,14 @@ function whatMatters(mk = thisMonth()) {
     const fc = forecast(60, true);
     if (fc.low.y > 0 && fc.low.y >= (state.settings.lowCash || 0)) add('well', 300, `Cash on hand stays above ${sm(Math.floor(fc.low.y / 100) * 100)} for the next 60 days.`, { go: '#/cashflow' });
   }
+  if (cur) {   // how long the cash on hand would cover the usual month's spending
+    const usual = sum([1, 2, 3].map(i => flowSummary(lensed(txInMonth(addMonths(mk, -i)))).spending)) / 3, cash = totals(true).cash;
+    if (usual > 0 && cash > 0) {
+      const n = cash / usual;
+      if (n >= 3) add('well', 250, `Cash on hand would cover about ${n >= 10 ? Math.round(n) : Math.round(n * 2) / 2} months of usual spending.`, { go: '#/accounts' });
+      else if (n < 1) add('off', 800, `Cash on hand covers less than a month of usual spending.`, { go: '#/cashflow' });
+    }
+  }
   for (const n of notes) if (n.tone === 'good' && !/fully funded|^You kept/.test(n.text)) add('well', n.w, n.text, { go: n.go || '#/reports' });
 
   // ---- what changed
@@ -4998,6 +5063,7 @@ function whatMatters(mk = thisMonth()) {
     if (avg > 0 && Math.abs(f.spending - avg) >= Math.max(150, avg * 0.08)) add('changed', 700, `Spending was ${sm(Math.abs(f.spending - avg))} ${f.spending > avg ? 'more' : 'less'} than a usual month.`, { drill: `out|${mk}` });
   }
   for (const n of notes) if (n.tone === 'info') add('changed', n.w, n.text, n.drill ? { drill: n.drill } : { go: n.go || '#/reports' });
+  if (cur) for (const c of priceChanges().slice(0, 3)) add('changed', 600 + Math.abs(c.now - c.was) * 12, `${prettyPayee(c.payee) || c.payee} went from ${money(c.was)} to ${money(c.now)} a month, ${sm(Math.abs(c.now - c.was) * 12)} ${c.now > c.was ? 'more' : 'less'} a year.`, { drill: `tx|${c.id}` });
 
   for (const k in G) G[k].sort((a, b) => b.w - a.w);
   return G;
@@ -5340,6 +5406,7 @@ VIEWS.budget = p => {
     `<button class="btn ghost detail-only" data-act="budget-avg">Fill from averages</button>`);
   const summary = `<section class="flows"><table class="ledger flows-table"><thead><tr><th></th><th class="num">Expected income</th><th class="num">Planned spending</th><th class="num">Unplanned</th><th class="num">Spent in ${MONTHS[+mk.slice(5) - 1]}</th></tr></thead>
     <tbody><tr><th scope="row">Per month</th><td class="num">${money(expIncome, { cents: false })}</td><td class="num">${money(planned, { cents: false })}</td><td class="num ${signClass(expIncome - planned)}">${money(expIncome - planned, { cents: false })}</td><td class="num">${money(f.spending, { cents: false })}</td></tr></tbody></table>
+    ${mk === thisMonth() && planned > 0 ? (() => { const day = new Date().getDate(), dim = +monthEnd(mk).slice(8); return `<div class="pace"><div class="pace-row"><span>Day ${day} of ${dim}</span><span>${pct(f.spending / planned, 0)} of the plan spent, ${pct(day / dim, 0)} of the month gone</span></div>${bar(f.spending, planned, { pace: planned * day / dim })}</div>`; })() : ''}
     <p class="muted small">Planned spending includes one-twelfth of each yearly budget. Unplanned is what’s left for saving and investing.</p></section>`;
 
   if (UI.mode === 'simple') {
@@ -5369,7 +5436,8 @@ VIEWS.budget = p => {
       <td class="spark-cell hide-sm">${sparkline(trend, { w: 70, h: 20, color: inc ? 'var(--pos)' : 'var(--muted)' })}</td></tr>`;
   }).join('');
   const groupTotal = cs => { const m = cs.filter(c => c.period !== 'year'); return { b: sum(m.map(c => c.budget || 0)), a: sum(m.map(c => budgetView(c, mk).actual)) }; };
-  return head + summary + order.map(g => {
+  const pace = paceChart(mk);
+  return head + summary + (pace ? `<section class="panel pace-panel"><header class="panel-head"><h2>The pace of ${MONTHS[+mk.slice(5) - 1]}’s spending</h2><span class="muted small">Added up day by day, against last month and the usual</span></header>${pace}</section>` : '') + order.map(g => {
     const cs = groups[g], tt = groupTotal(cs.filter(c => c.kind === 'expense'));
     const isRental = cs.some(c => c.rental);
     const pnl = isRental ? rentalPnL(g, `${mk}-01`, monthEnd(mk)) : null;
@@ -5398,6 +5466,8 @@ VIEWS.accounts = p => {
   return pageHead('Accounts', updating ? `Type in current balances from your statements, then save.${cryptoHeld().length ? ' Crypto accounts follow their coin prices: update those on Investments › Crypto prices.' : ''}` : 'Everything you own and owe.',
     updating ? `<a class="btn ghost" href="#/accounts">Cancel</a><button class="btn primary" data-act="save-balances">Save balances</button>`
       : `${multi ? `<div class="seg small" role="group" aria-label="Group by"><button class="${byOwner ? '' : 'on'}" data-by="">By type</button><button class="${byOwner ? 'on' : ''}" data-by="owner">By owner</button></div>` : ''}<a class="btn" href="#/accounts?update=1">Update balances</a>${checkinOn() ? '<a class="btn" href="#/checkin?talk=1">Add or update by talking</a>' : ''}<button class="btn primary" data-act="add-account">Add account</button>`) + lensNote() + `
+  ${updating ? '' : `<section class="flows acct-lead"><table class="ledger flows-table"><thead><tr><th></th><th class="num">${esc(nwLabel())}</th><th class="num">Assets</th><th class="num">Liabilities</th><th class="num hide-sm">Cash and investments</th></tr></thead>
+    <tbody><tr><th scope="row">Today</th><td class="num">${money(t.netWorth, { cents: false })}</td><td class="num">${money(t.assets, { cents: false })}</td><td class="num">${money(t.liabilities, { cents: false })}</td><td class="num hide-sm">${money(t.liquid, { cents: false })}</td></tr></tbody></table></section>`}
   <section class="alloc-bar-wrap detail-only">${(() => { const segs = [['Cash', t.cash, 'var(--c2)'], ['Investments', t.invest, 'var(--c1)'], ['Property and private', t.illiquid, 'var(--c4)']]; const tot = t.assets || 1; return `<div class="stack tall" role="img" aria-label="Assets by type">${segs.map(([l, v, c]) => v > 0 ? `<span style="width:${v / tot * 100}%;background:${c}" title="${l} ${pct(v / tot, 0)}"></span>` : '').join('')}</div><p class="legend">${segs.map(([l, v, c]) => `<span><i style="background:${c}"></i>${l} ${pct(v / tot, 0)}</span>`).join('')}<span><i style="background:var(--neg)"></i>Debt is ${pct(t.liabilities / tot, 0)} of assets</span></p>`; })()}</section>
   ${groups.map(g => {
     const subtotal = sum(g.accts.map(a => g.signed ? signedValue(a) : accountValue(a)));
@@ -5798,7 +5868,14 @@ function feesPanel(fa) {
         : `<div><dt>All in</dt><dd class="num">${fa.allIn.toFixed(2)}%</dd><span class="muted small">Of what you have invested. <button class="linklike" data-act="advisory-help">Advisory fee?</button></span></div>`}
       <div><dt>Over 20 years</dt><dd class="num">${money(fa.drag, { cents: false })}</dd><span class="muted small">Growth lost at 6% a year${fa.advisory ? `, ${fa.allIn.toFixed(2)}% all in` : ''}</span></div>
     </dl>
-    ${fa.top.length ? `<table class="ledger compact" data-sort-id="fees"><thead><tr><th>Fund</th><th class="num">Expense ratio</th><th class="num">Per year</th></tr></thead><tbody>${fa.top.slice(0, 5).map(x => `<tr><th scope="row"><button class="linklike" data-edit-holding="${x.h.id}">${esc(x.h.symbol)}</button> <span class="muted small">${esc(x.h.name || '')}</span></th><td class="num ${x.er >= 0.5 ? 'neg' : ''}">${x.er.toFixed(Math.abs(x.er * 100 - Math.round(x.er * 100)) < 1e-9 ? 2 : 3)}%</td><td class="num">${money(x.fee, { cents: false })}</td></tr>`).join('')}</tbody></table>` : ''}
+    ${fa.top.length ? (() => {
+      const typed = x => x.h.er != null && x.h.er !== '';
+      const row = x => `<tr><th scope="row"><button class="linklike" data-edit-holding="${x.h.id}" title="Change this fund’s fee">${esc(x.h.symbol)}</button> <span class="muted small">${esc(x.h.name || '')}</span></th><td class="num ${x.er >= 0.5 ? 'neg' : ''}">${x.er.toFixed(Math.abs(x.er * 100 - Math.round(x.er * 100)) < 1e-9 ? 2 : 3)}% <span class="fee-src ${typed(x) ? 'typed' : ''}">${typed(x) ? 'typed' : 'list'}</span></td><td class="num">${money(x.fee, { cents: false })}</td></tr>`;
+      const head = '<thead><tr><th>Fund</th><th class="num">Expense ratio</th><th class="num">Per year</th></tr></thead>';
+      return `<table class="ledger compact" data-sort-id="fees">${head}<tbody>${fa.top.slice(0, 5).map(row).join('')}</tbody></table>
+        ${fa.top.length > 5 ? `<details class="fee-more"><summary>All ${fa.top.length} funds</summary><table class="ledger compact">${head}<tbody>${fa.top.slice(5).map(row).join('')}</tbody></table></details>` : ''}
+        <p class="muted small fee-note">“list” is the fee Ọrọ̀ has on file for that fund, a starting point since funds change their fees now and then; “typed” is yours. Ọrọ̀ doesn’t look fees up anywhere. To change one, click the fund and type the expense ratio from its page.</p>`;
+    })() : ''}
     ${notes.length ? `<p class="muted small">${esc(notes.join('; ').replace(/^./, c => c.toUpperCase()))}.</p>` : ''}
     ${fa.missing.length ? `<form class="fee-form" data-fee-form>
       <h3 class="fee-head">${fa.missing.length === 1 ? 'One fund needs' : `${fa.missing.length} funds need`} an expense ratio</h3>
@@ -7222,6 +7299,13 @@ function buildSlides(mk) {
         <button class="md-fig" data-drill="in|${mk}"><span>Came in</span><strong class="num">${sm(f.income)}</strong></button>
         <button class="md-fig" data-drill="out|${mk}"><span>Went out</span><strong class="num">${sm(f.spending)}</strong></button>
         <button class="md-fig" data-drill="kept|${mk}"><span>Kept</span><strong class="num ${signClass(f.net)}">${sm(f.net)}</strong></button></div></div>` });
+  const lastMk = Object.keys(state.reviews).filter(k => k < mk && (state.reviews[k]?.notes || '').trim()).sort().pop();
+  if (lastMk) {
+    const lines = state.reviews[lastMk].notes.split(/\n+/).map(x => x.replace(/^\s*[-•*]\s*/, '').trim()).filter(Boolean), done = state.reviews[lastMk].done || {};
+    slides.push({ title: 'Last time', kind: 'last', html: () => `<div class="slide-narrow"><h2 class="slide-h2">Last time we decided</h2>
+      <p class="slide-lede">From ${monthLabel(lastMk)}’s Money date. Tick what got done.</p>
+      <ul class="md-last">${lines.map((t, i) => `<li><label><input type="checkbox" data-md-done="${lastMk}:${i}" ${done[i] ? 'checked' : ''}><span>${esc(t)}</span></label></li>`).join('')}</ul></div>` });
+  }
   slides.push({ title: 'What matters', kind: 'matters', html: () => `<h2 class="slide-h2">What matters ${cur ? 'now' : `from ${M}`}</h2>${briefPanel(mk, { head: false, big: true, inert: true, max: 3 })}` });
   if (endNW != null) {
     const series = netWorthSeries().filter(p => p.x <= mk).slice(-13);
@@ -7273,6 +7357,13 @@ function buildSlides(mk) {
       <p class="slide-sign"><span class="wordmark">Ọrọ̀</span> · ${ORO_TAGLINE}</p></div>`; } });
   return slides;
 }
+/* A tick beside something decided last time is kept with that month's review. */
+document.addEventListener('change', e => {
+  const el = e.target.closest?.('[data-md-done]'); if (!el) return;
+  const [k, i] = el.dataset.mdDone.split(':'), r = state.reviews[k]; if (!r) return;
+  r.done = { ...(r.done || {}) }; if (el.checked) r.done[i] = true; else delete r.done[i];
+  commit({ silent: true });
+});
 function mdAction(a) {
   if (a === 'close') return endMoneyDate();
   if (a === 'full') { if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.().catch(() => {}); return; }

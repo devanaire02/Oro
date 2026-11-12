@@ -96,6 +96,7 @@ function render() {
   const keepY = fromField && UI.renderedPage === page && !document.body.classList.contains('page-held') ? Math.max(window.scrollY, changed ? UI.lastChange.y : 0) : 0;
   // Every device: the page drawn again because of a box you just changed: keep that box where it was on screen (keepPlace)
   const anchor = changed && UI.lastChange.sel && UI.renderedPage === page && !document.body.classList.contains('page-held') ? UI.lastChange : null;
+  const arrived = UI.renderedPage !== page;
   UI.renderedPage = page;
   for (const k in ChartSpecs) delete ChartSpecs[k];
   document.body.classList.toggle('simple', UI.mode === 'simple');
@@ -112,6 +113,8 @@ function render() {
   const kept = keep && patchAround($('#main'), html, keep, focusSel);
   if (!kept) $('#main').innerHTML = html;
   if (kept) focusSel = null;
+  // arriving on a page, its meters and rings fill once (not on every redraw after that, and not with Reduce Motion)
+  if (arrived && !reduceMotion()) { const m = $('#main'); m.classList.add('arrive'); clearTimeout(UI.arriveT); UI.arriveT = setTimeout(() => m.classList.remove('arrive'), 1100); }
   wrapTables($('#main'));
   decorateSortable($('#main'));   // headings you can click to sort (51-sort.js)
   if (UI.navCheckin !== (state.settings.checkin !== false)) buildShell();   // Check-in was turned on or off
@@ -395,11 +398,11 @@ function bar(actual, budget, opts = {}) {
 }
 /* Progress ring (inline SVG). */
 function ring(share, opts = {}) {
-  const s = opts.size || 64, w = opts.width || 7, r = (s - w) / 2, c = 2 * Math.PI * r, p = clamp(share, 0, 1);
+  const s = opts.size || 64, w = opts.width || 7, r = (s - w) / 2, p = clamp(share, 0, 1);
   const color = opts.color || (share > 1.0001 ? 'var(--neg)' : 'var(--ink-accent)');
   return `<svg class="ring" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" role="img" aria-label="${pct(share, 0)}">
     <circle cx="${s / 2}" cy="${s / 2}" r="${r}" fill="none" stroke="var(--rule)" stroke-width="${w}"/>
-    <circle cx="${s / 2}" cy="${s / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${w}" stroke-linecap="round" stroke-dasharray="${(c * p).toFixed(2)} ${c.toFixed(2)}" transform="rotate(-90 ${s / 2} ${s / 2})"/>
+    <circle class="ring-arc" cx="${s / 2}" cy="${s / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${w}" stroke-linecap="round" pathLength="100" stroke-dasharray="${(p * 100).toFixed(2)} 100" transform="rotate(-90 ${s / 2} ${s / 2})"/>
     ${opts.label != null ? `<text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" class="ring-label">${esc(opts.label)}</text>` : ''}</svg>`;
 }
 /* Sparkline (inline SVG). */

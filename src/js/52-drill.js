@@ -8,7 +8,8 @@ function drill({ title, sub, head, rows, total, href, hrefLabel, note, empty }) 
       <tbody>${shown.map(r => `<tr class="drill-row" data-edit-txn="${esc(r.t.id)}" tabindex="0"><td class="nowrap muted">${dateLabel(r.t.date)}</td><th scope="row">${esc(r.t.payee)}<span class="drill-meta muted small">${esc(r.categoryId ? catName(r.categoryId) : 'Uncategorized')}, ${esc(acctById(r.t.accountId)?.name || 'an account that was removed')}</span></th><td class="num ${r.amount < 0 ? 'drill-back' : ''}">${money(r.amount)}</td></tr>`).join('')}</tbody>
       <tfoot><tr><th colspan="2" scope="row">${rows.length > shown.length ? `The ${shown.length} largest of ${rows.length}. All ${rows.length} add up to` : `${rows.length === 1 ? 'One transaction' : `${rows.length} transactions`}, adding up to`}</th><td class="num total">${money(total)}</td></tr></tfoot></table></div>` : `<p class="muted">${empty || 'Nothing here yet.'}</p>`}
     ${note ? `<p class="muted small drill-note">${note}</p>` : ''}`;
-  openModal({ title, body, wide: true, id: 'drill', actions: `${href ? `<a class="btn" href="${href}" data-close>${hrefLabel || 'Open in Transactions'}</a>` : ''}<button class="btn primary" data-close>Done</button>` });
+  const wrap = openModal({ title, body, wide: true, id: 'drill', actions: `${href ? `<a class="btn" href="${href}" data-close>${hrefLabel || 'Open in Transactions'}</a>` : ''}<button class="btn primary" data-close>Done</button>` });
+  drawCharts(wrap);
 }
 /* The lines flowSummary counts as money in ('in') or as spending ('out'), each with what it adds to the figure. */
 function flowLines(txs, kind) {
@@ -25,7 +26,7 @@ const TRANSFER_NOTE = 'Card payments and moves between your own accounts are lef
 function drillFlow(kind, mk = thisMonth()) {
   if (kind === 'kept') return drillKept(mk);
   const txs = lensed(txInMonth(mk)), rows = flowLines(txs, kind), total = round2(sum(rows.map(r => r.amount))), M = monthLabel(mk);
-  drill({ title: kind === 'in' ? `Money in, ${M}` : `Spent in ${M}`, rows, total, href: `#/transactions?m=${mk}`,
+  drill({ title: kind === 'in' ? `Money in, ${M}` : `Spent in ${M}`, rows, total, href: `#/transactions?m=${mk}`, head: kind === 'out' && rows.length ? paceChart(mk, true, 170) : '',
     sub: kind === 'in' ? `Everything that came in${lensActive() ? ` for ${esc(lensLabel())}` : ''}: paychecks, rent, interest and anything else filed as money in.` : `Everything that went out${lensActive() ? ` for ${esc(lensLabel())}` : ''}. Money back shows with a minus and comes off the total.`,
     note: TRANSFER_NOTE, empty: kind === 'in' ? 'No money in recorded this month yet.' : 'No spending recorded this month yet.' });
 }
@@ -112,3 +113,32 @@ document.addEventListener('keydown', e => {
   const el = e.target;
   if (el?.matches?.('[data-drill]:not(button), tr.drill-row[tabindex]')) { e.preventDefault(); el.click(); }
 });
+
+/* ---------- the pace of a month's spending ----------
+   Spending added up day by day: this month so far, last month, and the usual (the three months before, averaged).
+   The same lines Spent counts (transfers left out, money back taken off). */
+function spendCumulative(mk, useLens) {
+  const txs = useLens ? lensed(txInMonth(mk)) : txInMonth(mk), dim = +monthEnd(mk).slice(8), day = new Array(dim + 1).fill(0);
+  for (const r of flowLines(txs, 'out')) day[+r.t.date.slice(8)] += r.amount;
+  const out = []; let run = 0;
+  for (let d = 1; d <= dim; d++) { run += day[d]; out.push(round2(run)); }
+  return out;
+}
+function spendPace(mk = thisMonth(), useLens = false) {
+  const cur = mk === thisMonth(), dim = +monthEnd(mk).slice(8), upto = cur ? new Date().getDate() : dim;
+  const at = (arr, d) => arr[Math.min(d, arr.length) - 1];   // a shorter month holds its last day's total
+  const prior = [1, 2, 3].map(i => addMonths(mk, -i)).filter(m => m >= firstTxMonth()).map(m => spendCumulative(m, useLens));
+  const days = Array.from({ length: dim }, (_, i) => i + 1);
+  return { dim, upto, days, now: spendCumulative(mk, useLens).slice(0, upto), last: prior[0] ? days.map(d => at(prior[0], d)) : [],
+    usual: prior.length ? days.map(d => round2(sum(prior.map(a => at(a, d))) / prior.length)) : [], months: prior.length };
+}
+function paceChart(mk = thisMonth(), useLens = false, h = 190) {
+  const P = spendPace(mk, useLens), M = MONTHS[+mk.slice(5) - 1], L = MONTHS[+addMonths(mk, -1).slice(5) - 1], sm = n => money(n, { cents: false });
+  if (!P.usual.length) return '';
+  const pts = arr => arr.map((y, i) => ({ x: i + 1, y }));
+  return chartHost({ h, padL: 52, label: `Spending day by day in ${M}, against ${L} and the usual`, xFmt: x => `${x}`,
+    series: [{ name: 'The usual', points: pts(P.usual), color: 'var(--muted-2)', dash: true, nodots: true }, { name: L, points: pts(P.last), color: 'var(--c3)', nodots: true }, { name: M, points: pts(P.now), color: 'var(--ink-accent)', area: true, nodots: true }],
+    tip: i => `<strong>${M} ${i + 1}</strong>${P.now[i] != null ? `<br><i class="tip-key" style="background:var(--ink-accent)"></i>${sm(P.now[i])} so far` : ''}<br><i class="tip-key" style="background:var(--muted-2)"></i>${sm(P.usual[i])} usual by now${P.last[i] != null ? `<br><i class="tip-key" style="background:var(--c3)"></i>${sm(P.last[i])} in ${L}` : ''}` }) +
+    `<p class="legend"><span><i style="background:var(--ink-accent)"></i>${M}</span><span><i style="background:var(--c3)"></i>${L}</span><span><i style="background:var(--muted-2)"></i>The usual (the ${P.months === 1 ? 'month' : `${P.months} months`} before, averaged)</span></p>`;
+}
+DRILLS.tx = id => txnModal(id);

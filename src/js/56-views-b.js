@@ -371,7 +371,14 @@ function feesPanel(fa) {
         : `<div><dt>All in</dt><dd class="num">${fa.allIn.toFixed(2)}%</dd><span class="muted small">Of what you have invested. <button class="linklike" data-act="advisory-help">Advisory fee?</button></span></div>`}
       <div><dt>Over 20 years</dt><dd class="num">${money(fa.drag, { cents: false })}</dd><span class="muted small">Growth lost at 6% a year${fa.advisory ? `, ${fa.allIn.toFixed(2)}% all in` : ''}</span></div>
     </dl>
-    ${fa.top.length ? `<table class="ledger compact" data-sort-id="fees"><thead><tr><th>Fund</th><th class="num">Expense ratio</th><th class="num">Per year</th></tr></thead><tbody>${fa.top.slice(0, 5).map(x => `<tr><th scope="row"><button class="linklike" data-edit-holding="${x.h.id}">${esc(x.h.symbol)}</button> <span class="muted small">${esc(x.h.name || '')}</span></th><td class="num ${x.er >= 0.5 ? 'neg' : ''}">${x.er.toFixed(Math.abs(x.er * 100 - Math.round(x.er * 100)) < 1e-9 ? 2 : 3)}%</td><td class="num">${money(x.fee, { cents: false })}</td></tr>`).join('')}</tbody></table>` : ''}
+    ${fa.top.length ? (() => {
+      const typed = x => x.h.er != null && x.h.er !== '';
+      const row = x => `<tr><th scope="row"><button class="linklike" data-edit-holding="${x.h.id}" title="Change this fund’s fee">${esc(x.h.symbol)}</button> <span class="muted small">${esc(x.h.name || '')}</span></th><td class="num ${x.er >= 0.5 ? 'neg' : ''}">${x.er.toFixed(Math.abs(x.er * 100 - Math.round(x.er * 100)) < 1e-9 ? 2 : 3)}% <span class="fee-src ${typed(x) ? 'typed' : ''}">${typed(x) ? 'typed' : 'list'}</span></td><td class="num">${money(x.fee, { cents: false })}</td></tr>`;
+      const head = '<thead><tr><th>Fund</th><th class="num">Expense ratio</th><th class="num">Per year</th></tr></thead>';
+      return `<table class="ledger compact" data-sort-id="fees">${head}<tbody>${fa.top.slice(0, 5).map(row).join('')}</tbody></table>
+        ${fa.top.length > 5 ? `<details class="fee-more"><summary>All ${fa.top.length} funds</summary><table class="ledger compact">${head}<tbody>${fa.top.slice(5).map(row).join('')}</tbody></table></details>` : ''}
+        <p class="muted small fee-note">“list” is the fee Ọrọ̀ has on file for that fund, a starting point since funds change their fees now and then; “typed” is yours. Ọrọ̀ doesn’t look fees up anywhere. To change one, click the fund and type the expense ratio from its page.</p>`;
+    })() : ''}
     ${notes.length ? `<p class="muted small">${esc(notes.join('; ').replace(/^./, c => c.toUpperCase()))}.</p>` : ''}
     ${fa.missing.length ? `<form class="fee-form" data-fee-form>
       <h3 class="fee-head">${fa.missing.length === 1 ? 'One fund needs' : `${fa.missing.length} funds need`} an expense ratio</h3>
