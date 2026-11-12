@@ -1359,9 +1359,12 @@ body.talk-open .main-wrap { margin-right: 390px; }
 .aftertax-est .tax-how { margin: 6px 0 4px; }
 .wi-person { border: 0; padding: 0; margin: 0; min-width: 0; }
 .wi-person legend { padding: 0; margin-bottom: 6px; font-weight: 600; }
+.whatif .form-grid, .taxdue .form-grid { align-items: start; }   /* labels line up even where a box has a line of help under it */
 .whatif-table, .taxdue-table, .stub-year, .stub-table { max-width: 720px; margin: 12px 0; }
 .whatif-table th, .taxdue-table th, .stub-year th, .stub-table th { font-weight: 400; }
 .whatif-table thead th, .taxdue-table thead th, .stub-year thead th, .stub-table thead th { font-weight: 500; }
+.whatif-table td.wraps, .taxdue-table tr.wraps td { white-space: normal; }   /* "$996 owed" may break after the amount on a narrow screen */
+.whatif-table .nowrap, .taxdue-table .nowrap { white-space: nowrap; }
 .whatif-says, .taxdue-says { margin: 4px 0 14px; }
 ul.whatif-says li, ul.taxdue-says li { padding: 4px 0 4px 12px; border-left: 3px solid var(--ok-bg); margin-bottom: 4px; }
 .stub-notes { margin: 0 0 12px; }
@@ -1428,4 +1431,14 @@ p.stub-from { margin: 0; }
   .stub-row .stub-what { grid-column: 1 / -1; }
   .stub-row.stub-cols { display: none; }
   .stub-fixed { padding-top: 2px; }
+  .whatif-table, .taxdue-table, .stub-year, .stub-table { font-size: 13px; }
+  .whatif-table th, .whatif-table td, .taxdue-table th, .taxdue-table td, .stub-year th, .stub-year td, .stub-table th, .stub-table td { padding: 6px 4px; }
+  .stub-year .indent, .stub-table .indent { padding-left: 12px !important; }
+}
+@media (max-width: 400px) {   /* a small iPhone: four columns of figures still fit without scrolling */
+  .whatif-table, .taxdue-table, .stub-year, .stub-table { font-size: 12px; }
+  .whatif-table th, .whatif-table td, .taxdue-table th, .taxdue-table td, .stub-year th, .stub-year td, .stub-table th, .stub-table td { padding: 6px 2px; }
+  .whatif-table .tag, .whatif-table th .small { display: none; }
+  .whatif-table thead th, .taxdue-table thead th, .stub-year thead th, .stub-table thead th { font-size: 11px; }
+  .stub-body { padding: 10px 6px; }
 }

@@ -15,7 +15,7 @@ function whatIfPanel(year) {
   if (!P.P.H.entered) return `<section class="panel whatif">${head}<p class="muted">Type each person’s pay above, or add a pay stub below. Then try a change here: more in the 401(k), an HSA, a bonus, more tax taken out.</p></section>`;
   const box = (who, f, label, plan, help = '') => `<label class="field"><span>${label}</span><input data-wi="${who}:${f}" data-year="${year}" inputmode="decimal" value="${who === 'h' ? W[f] ?? '' : W.people?.[who]?.[f] ?? ''}" placeholder="${f === 'kids' ? plan : sm(plan)}">${help ? `<small class="muted">${help}</small>` : ''}</label>`;
   const lumped = id => P.P.H.typed?.[id]?.health != null && P.P.H.typed?.[id]?.hsa == null && !P.P.H.stubs?.[id]?.health && P.people[id].health > 0;
-  const people = P.P.earners.map(e => { const p = P.people[e.id]; return `<fieldset class="wi-person"><legend>${esc(e.name)}</legend><div class="form-grid three">
+  const people = P.P.earners.map(e => { const p = P.people[e.id]; return `<fieldset class="wi-person"><legend>${esc(e.name)}</legend><div class="form-grid four">
       ${box(e.id, 'gross', 'Pay for the year', p.gross)}
       ${box(e.id, 'bonus', 'A bonus', 0, 'On top of that pay')}
       ${box(e.id, 'retire', '401(k), 403(b) or 457', p.retire)}
@@ -32,7 +32,7 @@ function whatIfPanel(year) {
       ${box('h', 'propertyTax', 'Property tax', P.house.propertyTax)}
       ${box('h', 'interest', 'Mortgage interest', P.house.interest)}
     </div>`;
-  const refund = r => (Math.abs(r) < 0.005 ? 'Even' : `${mFit(Math.abs(r))} ${r > 0 ? 'refund' : 'owed'}`);
+  const refund = r => (Math.abs(r) < 0.005 ? 'Even' : `<span class="nowrap">${mFit(Math.abs(r))}</span> ${r > 0 ? 'refund' : 'owed'}`);
   const cell = (row, v) => (row.rate ? pct(v, 1) : row.key === 'refund' ? refund(v) : mFit(v));
   const diff = row => {
     if (!R.changed || Math.abs(row.diff) < (row.rate ? 0.00005 : 0.005)) return '<span class="muted">—</span>';
@@ -43,7 +43,7 @@ function whatIfPanel(year) {
   const tone = row => { const b = better[row.key]; return !R.changed || !b || Math.abs(row.diff) < 0.005 ? '' : row.diff * b > 0 ? 'pos' : 'neg'; };
   const cls = { taxes: 'subtotal', refund: 'net', kept: 'net' };
   const table = `<table class="ledger compact sched whatif-table"><thead><tr><th scope="col">For ${year}</th><th class="num" scope="col">Your plan</th><th class="num" scope="col">What if</th><th class="num" scope="col">Difference</th></tr></thead><tbody>
-      ${R.rows.map(r => `<tr class="${cls[r.key] || ''}" data-wi-row="${r.key}"><th scope="row">${r.label}${r.key === 'withheld' ? ' <span class="muted small">income tax</span>' : ''}</th><td class="num">${cell(r, r.plan)}</td><td class="num">${cell(r, r.what)}</td><td class="num ${tone(r)}">${diff(r)}</td></tr>`).join('')}
+      ${R.rows.map(r => `<tr class="${cls[r.key] || ''}" data-wi-row="${r.key}"><th scope="row">${r.label}${r.key === 'withheld' ? ' <span class="muted small">income tax</span>' : ''}</th><td class="num${r.key === 'refund' ? ' wraps' : ''}">${cell(r, r.plan)}</td><td class="num${r.key === 'refund' ? ' wraps' : ''}">${cell(r, r.what)}</td><td class="num ${tone(r)}">${diff(r)}</td></tr>`).join('')}
     </tbody></table>`;
   const any = !!state.tax?.whatif?.[year];
   return `<section class="panel whatif">${head}
@@ -178,8 +178,8 @@ function taxDuePanel(year) {
   const D = taxDue(year), X = D.X, sm = n => money(n, { cents: false });
   const head = `<header class="panel-head"><h2>Likely tax bill or refund</h2><span class="muted small">${year} · the year’s tax against what’s taken out of pay</span></header>`;
   if (!X.H.entered) return `<section class="panel taxdue">${head}<p class="muted">Add a pay stub, or type each person’s pay at the top, and Ọrọ̀ sets the year’s income tax against what’s taken out of pay.</p></section>`;
-  const word = d => (Math.abs(d) < 0.005 ? 'Even' : d < 0 ? 'Refund' : 'Owed');
-  const kpi = (label, d, note) => `<div data-due="${label.toLowerCase()}"><dt>${label}</dt><dd class="num ${d < -0.004 ? 'pos' : d > 0.004 ? 'neg' : ''}">${word(d)}${Math.abs(d) < 0.005 ? '' : ` ${sm(Math.abs(d))}`}</dd><span class="muted small">${note}</span></div>`;
+  const word = d => (Math.abs(d) < 0.005 ? 'even' : d < 0 ? 'refund' : 'owed');
+  const kpi = (label, d, note) => `<div data-due="${label.toLowerCase()}"><dt>${label}: ${word(d)}</dt><dd class="num ${d < -0.004 ? 'pos' : d > 0.004 ? 'neg' : ''}">${sm(Math.abs(d))}</dd><span class="muted small">${note}</span></div>`;
   const src = k => (X.actual[k] != null ? 'actual' : 'estimate');
   const box = (attr, v, ph, label, help = '') => `<label class="field"><span>${label}</span><input ${attr} data-year="${year}" inputmode="decimal" value="${v ?? ''}" placeholder="${ph}">${help ? `<small class="muted">${help}</small>` : ''}</label>`;
   const stubs = X.H.stubs || {}, typed = X.H.typed || {};
@@ -196,7 +196,7 @@ function taxDuePanel(year) {
       ${kpi('Together', D.all, Math.abs(D.all) < 0.005 ? 'Right on the nose' : D.all < 0 ? 'Coming back to you' : 'Still to pay with your returns')}
     </dl>` : `<p class="callout">Type what’s taken out of each person’s pay below (or add a pay stub) to see whether it’s a refund or a bill. The year’s income tax comes to ${sm(D.federal.tax)} federal and ${sm(D.state.tax)} Illinois.</p>`;
   const row = (label, a, b, cls = '') => `<tr class="${cls}"><th scope="row">${label}</th><td class="num">${a}</td><td class="num">${b}</td></tr>`;
-  const due = d => (Math.abs(d) < 0.005 ? 'Even' : `${mFit(Math.abs(d))} ${d < 0 ? 'refund' : 'owed'}`);
+  const due = d => (Math.abs(d) < 0.005 ? 'Even' : `<span class="nowrap">${mFit(Math.abs(d))}</span> ${d < 0 ? 'refund' : 'owed'}`);
   const says = [];
   if (D.saved > 0 && D.keeps > 0) says.push(`Saving ${sm(D.saved)} before tax in the 401(k) and HSA keeps ${sm(D.keeps)} out of taxes this year.`);
   if (D.room && D.room.retire + D.room.hsa > 0) {
@@ -208,7 +208,7 @@ function taxDuePanel(year) {
       ${row(`Income tax for the year <span class="tag soft">${src('federal') === src('state') ? src('federal') : 'see above'}</span>`, mFit(D.federal.tax), mFit(D.state.tax), 'income-line')}
       ${row('Taken out of pay', mFit(-D.federal.withheld), mFit(-D.state.withheld))}
       ${D.federal.paid || D.state.paid ? row('Other payments you sent in', mFit(-D.federal.paid), mFit(-D.state.paid)) : ''}
-      ${row('Refund or owed', due(D.federal.due), due(D.state.due), 'net')}
+      ${row('Refund or owed', due(D.federal.due), due(D.state.due), 'net wraps')}
     </tbody></table>
     ${says.length ? `<ul class="plain taxdue-says">${says.map(s => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}
     <h3>What’s taken out, and other payments</h3>

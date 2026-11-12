@@ -156,7 +156,7 @@ function stubFreqGuess(regs) {
   const gaps = dates.slice(1).map((d, i) => daysBetween(dates[i], d)), g = Math.min(...gaps);
   const days = dates.map(d => +d.slice(8)), sameDay = days.every(d => d === days[0]) || dates.every(d => d === monthEnd(d.slice(0, 7)));
   if (g >= 6 && g <= 8) return 'weekly';
-  if (g >= 13 && g <= 17) return gaps.every(x => x % 14 <= 1 || x % 14 === 13) ? 'biweekly' : 'semimonthly';
+  if (g >= 13 && g <= 17) return gaps.filter(x => x % 14 === 0).length * 2 >= gaps.length ? 'biweekly' : 'semimonthly';   // every 2 weeks lands 14 days apart; twice a month mostly 15 or 16
   if (g >= 27 && g <= 32) return sameDay || g % 14 ? 'monthly' : 'biweekly';
   if (g % 14 === 0) return 'biweekly';
   if (g % 7 === 0) return 'weekly';
@@ -320,25 +320,26 @@ function taxDue(year) {
     const without = Object.fromEntries(people.map(p => [p.id, { ...E.H.people[p.id], retire: 0, health: round2((p.health || 0) - (p.hsa || 0)), hsa: 0 }]));
     keeps = round2(taxEstimate(year, { people: without, actual: none }).taxes - E.taxes);
   }
-  // room left: each person's 401(k) limit less what the year will reach; an HSA only for someone who has one (a couple
-  // filing together with family coverage shares one family limit)
+  // Room left under the limits: a 401(k) for someone already putting pay into one, and no more than the pay still to
+  // come this year; an HSA for someone who has one (a couple filing together with family coverage shares one family limit)
   let room = null;
   if (saveLimits(year) && year >= new Date().getFullYear()) {
-    const more = {}, list = [];
-    const hsaPeople = people.filter(p => (p.stub ? p.stub.projected['pre.hsa'] + p.stub.projected['er.hsa'] : p.hsa) > 0);
+    const L = saveLimits(year), more = {}, list = [];
+    const defer = p => (p.retire || 0) + (p.stub ? p.stub.projected['post.roth'] : 0), hsaHas = p => (p.hsa || 0) + (p.stub ? p.stub.projected['er.hsa'] : 0);
+    const hsaPeople = people.filter(p => hsaHas(p) > 0);
     const shared = E.status === 'mfj' && hsaPeople.length > 1 && hsaPeople.every(p => payInfo(p.id).hsa !== 'self');
-    let sharedLeft = shared ? Math.max(0, saveLimits(year).hsaFamily - sum(hsaPeople.map(p => (p.stub ? p.stub.projected['pre.hsa'] + p.stub.projected['er.hsa'] : p.hsa)))) : 0;
+    let sharedLeft = shared ? Math.max(0, L.hsaFamily - sum(hsaPeople.map(hsaHas))) : 0;
     for (const p of people) {
       if (!(p.gross > 0)) continue;
-      const defer = p.stub ? p.stub.projected['pre.retire'] + p.stub.projected['post.roth'] : p.retire || 0;
-      const r = Math.max(0, deferralLimit(year, p.age) - defer);
+      const Y = p.stub;
+      let r = defer(p) > 0 ? Math.max(0, deferralLimit(year, p.age) - defer(p)) : 0;
+      r = Math.min(r, Math.max(0, Y ? (Y.projected.gross - Y.sofar.gross) - (linesPart(Y.projected, 'pre') - linesPart(Y.sofar, 'pre')) : p.gross - (p.retire || 0) - (p.health || 0)));
       let h = 0;
       if (hsaPeople.includes(p)) {
-        const has = p.stub ? p.stub.projected['pre.hsa'] + p.stub.projected['er.hsa'] : p.hsa;
-        if (shared) { h = sharedLeft + (p.age != null && p.age >= 55 ? saveLimits(year).hsa55 : 0); sharedLeft = 0; }
-        else h = Math.max(0, hsaLimit(year, payInfo(p.id).hsa, p.age) - has);
+        if (shared) { h = sharedLeft + (p.age != null && p.age >= 55 ? L.hsa55 : 0); sharedLeft = 0; }
+        else h = Math.max(0, hsaLimit(year, payInfo(p.id).hsa, p.age) - hsaHas(p));
       }
-      const rr = round2(Math.min(r, Math.max(0, p.gross - (p.retire || 0) - (p.health || 0)))), hh = round2(h);
+      const rr = round2(r), hh = round2(h);
       more[p.id] = { ...E.H.people[p.id], retire: round2((p.retire || 0) + rr), health: round2((p.health || 0) + hh), hsa: round2((p.hsa || 0) + hh) };
       if (rr > 0 || hh > 0) list.push({ id: p.id, name: p.name, retire: rr, hsa: hh, ageKnown: p.age != null });
     }
