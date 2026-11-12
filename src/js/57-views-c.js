@@ -55,18 +55,21 @@ VIEWS.reports = p => {
     const per = ms.map(m => categoryActuals(lensed(txInMonth(m))));
     const cats = state.categories.filter(c => c.kind !== 'transfer' && per.some(a => a[c.id]));
     const inc = cats.filter(c => c.kind === 'income'), exp = groupBy(cats.filter(c => c.kind === 'expense'), c => c.group);
-    const hasUnc = per.some(a => a._none);
+    // Uncategorized money in counts as income and uncategorized purchases as spending, as on Overview and Cash flow
+    const uncIn = ms.map(m => round2(sum(lensed(txInMonth(m)).flatMap(txLines).filter(l => !l.categoryId && l.amount > 0).map(l => l.amount))));
+    const uncOut = ms.map((_, i) => round2((per[i]._none || 0) + uncIn[i]));
     const row = (label, vals, cls = '') => `<tr class="${cls}"><th scope="row">${label}</th>${vals.map(v => `<td class="num">${v ? money(v, { cents: false }) : '<span class="muted">—</span>'}</td>`).join('')}<td class="num total-col">${money(sum(vals), { cents: false })}</td></tr>`;
-    const incT = ms.map((_, i) => sum(inc.map(c => per[i][c.id] || 0)));
-    const expT = ms.map((_, i) => sum(cats.filter(c => c.kind === 'expense').map(c => per[i][c.id] || 0)) + (per[i]._none || 0));
+    const incT = ms.map((_, i) => sum(inc.map(c => per[i][c.id] || 0)) + uncIn[i]);
+    const expT = ms.map((_, i) => sum(cats.filter(c => c.kind === 'expense').map(c => per[i][c.id] || 0)) + uncOut[i]);
     return head + `<div class="toolbar"><button class="btn small" data-act="export-statement" data-from="${R.from}" data-to="${R.to}">Export CSV</button><span class="muted small">Showing ${ms.length} month${ms.length > 1 ? 's' : ''}. Transfers are left out.</span></div>
     <div class="scroll-table"><table class="ledger statement"><thead><tr><th>Category</th>${ms.map(m => `<th class="num">${monthLabel(m, true)}</th>`).join('')}<th class="num">Total</th></tr></thead><tbody>
       <tr class="sect"><th colspan="${ms.length + 2}">Income</th></tr>
       ${inc.map(c => row(`<span class="indent-in">${esc(c.name)}</span>`, ms.map((_, i) => per[i][c.id] || 0))).join('')}
+      ${uncIn.some(Boolean) ? row('<span class="indent-in">Uncategorized</span>', uncIn) : ''}
       ${row('Total income', incT, 'subtotal')}
       <tr class="sect"><th colspan="${ms.length + 2}">Spending</th></tr>
       ${Object.entries(exp).map(([g, cs]) => row(`<strong>${esc(g)}</strong>`, ms.map((_, i) => sum(cs.map(c => per[i][c.id] || 0))), 'grp') + cs.map(c => row(`<span class="indent-in">${esc(c.name)}</span>`, ms.map((_, i) => per[i][c.id] || 0), 'detail-only')).join('')).join('')}
-      ${hasUnc ? row('<strong>Uncategorized</strong>', ms.map((_, i) => per[i]._none || 0), 'grp') : ''}
+      ${uncOut.some(Boolean) ? row('<strong>Uncategorized</strong>', uncOut, 'grp') : ''}
       ${row('Total spending', expT, 'subtotal')}
       ${row('Net', ms.map((_, i) => incT[i] - expT[i]), 'net')}
       <tr class="rate"><th scope="row">Savings rate</th>${ms.map((_, i) => `<td class="num">${incT[i] ? pct((incT[i] - expT[i]) / incT[i], 0) : '—'}</td>`).join('')}<td class="num total-col">${sum(incT) ? pct((sum(incT) - sum(expT)) / sum(incT), 0) : '—'}</td></tr>
