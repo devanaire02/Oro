@@ -15,11 +15,26 @@ html = (src / "index.html").read_text()
 css = (src / "styles.css").read_text()
 js_files = sorted((src / "js").glob("*.js"))
 js = "\n".join(p.read_text() for p in js_files)
-BUILD = hashlib.sha256((js + css + html).encode()).hexdigest()[:7]   # shown in Settings, so you can tell which version a device runs
+def classic_script(mod, name, meta_urls, sets):
+    """PDF.js ships only as JavaScript modules, which Chrome won't load from file:// (the Mac's folder copy) and which can't
+    run from text the way Ọrọ̀ carries the reader inline. So each module becomes a plain script: wrapped in its own
+    function (nothing leaks into Ọrọ̀'s globals), its closing `export {…}` dropped (it already sets globalThis.pdfjsLib
+    or globalThis.pdfjsWorker, which Ọrọ̀ uses), and `import.meta.url`, which a plain script can't say, replaced with the
+    page's address (it's only used by code for Node.js and for image decoders Ọrọ̀ never loads). Every step is checked,
+    so a new PDF.js version that changes shape stops the build instead of breaking PDF imports."""
+    assert mod.count("import.meta.url") == meta_urls, f"{name}: import.meta.url {mod.count('import.meta.url')} times, expected {meta_urls}"
+    assert f"globalThis.{sets}=" in mod, f"{name}: doesn't set globalThis.{sets}"
+    tail = re.search(r"export\s*\{[^{}]*\};?\s*$", mod)
+    assert tail and len(re.findall(r"(?<![\w$.])export\s*\{", mod)) == 1, f"{name}: expected one export list, at the end"
+    assert not re.search(r"(?<![\w$.\"'`])import\s*[{*\"']|(?<![\w$.\"'`])import\s+[\w$]+\s+from", mod), f"{name}: has a static import"
+    body = mod[:tail.start()].replace("import.meta.url", "globalThis.location.href")
+    return f'(function(){{"use strict";\n{body}\n}})();\n'
+
+vend = root / "vendor" / "pdfjs"   # see vendor/pdfjs/VERSION.txt
+pdfjs = classic_script((vend / "pdf.min.mjs").read_text(), "pdf.min.mjs", 2, "pdfjsLib")
+worker = classic_script((vend / "pdf.worker.min.mjs").read_text(), "pdf.worker.min.mjs", 2, "pdfjsWorker")
+BUILD = hashlib.sha256((js + css + html + pdfjs + worker).encode()).hexdigest()[:7]   # shown in Settings, so you can tell which version a device runs
 js = js.replace("__BUILD__", BUILD)
-vend = root / "vendor" / "package" / "build"
-pdfjs = (vend / "pdf.min.js").read_text()
-worker = (vend / "pdf.worker.min.js").read_text()
 safe = lambda s: s.replace("</script", "<\\/script").replace("</SCRIPT", "<\\/SCRIPT")
 
 # Inline the theme fonts (assets/fonts) and the Ọ mark (assets/mark.svg, drawn by tools/make_icon.py): nothing is fetched at run time
@@ -89,14 +104,18 @@ page = (html.replace('content="default-src' + csp_mac + '"', 'content="default-s
             .replace("<!--__SCRIPTS__-->", f'<script src="app/{SLUG}.js"></script>'))
 assert csp_web in page
 (web / "index.html").write_text(page)
+# the privacy policy, linked from Settings › Appearance and privacy (src/privacy.html; same fonts and mark, nothing fetched)
+privacy = re.sub(r"__FONT_([a-z0-9-]+)__", font, (src / "privacy.html").read_text()).replace("__MARK_SVG__", mark)
+assert "__" + "FONT" not in privacy and "__MARK" not in privacy
+(web / "privacy.html").write_text(privacy)
 (web / "manifest.webmanifest").write_text(json.dumps({
     "name": NAME, "short_name": NAME, "description": "Ọrọ̀ is Yoruba for wealth. Know your wealth. Keep it close.",
     "start_url": "./", "scope": "./", "display": "standalone", "background_color": "#F6F3EA", "theme_color": "#0B5D3B",
     "icons": [{"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
               {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png"}]}, ensure_ascii=False, indent=1))
 files = ["./", "index.html", f"app/{SLUG}.css", f"app/{SLUG}.js", "app/vendor/pdf.min.js", "app/vendor/pdf.worker.min.js",
-         "manifest.webmanifest", "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png"]
-version = hashlib.sha256((page + css + js).encode()).hexdigest()[:12]
+         "privacy.html", "manifest.webmanifest", "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png"]
+version = hashlib.sha256((page + css + js + privacy).encode()).hexdigest()[:12]
 (web / "sw.js").write_text(f"""/* Ọrọ̀ offline cache: always tries the network first, so updates show up right away; falls back to the cached copy offline. */
 const CACHE = 'oro-{version}';
 const FILES = {json.dumps(files)};

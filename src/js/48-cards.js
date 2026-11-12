@@ -59,7 +59,7 @@ function cardsBlock(it, k = null) {
 function cardsChange(el, items) {
   const d = el.dataset;
   if (d.card != null) { const [k, l4] = d.card.includes('|') ? d.card.split('|') : [null, d.card]; const it = k == null ? IMP : items[+k]; (it.cardMap ||= {})[l4] = el.value; return true; }
-  if (d.cardsold != null) { const k = d.cardsold.replace('|', ''); const it = k === '' ? IMP : items[+k]; it.cardsOld = el.checked; return true; }
+  if (d.cardsold != null) { const k = d.cardsold.replaceAll('|', ''); const it = k === '' ? IMP : items[+k]; it.cardsOld = el.checked; return true; }
   return false;
 }
 /* How many existing transactions the import will mark */

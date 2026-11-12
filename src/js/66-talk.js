@@ -267,7 +267,7 @@ function txAction(actionRaw, targets, baseCat = null) {
   const t0 = targets[0];
   // the rule part: "and make a rule …", "always", "from now on"
   let ruleClause = null;
-  const rm = s.match(/(?:,?\s*(?:and|but|also|plus)\s+)*(?:also\s+)?(?:make|create|add|set up|save)\s+(?:a\s+|an?\s+)?(?:new\s+)?rules?\b(.*)$/) || s.match(/(?:,?\s*(?:and)\s+)?\b(?:always|from now on|every time|going forward)\b(.*)$/);
+  const rm = s.match(/(?:,?\s*\b(?:and|but|also|plus)\b)*\s*(?:also\s+)?(?:make|create|add|set up|save)\s+(?:an?\s+)?(?:new\s+)?rules?\b(.*)$/) || s.match(/(?:,?\s*(?:and)\s+)?\b(?:always|from now on|every time|going forward)\b(.*)$/);
   if (rm) { ruleClause = rm[1] || ''; s = s.slice(0, rm.index); raw = raw.slice(0, rm.index); }
   const note = raw.match(/\b(?:note|memo)\s*[:,]?\s*(.+)$/i);
   if (note) { out.set.memo = note[1].replace(/[.]+$/, '').trim(); s = s.slice(0, note.index); }

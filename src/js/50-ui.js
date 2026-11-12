@@ -292,7 +292,7 @@ function openModal({ title, body, actions, wide, id }) {
   closeModal(true);
   const wrap = document.createElement('div');
   wrap.className = 'modal-wrap'; wrap.id = 'modal';
-  wrap.innerHTML = `<div class="modal ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-labelledby="modal-title" ${id ? `data-id="${id}"` : ''}>
+  wrap.innerHTML = `<div class="modal ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-labelledby="modal-title" ${id ? `data-id="${esc(id)}"` : ''}>
       <header class="modal-head"><h2 id="modal-title">${esc(title)}</h2><button class="icon-btn" data-close aria-label="Close">×</button></header>
       <div class="modal-body">${body}</div>
       <footer class="modal-foot">${actions || ''}</footer></div>`;

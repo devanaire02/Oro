@@ -439,6 +439,7 @@ VIEWS.data = () => {
       <label class="field"><span>Warn when cash may dip below</span><input data-setting="lowCash" inputmode="decimal" value="${state.settings.lowCash}"></label>
       <label class="field"><span>Daily backups to keep</span><input data-setting="keepBackups" inputmode="numeric" value="${state.settings.keepBackups}"><small class="muted">Plus one per month for a year</small></label>
     </div>
+    <p class="small privacy-link"><a href="${ORO_WEB}privacy.html" target="_blank" rel="noopener">Privacy policy</a>: what Ọrọ̀ keeps, where, and what it sends to Plaid and Anthropic.</p>
   </section>
 
   ${checkinSettings()}

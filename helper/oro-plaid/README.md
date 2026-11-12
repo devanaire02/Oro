@@ -6,6 +6,7 @@
 - Your Plaid client ID and secret, and each bank connection, stay in the Mac's **Keychain** (service `oro-plaid`), read and written with macOS's own `security` tool. Nothing else is written to disk.
 - It keeps nothing about your transactions and logs only the time, the path asked for and the result code (`~/Library/Logs/oro-plaid.log`).
 - Plaid's sign-in window is Plaid's own hosted page, opened in a window of its own, so Plaid's code never runs inside Ọrọ̀.
+- **Touch ID guards every sign-in window.** Ọrọ̀ makes a passkey on this Mac once (Touch ID, or the Mac's password where there's no Touch ID) and the helper keeps only its public key. Connecting a bank, or signing in to one again, then needs a fresh Touch ID confirmation: the passkey signs a one-time challenge from the helper, and the helper checks the signature before asking Plaid for the window.
 - Python standard library only. It needs **Python 3.11 or newer** (Homebrew's: `brew install python`). macOS's own `python3` is 3.9, which no longer gets security fixes, so the helper won't start on it. `bash install.sh python` shows which Python it will use.
 
 ## Setting it up
@@ -27,7 +28,7 @@
    bash install.sh remove      # stop and remove it (Keychain entries stay)
    ```
 
-3. **In Ọrọ̀ on the Mac:** Settings › Bank connections › Look for the bank helper, then Pair, then Connect a bank. Chrome may ask once whether Ọrọ̀ may talk to apps on this Mac.
+3. **In Ọrọ̀ on the Mac:** Settings › Bank connections › Look for the bank helper, then Pair, then Set up Touch ID, then Connect a bank. Chrome may ask once whether Ọrọ̀ may talk to apps on this Mac.
 
 ## What Ọrọ̀ asks it
 
@@ -35,7 +36,9 @@
 |---|---|
 | `GET /status` | Running, which environment, whether the keys are in the Keychain and whether it's paired. |
 | `POST /pair` | Asks you in a Mac window, then gives Ọrọ̀ the helper key. |
-| `POST /link/start` | A sign-in window from Plaid (hosted link): a new connection, or update mode for one that needs signing in again. |
+| `POST /touchid/challenge` | A one-time challenge (two minutes) for setting up Touch ID or confirming with it. |
+| `POST /touchid/register` | Keeps the new passkey's public key (replacing one asks you first, in a Mac window). |
+| `POST /link/start` | Only with a fresh Touch ID confirmation: a sign-in window from Plaid (hosted link), for a new connection, or update mode for one that needs signing in again. |
 | `POST /link/finish` | Whether you've finished; the new connection (bank, accounts, last 4 digits). Its access token goes to the Keychain only. |
 | `POST /accounts` | Accounts and balances (Plaid's cached, free call). |
 | `POST /sync` | Transactions added, changed or removed since the saved position, posted only, with the sign flipped to the bank files' way (money out is minus). |

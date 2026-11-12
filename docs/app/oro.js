@@ -4,7 +4,7 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const escRe = s => String(s ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');   // text to match literally in a RegExp
-const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-5);
+const uid = () => Array.from(crypto.getRandomValues(new Uint8Array(7)), b => (b % 36).toString(36)).join('') + Date.now().toString(36).slice(-5);   // the browser's strong random numbers (also on file://)
 const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
 const sum = arr => arr.reduce((a, b) => a + (Number(b) || 0), 0);
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
@@ -2268,7 +2268,8 @@ function parseQIF(text) {
 }
 
 /* ---------- OFX / QFX / QBO ---------- */
-const ofxDecode = s => String(s || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").trim();
+const OFX_ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+const ofxDecode = s => String(s || '').replace(/&(amp|lt|gt|quot|apos);/g, (m, e) => OFX_ENT[e]).trim();   // one pass, so "&amp;lt;" stays "&lt;"
 function ofxTag(block, tag) { const m = block.match(new RegExp('<' + tag + '>([^<\\r\\n]*)', 'i')); return m ? ofxDecode(m[1]) : ''; }
 function ofxBlocks(text, tag) {
   const out = [], re = new RegExp('<' + tag + '>', 'ig'); let m; const starts = [];
@@ -3886,7 +3887,7 @@ function cardsBlock(it, k = null) {
 function cardsChange(el, items) {
   const d = el.dataset;
   if (d.card != null) { const [k, l4] = d.card.includes('|') ? d.card.split('|') : [null, d.card]; const it = k == null ? IMP : items[+k]; (it.cardMap ||= {})[l4] = el.value; return true; }
-  if (d.cardsold != null) { const k = d.cardsold.replace('|', ''); const it = k === '' ? IMP : items[+k]; it.cardsOld = el.checked; return true; }
+  if (d.cardsold != null) { const k = d.cardsold.replaceAll('|', ''); const it = k === '' ? IMP : items[+k]; it.cardsOld = el.checked; return true; }
   return false;
 }
 /* How many existing transactions the import will mark */
@@ -4340,7 +4341,7 @@ function openModal({ title, body, actions, wide, id }) {
   closeModal(true);
   const wrap = document.createElement('div');
   wrap.className = 'modal-wrap'; wrap.id = 'modal';
-  wrap.innerHTML = `<div class="modal ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-labelledby="modal-title" ${id ? `data-id="${id}"` : ''}>
+  wrap.innerHTML = `<div class="modal ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-labelledby="modal-title" ${id ? `data-id="${esc(id)}"` : ''}>
       <header class="modal-head"><h2 id="modal-title">${esc(title)}</h2><button class="icon-btn" data-close aria-label="Close">×</button></header>
       <div class="modal-body">${body}</div>
       <footer class="modal-foot">${actions || ''}</footer></div>`;
@@ -4412,7 +4413,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '55963e2';
+const ORO_BUILD = '197f43d';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -5995,6 +5996,7 @@ VIEWS.data = () => {
       <label class="field"><span>Warn when cash may dip below</span><input data-setting="lowCash" inputmode="decimal" value="${state.settings.lowCash}"></label>
       <label class="field"><span>Daily backups to keep</span><input data-setting="keepBackups" inputmode="numeric" value="${state.settings.keepBackups}"><small class="muted">Plus one per month for a year</small></label>
     </div>
+    <p class="small privacy-link"><a href="${ORO_WEB}privacy.html" target="_blank" rel="noopener">Privacy policy</a>: what Ọrọ̀ keeps, where, and what it sends to Plaid and Anthropic.</p>
   </section>
 
   ${checkinSettings()}
@@ -8376,7 +8378,7 @@ function ciCardHtml(item, q) {
       return body('Budgets to watch', `<ul class="meters ci-list">${item.list.map(({ c, v }) => `<li><div class="meter-row"><span>${esc(c.name)}</span><span class="num ${v.available < 0 ? 'neg' : ''}">${money(v.actual, { cents: false })} <span class="muted">of ${money(v.budget + (v.carry || 0), { cents: false })}</span></span></div>${bar(v.actual, v.budget + (v.carry || 0))}</li>`).join('')}</ul>`,
         '<button class="btn primary" data-ci="next">Got it</button><a class="btn" href="#/budget">Open Budget</a>');
     case 'due':
-      return body('Coming up', `<table class="ledger compact ci-list"><tbody>${item.list.slice(0, 8).map(u => `<tr><td class="nowrap muted">${esc(shortDay(u.date).replace(/^Today$/, 'Today'))}</td><td>${esc(u.name)}</td><td class="num ${signClass(u.amount)}">${money(u.amount)}</td></tr>`).join('')}</tbody></table>`,
+      return body('Coming up', `<table class="ledger compact ci-list"><tbody>${item.list.slice(0, 8).map(u => `<tr><td class="nowrap muted">${esc(shortDay(u.date))}</td><td>${esc(u.name)}</td><td class="num ${signClass(u.amount)}">${money(u.amount)}</td></tr>`).join('')}</tbody></table>`,
         '<button class="btn primary" data-ci="next">Got it</button><a class="btn" href="#/cashflow">Cash flow</a>');
     case 'older':
       return body(`${item.n} older transaction${item.n === 1 ? '' : 's'}`, `<p class="ci-meta">From before ${CI.w === 'day' ? 'today' : CI.w === 'week' ? 'this week' : 'this month'}, still uncategorized or flagged.</p>`, '<button class="btn primary" data-ci="older">Go through them too</button>');
@@ -9829,7 +9831,7 @@ function txAction(actionRaw, targets, baseCat = null) {
   const t0 = targets[0];
   // the rule part: "and make a rule …", "always", "from now on"
   let ruleClause = null;
-  const rm = s.match(/(?:,?\s*(?:and|but|also|plus)\s+)*(?:also\s+)?(?:make|create|add|set up|save)\s+(?:a\s+|an?\s+)?(?:new\s+)?rules?\b(.*)$/) || s.match(/(?:,?\s*(?:and)\s+)?\b(?:always|from now on|every time|going forward)\b(.*)$/);
+  const rm = s.match(/(?:,?\s*\b(?:and|but|also|plus)\b)*\s*(?:also\s+)?(?:make|create|add|set up|save)\s+(?:an?\s+)?(?:new\s+)?rules?\b(.*)$/) || s.match(/(?:,?\s*(?:and)\s+)?\b(?:always|from now on|every time|going forward)\b(.*)$/);
   if (rm) { ruleClause = rm[1] || ''; s = s.slice(0, rm.index); raw = raw.slice(0, rm.index); }
   const note = raw.match(/\b(?:note|memo)\s*[:,]?\s*(.+)$/i);
   if (note) { out.set.memo = note[1].replace(/[.]+$/, '').trim(); s = s.slice(0, note.index); }
@@ -11005,7 +11007,7 @@ document.addEventListener('DOMContentLoaded', () => setTimeout(aiRecLoad, 0));
    last, problem, accounts: { [plaid account id]: { to (Ọrọ̀ account id, or '' when not brought in), name, mask, type,
    subtype, from } } }] and state.banks.price (Plaid's monthly price per connection, as you typed it). No keys, no tokens.
    On this Mac only: the helper key (sealed with your passphrase, like the Claude key) and whether the helper was found. */
-const BANKS = { url: 'http://127.0.0.1:47321', key: null, keyPass: null, rec: undefined, status: null, checked: false, busy: '', review: null, waiting: null };
+const BANKS = { url: 'http://127.0.0.1:47321', key: null, keyPass: null, rec: undefined, status: null, checked: false, busy: '', review: null, waiting: null, ready: null };
 const BANKS_KEY_ID = 'banks.key';
 class BankError extends Error { constructor(code, msg) { super(msg); this.code = code; } }
 
@@ -11146,14 +11148,73 @@ function bankPair1to1(rows, existing, textOf = r => r.text, exText = t => `${t.r
   return out;
 }
 
+/* ---------- Touch ID before Plaid's window: a passkey on this Mac, checked by the helper ----------
+   Set up once (Settings › Bank connections): Chrome makes a passkey for Ọrọ̀ on this Mac and the helper keeps its public key.
+   Then every Plaid sign-in window (a new bank, or signing in again) needs Touch ID first: the passkey signs a one-time
+   challenge from the helper, and the helper won't ask Plaid for the window without it. */
+const b64u = b => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+function bankTouchError(e) {
+  if (e instanceof BankError) return e;
+  if (e?.name === 'NotAllowedError' || e?.name === 'AbortError') return new BankError('touch_cancel', 'Touch ID was cancelled, so nothing was opened.');
+  if (e?.name === 'SecurityError') return new BankError('touch_here', 'Touch ID works in the Ọrọ̀ app in your Dock, not in this copy.');
+  return new BankError('touch', 'Touch ID couldn’t be used just now. Try again.');
+}
+async function bankTouchSetup() {
+  if (!window.PublicKeyCredential || !navigator.credentials?.create) throw new BankError('touch_none', 'This browser can’t use Touch ID. Use the Ọrọ̀ app in your Dock.');
+  const c = await bankCall('/touchid/challenge', { purpose: 'register' });
+  let cred;
+  try {
+    cred = await navigator.credentials.create({ publicKey: {
+      rp: { id: c.rp_id, name: 'Ọrọ̀' }, user: { id: unb64u(c.user_id), name: 'Ọrọ̀ bank connections', displayName: 'Ọrọ̀ bank connections' },
+      challenge: unb64u(c.challenge), pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
+      hints: ['client-device'], attestation: 'none', timeout: 120000 } });
+  } catch (e) { throw bankTouchError(e); }
+  await bankCall('/touchid/register', { clientDataJSON: b64u(cred.response.clientDataJSON), authenticatorData: b64u(cred.response.getAuthenticatorData()) }, { timeout: 150000 });
+  if (BANKS.status) BANKS.status.touchid = true;
+}
+async function bankTouchConfirm() {
+  const c = await bankCall('/touchid/challenge', { purpose: 'confirm' });
+  let a;
+  try { a = await navigator.credentials.get({ publicKey: { challenge: unb64u(c.challenge), rpId: c.rp_id, allowCredentials: [{ type: 'public-key', id: unb64u(c.credential) }], userVerification: 'required', hints: ['client-device'], timeout: 120000 } }); }
+  catch (e) { throw bankTouchError(e); }
+  return { id: b64u(a.rawId), clientDataJSON: b64u(a.response.clientDataJSON), authenticatorData: b64u(a.response.authenticatorData), signature: b64u(a.response.signature) };
+}
+async function bankTouchSetupClick() {
+  if (BANKS.busy) return;
+  BANKS.busy = 'touch'; render();
+  try { await bankTouchSetup(); toast('Touch ID is set up. Ọrọ̀ asks for it each time you connect a bank or sign in to one again.'); }
+  catch (e) { toast(e.code === 'not_allowed' ? 'The passkey wasn’t replaced: the Mac’s window wasn’t allowed.' : e.message); }
+  BANKS.busy = ''; await bankCheck(true); render();
+}
+
 /* ---------- connecting a bank (Plaid's own window) ---------- */
 async function bankConnect(updateId) {
-  if (BANKS.waiting) return;
-  const w = window.open('about:blank', 'oro-plaid', 'width=460,height=760');   // opened at once so it isn't blocked; Plaid's page loads into it
+  if (BANKS.waiting || BANKS.busy) return;
+  BANKS.busy = 'touch'; BANKS.ready = null;
   let start;
-  try { start = await bankCall('/link/start', updateId ? { item_id: updateId } : {}); }
-  catch (e) { try { w?.close(); } catch (e2) { /* ignore */ } return toast(e.message); }
-  if (w && !w.closed) w.location.href = start.url; else window.open(start.url, '_blank');
+  try {
+    if (!BANKS.status?.ok) await bankCheck(true);
+    if (!BANKS.status?.touchid) await bankTouchSetup();
+    let touch;
+    try { touch = await bankTouchConfirm(); }
+    catch (e) { if (e.code !== 'touchid_setup') throw e; await bankTouchSetup(); touch = await bankTouchConfirm(); }   // the helper lost it (set up again): make a new one
+    start = await bankCall('/link/start', { ...(updateId ? { item_id: updateId } : {}), touchid: touch });
+  } catch (e) { BANKS.busy = ''; render(); return toast(e.message); }
+  BANKS.busy = ''; render();
+  const it = updateId && bankItems().find(i => i.id === updateId);
+  BANKS.ready = { start, updateId: updateId || '' };
+  // Plaid's window opens from this click: Chrome only lets a click open a window, and Touch ID used up the first one
+  openModal({ title: it ? `Sign in to ${it.inst} again` : 'Connect a bank', body: `<p>Touch ID confirmed. ${it ? `Open Plaid’s window to sign in to ${esc(it.inst)} again.` : 'Open Plaid’s window to choose your bank and sign in.'}</p>`,
+    actions: '<button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-bank="open-plaid">Open Plaid’s window</button>' });
+}
+async function bankOpenPlaid() {
+  const r = BANKS.ready; BANKS.ready = null;
+  if (!r || BANKS.waiting) return closeModal(true);
+  const start = r.start, updateId = r.updateId;
+  const w = window.open(start.url, 'oro-plaid', 'width=460,height=760');
+  if (!w) { BANKS.ready = r; return toast('Chrome blocked Plaid’s window. Allow pop-ups for Ọrọ̀, then click Open Plaid’s window again.'); }
   const it = updateId && bankItems().find(i => i.id === updateId);
   BANKS.waiting = { token: start.link_token, win: w, update: updateId || '', stop: false };
   openModal({ title: it ? `Sign in to ${it.inst} again` : 'Connect a bank', body: `<p>${it ? `Finish signing in to ${esc(it.inst)} in Plaid’s window.` : 'Choose your bank and sign in, in Plaid’s window. Fidelity, Capital One and Chase use their own sign-in pages inside it.'}</p>
@@ -11421,9 +11482,12 @@ function bankSettings() {
   else if (!st.keys) body = `<p class="notice">The helper is running, but Plaid’s keys aren’t in this Mac’s Keychain yet (the client ID and the ${esc(st.env)} secret).</p><div class="actions"><button class="btn" data-bank="check">Look again</button></div>`;
   else if (!st.paired || st.unpaired) body = `<p>The helper is running${st.env === 'sandbox' ? ' with Plaid’s Sandbox (test banks only)' : ''}. Pair it with Ọrọ̀ once: the Mac shows a window asking you to allow it.</p>
     <div class="actions"><button class="btn primary" data-bank="pair" ${BANKS.busy === 'pair' ? 'disabled' : ''}>${BANKS.busy === 'pair' ? 'Waiting for the Mac’s window…' : 'Pair with the helper'}</button></div>`;
+  else if (!st.touchid) body = `<p>One more step: turn on <strong>Touch ID</strong> for bank connections. Ọrọ̀ then asks for Touch ID each time you connect a bank or sign in to one again, so no one else can, even on this Mac.</p>
+    <div class="actions"><button class="btn primary" data-bank="touch-setup" ${BANKS.busy === 'touch' ? 'disabled' : ''}>${BANKS.busy === 'touch' ? 'Waiting for Touch ID…' : 'Set up Touch ID'}</button></div>
+    <p class="muted small">Chrome shows a passkey window: confirm with Touch ID (or your Mac’s password). Only the passkey’s public key goes to the bank helper.</p>`;
   else body = `${st.env === 'sandbox' ? '<p class="notice small">Plaid’s <strong>Sandbox</strong>: test banks only, free. Sign in with user_good and pass_good.</p>' : ''}
-    <div class="actions wrap"><button class="btn primary" data-bank="connect">Connect a bank</button>${bankLinked().length ? '<button class="btn" data-bank="pull">Get new transactions</button>' : ''}</div>
-    ${items.length ? '' : '<p class="muted small">Connecting the same bank twice means paying twice, so Ọrọ̀ uses Sign in again when a bank asks for it.</p>'}
+    <div class="actions wrap"><button class="btn primary" data-bank="connect" ${BANKS.busy === 'touch' ? 'disabled' : ''}>${BANKS.busy === 'touch' ? 'Waiting for Touch ID…' : 'Connect a bank'}</button>${bankLinked().length ? '<button class="btn" data-bank="pull">Get new transactions</button>' : ''}</div>
+    <p class="muted small">Connecting a bank, or signing in to one again, asks for Touch ID first.${items.length ? '' : ' Connecting the same bank twice means paying twice, so Ọrọ̀ uses Sign in again when a bank asks for it.'}</p>
     ${st.env === 'production' ? `<div class="form-grid"><label class="field"><span>Plaid’s monthly price per connection</span><input data-bankprice inputmode="decimal" value="${bankState().price ?? ''}" placeholder="From Plaid’s Dashboard"><small class="muted">${price && n ? `${n} connection${n === 1 ? '' : 's'}: about ${money(price * n)} a month` : 'Plaid bills each connected bank login every month while it stays connected.'}</small></label></div>` : ''}`;
   return `<section class="panel" id="bank-settings">${head(st?.ok ? (st.env === 'sandbox' ? 'Sandbox' : 'On this Mac') : 'Through Plaid')}${body}${list}</section>`;
 }
@@ -11436,6 +11500,8 @@ document.addEventListener('click', e => {
     case 'check': return bankCheck();
     case 'pair': return bankPair();
     case 'connect': return bankConnect();
+    case 'touch-setup': return bankTouchSetupClick();
+    case 'open-plaid': return bankOpenPlaid();
     case 'relogin': closeModal(true); return bankConnect(id);
     case 'cancel-wait': return bankCancelWait();
     case 'link': return bankLinkModal(id);

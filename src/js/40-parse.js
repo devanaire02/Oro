@@ -97,7 +97,8 @@ function parseQIF(text) {
 }
 
 /* ---------- OFX / QFX / QBO ---------- */
-const ofxDecode = s => String(s || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").trim();
+const OFX_ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+const ofxDecode = s => String(s || '').replace(/&(amp|lt|gt|quot|apos);/g, (m, e) => OFX_ENT[e]).trim();   // one pass, so "&amp;lt;" stays "&lt;"
 function ofxTag(block, tag) { const m = block.match(new RegExp('<' + tag + '>([^<\\r\\n]*)', 'i')); return m ? ofxDecode(m[1]) : ''; }
 function ofxBlocks(text, tag) {
   const out = [], re = new RegExp('<' + tag + '>', 'ig'); let m; const starts = [];

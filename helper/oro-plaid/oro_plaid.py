@@ -4,6 +4,8 @@
 Plaid needs a secret key that must never sit inside a web page, so Ọrọ̀ asks this helper and the helper asks Plaid.
 - It listens on 127.0.0.1 only, answers only Ọrọ̀'s own web address, and (except /status and /pair) only requests that
   carry the helper key. Pairing asks you first, in a Mac window.
+- Plaid's sign-in window (a new bank, or signing in again) opens only after Touch ID: a passkey made on this Mac signs a
+  one-time challenge, and the helper checks it (it keeps only the passkey's public key).
 - The Plaid client ID and secret, the helper key and each bank connection's access token live in the Mac's Keychain
   (service "oro-plaid"), read and written with macOS's own `security` tool. Nothing else is written to disk.
 - It keeps nothing about your transactions and logs only the time, the path asked for and the result code.
@@ -18,7 +20,7 @@ or install.sh here). Settings come from the environment:
   ORO_PLAID_PAIR     dialog (default) or auto (tests only; refused with the real service)
   ORO_PLAID_BASE     Plaid's address (tests point it at a stand-in)
 """
-import base64, hmac, json, os, secrets, subprocess, sys, threading, time, urllib.error, urllib.request
+import base64, hashlib, hmac, json, os, secrets, subprocess, sys, threading, time, urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MIN_PYTHON = (3, 11)   # older versions no longer get security fixes; install.sh picks one at least this new
@@ -34,6 +36,7 @@ SERVICE = os.environ.get('ORO_PLAID_SERVICE', KEYS)           # helper key, this
 PAIR = os.environ.get('ORO_PLAID_PAIR', 'dialog')
 ORIGINS = {'https://devanaire02.github.io'} | {o.strip() for o in os.environ.get('ORO_PLAID_ORIGINS', '').split(',') if o.strip()}
 BASE = os.environ.get('ORO_PLAID_BASE') or {'sandbox': 'https://sandbox.plaid.com', 'production': 'https://production.plaid.com'}[ENV]
+ALLOWED = {o: o for o in ORIGINS}   # sent back from here, never the request's own text
 HOSTS = {f'127.0.0.1:{PORT}', f'localhost:{PORT}'}
 if PAIR == 'auto' and SERVICE == 'oro-plaid': sys.exit('ORO_PLAID_PAIR=auto is for tests and needs a separate ORO_PLAID_SERVICE')
 
@@ -179,22 +182,167 @@ def institution_of(token):
     return {'institution_id': iid, 'name': name}
 
 
+# ---------- Touch ID before Plaid's sign-in window ----------
+# Ọrọ̀ makes a passkey on this Mac once (Touch ID, or the Mac's password where there's no Touch ID), and the helper
+# keeps only its public key. Every Plaid sign-in window (a new bank, or signing in again) then needs a fresh Touch ID
+# confirmation, signed by that passkey over a one-time challenge from this helper, so two factors stand between anyone
+# and a bank connection: this Mac (the helper answers nothing else) and you (Touch ID). Checked here, where the Plaid
+# secret is, with ES256 (ECDSA on the P-256 curve with SHA-256) worked out in plain Python below.
+_P = 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff
+_A, _B = _P - 3, 0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b
+_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551
+_G = (0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296, 0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5)
+
+def _on_curve(x, y): return 0 <= x < _P and 0 <= y < _P and (y * y - (x * x * x + _A * x + _B)) % _P == 0
+
+def _add(p, q):
+    if p is None: return q
+    if q is None: return p
+    if p[0] == q[0] and (p[1] + q[1]) % _P == 0: return None
+    lam = (3 * p[0] * p[0] + _A) * pow(2 * p[1], -1, _P) if p == q else (q[1] - p[1]) * pow(q[0] - p[0], -1, _P)
+    x = (lam * lam - p[0] - q[0]) % _P
+    return x, (lam * (p[0] - x) - p[1]) % _P
+
+def _mul(k, p):
+    out = None
+    while k:
+        if k & 1: out = _add(out, p)
+        p, k = _add(p, p), k >> 1
+    return out
+
+def _der_sig(d):
+    """An ECDSA signature as WebAuthn gives it (DER: SEQUENCE of two INTEGERs) -> (r, s)."""
+    if len(d) < 8 or d[0] != 0x30 or d[1] != len(d) - 2: raise ValueError('signature')
+    i, out = 2, []
+    for _ in range(2):
+        if d[i] != 0x02 or not d[i + 1] or i + 2 + d[i + 1] > len(d): raise ValueError('signature')
+        out.append(int.from_bytes(d[i + 2:i + 2 + d[i + 1]], 'big')); i += 2 + d[i + 1]
+    if i != len(d): raise ValueError('signature')
+    return out
+
+def es256_ok(x, y, msg, der):
+    try: r, s = _der_sig(der)
+    except (ValueError, IndexError): return False
+    if not (1 <= r < _N and 1 <= s < _N and _on_curve(x, y)): return False
+    w = pow(s, -1, _N)
+    pt = _add(_mul(int.from_bytes(hashlib.sha256(msg).digest(), 'big') * w % _N, _G), _mul(r * w % _N, (x, y)))
+    return pt is not None and pt[0] % _N == r
+
+def _cbor(b, i=0):
+    """Just enough CBOR to read a passkey's public key (a map of small integers and byte strings)."""
+    mt, ai = b[i] >> 5, b[i] & 31; i += 1
+    if ai < 24: v = ai
+    elif ai <= 27: n = 1 << (ai - 24); v = int.from_bytes(b[i:i + n], 'big'); i += n
+    else: raise ValueError('cbor')
+    if mt == 0: return v, i
+    if mt == 1: return -1 - v, i
+    if mt in (2, 3):
+        if i + v > len(b): raise ValueError('cbor')
+        return (b[i:i + v] if mt == 2 else b[i:i + v].decode()), i + v
+    if mt == 5:
+        m = {}
+        for _ in range(v): k, i = _cbor(b, i); m[k], i = _cbor(b, i)
+        return m, i
+    raise ValueError('cbor')
+
+def _b64u(b): return base64.urlsafe_b64encode(b).rstrip(b'=').decode()
+def _unb64u(s):
+    if not isinstance(s, str) or len(s) > 4096: raise ValueError('base64')
+    return base64.urlsafe_b64decode(s + '=' * (-len(s) % 4))
+
+CHALLENGES = {}       # one-time Touch ID challenges (challenge -> (expires, purpose)); in memory only
+def no_touch(): return Problem('touchid', 'Touch ID didn’t confirm it’s you, so Plaid’s window wasn’t opened. Try again.', 403)
+
+def rp_of(origin): return urllib.parse.urlsplit(origin).hostname or ''
+
+def touch_rec():
+    try: return json.loads(base64.b64decode(kc_get('touchid') or '').decode() or 'null')
+    except ValueError: return None
+
+def touch_save(rec): kc_set('touchid', base64.b64encode(json.dumps(rec, separators=(',', ':')).encode()).decode(), 'Ọrọ̀ Touch ID passkey (public key only)')
+
+def _take_challenge(cdj, kind, origin, purpose):
+    """The browser's own record of what it signed: the right kind, Ọrọ̀'s web address, and a challenge this helper gave
+    out for this purpose in the last two minutes, used once."""
+    c = json.loads(cdj)
+    ch = c.get('challenge') if isinstance(c, dict) else None
+    with LOCK: issued = CHALLENGES.pop(ch, None) if isinstance(ch, str) else None
+    if not issued or issued[0] < time.time() or issued[1] != purpose or c.get('type') != kind or c.get('origin') != origin: raise no_touch()
+
+def _auth_data(ad, origin):
+    """Signed by the passkey: made for Ọrọ̀'s web address, with you there (user present) and confirmed (Touch ID)."""
+    if len(ad) < 37 or ad[:32] != hashlib.sha256(rp_of(origin).encode()).digest() or (ad[32] & 0x05) != 0x05: raise no_touch()
+    return ad[32], int.from_bytes(ad[33:37], 'big')
+
+def r_touch_challenge(req):
+    purpose = req.get('purpose')
+    if purpose not in ('register', 'confirm'): raise Problem('bad_request', 'Which Touch ID step?')
+    rec = touch_rec()
+    if purpose == 'confirm' and not rec: raise Problem('touchid_setup', 'Set up Touch ID for bank connections first.', 403)
+    ch = _b64u(secrets.token_bytes(32))
+    with LOCK:
+        now = time.time()
+        for k in [k for k, v in CHALLENGES.items() if v[0] < now]: del CHALLENGES[k]
+        if len(CHALLENGES) > 50: raise Problem('busy', 'Too many Touch ID requests at once. Wait a minute and try again.', 429)
+        CHALLENGES[ch] = (now + 120, purpose)
+    out = {'challenge': ch, 'rp_id': rp_of(req['_origin'])}
+    if purpose == 'register': out['user_id'] = _b64u(secrets.token_bytes(16))
+    else: out['credential'] = rec['id']
+    return out
+
+def r_touch_register(req):
+    origin = req['_origin']
+    try:
+        _take_challenge(_unb64u(req.get('clientDataJSON')), 'webauthn.create', origin, 'register')
+        ad = _unb64u(req.get('authenticatorData'))
+        flags, count = _auth_data(ad, origin)
+        if not flags & 0x40 or len(ad) < 55: raise no_touch()                     # it carries the new passkey
+        n = int.from_bytes(ad[53:55], 'big'); cred = ad[55:55 + n]
+        key, _ = _cbor(ad, 55 + n)
+        x, y = key.get(-2), key.get(-3)
+        if not cred or key.get(1) != 2 or key.get(3) != -7 or key.get(-1) != 1 or not (isinstance(x, bytes) and isinstance(y, bytes) and len(x) == len(y) == 32): raise no_touch()
+        x, y = int.from_bytes(x, 'big'), int.from_bytes(y, 'big')
+        if not _on_curve(x, y): raise no_touch()
+    except (ValueError, IndexError, KeyError, TypeError, AttributeError): raise no_touch()
+    if touch_rec() and not ask('Ọrọ̀ wants to replace the Touch ID passkey that protects your bank connections on this Mac. Allow it only if you just chose Set up Touch ID in Ọrọ̀.', 'Replace'):
+        raise Problem('not_allowed', 'The Touch ID passkey wasn’t replaced.', 403)
+    touch_save({'id': _b64u(cred), 'x': f'{x:064x}', 'y': f'{y:064x}', 'rp': rp_of(origin), 'count': count, 'added': time.strftime('%Y-%m-%d')})
+    return {'touchid': True}
+
+def touch_confirm(req):
+    """Plaid's window opens only after this: a fresh Touch ID confirmation from the passkey made on this Mac."""
+    rec, a, origin = touch_rec(), req.get('touchid'), req['_origin']
+    if not rec: raise Problem('touchid_setup', 'Set up Touch ID for bank connections first.', 403)
+    if not isinstance(a, dict) or a.get('id') != rec['id'] or rec.get('rp') != rp_of(origin): raise no_touch()
+    try:
+        cdj, ad, sig = _unb64u(a.get('clientDataJSON')), _unb64u(a.get('authenticatorData')), _unb64u(a.get('signature'))
+        _take_challenge(cdj, 'webauthn.get', origin, 'confirm')
+        _, count = _auth_data(ad, origin)
+    except (ValueError, TypeError, AttributeError): raise no_touch()
+    if not es256_ok(int(rec['x'], 16), int(rec['y'], 16), ad + hashlib.sha256(cdj).digest(), sig): raise no_touch()
+    if (count or rec.get('count')) and count <= rec.get('count', 0): raise no_touch()   # a copied passkey (its counter went back)
+    if count: rec['count'] = count; touch_save(rec)
+
+
 # ---------- what Ọrọ̀ can ask ----------
 LINKS = {}            # link tokens this helper made (link_token -> {update, done}); in memory only
 LOCK = threading.Lock()
 
 def r_status(_):
     return {'ok': True, 'helper': 'oro-plaid', 'version': VERSION, 'env': ENV,
-            'keys': kc_has('client-id', KEYS) and kc_has(f'{ENV}-secret', KEYS), 'paired': kc_has('helper-key')}
+            'keys': kc_has('client-id', KEYS) and kc_has(f'{ENV}-secret', KEYS), 'paired': kc_has('helper-key'), 'touchid': kc_has('touchid')}
+
+def ask(msg, yes='Allow'):
+    """A yes-or-no question in a Mac window (tests: ORO_PLAID_PAIR=auto answers yes)."""
+    if PAIR == 'auto': return True
+    script = f'display dialog "{msg}" buttons {{"Don’t Allow", "{yes}"}} default button "{yes}" cancel button "Don’t Allow" with title "Ọrọ̀ bank helper" giving up after 120'
+    try: r = subprocess.run(['/usr/bin/osascript', '-e', script], capture_output=True, text=True, timeout=130)
+    except subprocess.TimeoutExpired: return False
+    return f'button returned:{yes}' in (r.stdout or '') and 'gave up:true' not in (r.stdout or '')
 
 def r_pair(_):
-    if PAIR != 'auto':
-        msg = 'Ọrọ̀ (devanaire02.github.io) wants to use the bank helper on this Mac to bring in your bank transactions through Plaid.'
-        script = f'display dialog "{msg}" buttons {{"Don’t Allow", "Allow"}} default button "Allow" cancel button "Don’t Allow" with title "Ọrọ̀ bank helper" giving up after 120'
-        try: r = subprocess.run(['/usr/bin/osascript', '-e', script], capture_output=True, text=True, timeout=130)
-        except subprocess.TimeoutExpired: r = None
-        if not r or 'button returned:Allow' not in (r.stdout or '') or 'gave up:true' in (r.stdout or ''):
-            raise Problem('not_allowed', 'The helper wasn’t allowed on this Mac.', 403)
+    if not ask('Ọrọ̀ (devanaire02.github.io) wants to use the bank helper on this Mac to bring in your bank transactions through Plaid.'):
+        raise Problem('not_allowed', 'The helper wasn’t allowed on this Mac.', 403)
     return {'key': helper_key()}
 
 def link_body(update_token=None):
@@ -204,6 +352,7 @@ def link_body(update_token=None):
     return b
 
 def r_link_start(req):
+    touch_confirm(req)
     upd = req.get('item_id')
     r = plaid('/link/token/create', link_body(access_token(upd) if upd else None))
     with LOCK: LINKS[r['link_token']] = {'update': upd or '', 'done': None, 'at': time.time()}
@@ -274,7 +423,7 @@ def r_sb_reset(req):
     plaid('/sandbox/item/reset_login', {'access_token': access_token(req.get('item_id'))})
     return {'reset': True}
 
-ROUTES = {'/pair': (r_pair, False), '/link/start': (r_link_start, True), '/link/finish': (r_link_finish, True), '/accounts': (r_accounts, True),
+ROUTES = {'/pair': (r_pair, False), '/touchid/challenge': (r_touch_challenge, True), '/touchid/register': (r_touch_register, True), '/link/start': (r_link_start, True), '/link/finish': (r_link_finish, True), '/accounts': (r_accounts, True),
           '/sync': (r_sync, True), '/remove': (r_remove, True), '/items': (r_items, True)}
 if ENV == 'sandbox':
     ROUTES.update({'/sandbox/connect': (r_sb_connect, True), '/sandbox/add': (r_sb_add, True), '/sandbox/reset_login': (r_sb_reset, True)})
@@ -295,8 +444,8 @@ class Handler(BaseHTTPRequestHandler):
     def _send(self, status, obj):
         data = json.dumps(obj).encode()
         self.send_response(status)
-        if self.headers.get('Origin', '') in ORIGINS:
-            self.send_header('Access-Control-Allow-Origin', self.headers['Origin']); self.send_header('Vary', 'Origin')
+        if self.headers.get('Origin', '') in ALLOWED:
+            self.send_header('Access-Control-Allow-Origin', ALLOWED[self.headers['Origin']]); self.send_header('Vary', 'Origin')
         self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-store')
         self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data)
         self._log(status)
@@ -304,7 +453,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         if not self._allowed(): self.send_response(403); self.end_headers(); return self._log(403)
         self.send_response(204)
-        self.send_header('Access-Control-Allow-Origin', self.headers['Origin']); self.send_header('Vary', 'Origin')
+        self.send_header('Access-Control-Allow-Origin', ALLOWED[self.headers['Origin']]); self.send_header('Vary', 'Origin')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST'); self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Oro-Key')
         self.send_header('Access-Control-Allow-Private-Network', 'true')   # Chrome's question about pages talking to this Mac
         self.send_header('Access-Control-Max-Age', '600'); self.end_headers(); self._log(204)
@@ -325,6 +474,7 @@ class Handler(BaseHTTPRequestHandler):
             if n > 65536: raise Problem('too_big', 'That request is too large.', 413)
             req = json.loads(self.rfile.read(n) or b'{}') if n else {}
             if not isinstance(req, dict): raise Problem('bad_request', 'That request isn’t understood.')
+            req['_origin'] = self.headers.get('Origin', '')   # who's asking (already checked to be Ọrọ̀'s web address), for Touch ID
             if keyed:
                 k = kc_get('helper-key')
                 if not k or not hmac.compare_digest(k, self.headers.get('X-Oro-Key', '')): raise Problem('not_paired', 'Ọrọ̀ isn’t paired with the helper on this Mac.', 401)

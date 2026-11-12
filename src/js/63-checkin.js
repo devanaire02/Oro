@@ -441,7 +441,7 @@ function ciCardHtml(item, q) {
       return body('Budgets to watch', `<ul class="meters ci-list">${item.list.map(({ c, v }) => `<li><div class="meter-row"><span>${esc(c.name)}</span><span class="num ${v.available < 0 ? 'neg' : ''}">${money(v.actual, { cents: false })} <span class="muted">of ${money(v.budget + (v.carry || 0), { cents: false })}</span></span></div>${bar(v.actual, v.budget + (v.carry || 0))}</li>`).join('')}</ul>`,
         '<button class="btn primary" data-ci="next">Got it</button><a class="btn" href="#/budget">Open Budget</a>');
     case 'due':
-      return body('Coming up', `<table class="ledger compact ci-list"><tbody>${item.list.slice(0, 8).map(u => `<tr><td class="nowrap muted">${esc(shortDay(u.date).replace(/^Today$/, 'Today'))}</td><td>${esc(u.name)}</td><td class="num ${signClass(u.amount)}">${money(u.amount)}</td></tr>`).join('')}</tbody></table>`,
+      return body('Coming up', `<table class="ledger compact ci-list"><tbody>${item.list.slice(0, 8).map(u => `<tr><td class="nowrap muted">${esc(shortDay(u.date))}</td><td>${esc(u.name)}</td><td class="num ${signClass(u.amount)}">${money(u.amount)}</td></tr>`).join('')}</tbody></table>`,
         '<button class="btn primary" data-ci="next">Got it</button><a class="btn" href="#/cashflow">Cash flow</a>');
     case 'older':
       return body(`${item.n} older transaction${item.n === 1 ? '' : 's'}`, `<p class="ci-meta">From before ${CI.w === 'day' ? 'today' : CI.w === 'week' ? 'this week' : 'this month'}, still uncategorized or flagged.</p>`, '<button class="btn primary" data-ci="older">Go through them too</button>');

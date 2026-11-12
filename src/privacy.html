@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'; base-uri 'none'">
+<meta name="robots" content="noindex, nofollow">
+<title>Ọrọ̀ privacy policy</title>
+<style>
+@font-face { font-family: "Oro Serif"; src: url(__FONT_charis-sil-latin-700-normal__) format("woff2"); font-weight: 600 700; font-display: swap; }
+@font-face { font-family: "Oro Sans"; src: url(__FONT_instrument-sans-latin-wght-normal__) format("woff2"); font-weight: 400 700; font-display: swap; }
+:root { --pad: #F6F3EA; --sheet: #FFFEFA; --rule: #E3DDCC; --ink: #15211B; --muted: #5B675F; --accent: #0B5D3B; --brass: #B8893A; color-scheme: light dark; }
+@media (prefers-color-scheme: dark) { :root { --pad: #0C1713; --sheet: #13221B; --rule: #22362C; --ink: #EDE8DA; --muted: #9AA79E; --accent: #7CC7A3; --brass: #D1AE66; } }
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--pad); color: var(--ink); font: 17px/1.6 "Oro Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 42rem; margin: 0 auto; padding: max(28px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(48px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); }
+header { display: flex; align-items: center; gap: 12px; padding-bottom: 18px; border-bottom: 3px solid var(--brass); margin-bottom: 8px; }
+header img { width: 40px; height: 40px; }
+h1, h2 { font-family: "Oro Serif", "Iowan Old Style", Charter, Georgia, serif; font-weight: 700; line-height: 1.25; }
+h1 { font-size: 1.75rem; margin: 0; }
+h2 { font-size: 1.15rem; margin: 1.8em 0 .3em; }
+p { margin: .5em 0 1em; }
+.lead { font-size: 1.05rem; }
+.muted { color: var(--muted); font-size: .9rem; }
+a { color: var(--accent); text-underline-offset: 2px; overflow-wrap: anywhere; }
+footer { margin-top: 2.5em; padding-top: 1em; border-top: 1px solid var(--rule); }
+</style>
+</head>
+<body>
+<main>
+<header><img src="__MARK_SVG__" alt=""><h1>Ọrọ̀ privacy policy</h1></header>
+<p class="muted">Last updated November 12, 2026</p>
+
+<p class="lead">Ọrọ̀ is a personal finance app that runs in your browser and keeps your data on your own devices. Its maker never receives your data. There’s no Ọrọ̀ account, server, analytics, advertising or tracking, and nothing about you is sold or shared.</p>
+
+<h2>Where your data lives</h2>
+<p>On your device and in the folder you choose, such as iCloud Drive. With a passphrase on, Ọrọ̀ encrypts your data (AES-256) before saving it. If you use iCloud Drive, Apple stores that encrypted copy. This website only delivers the app; GitHub, which hosts it, may keep visit logs under its own privacy statement.</p>
+
+<h2>Bank connections (optional, Mac only)</h2>
+<p>Ọrọ̀ uses Plaid Inc. to connect to your bank. You sign in to your bank in Plaid’s own window, so Ọrọ̀ never sees your bank password. With your consent, Plaid gives Ọrọ̀ your account names, the last 4 digits of account numbers, balances and transactions, which Ọrọ̀ saves in your encrypted data. Plaid’s handling of your data is covered by the <a href="https://plaid.com/legal/#end-user-privacy-policy">Plaid End User Privacy Policy</a>. Disconnect a bank at any time in Settings › Bank connections, which ends Ọrọ̀’s access through Plaid. You can see and delete what Plaid holds at <a href="https://my.plaid.com">my.plaid.com</a>.</p>
+
+<h2>Claude help (optional, off by default)</h2>
+<p>If you turn it on with your own Anthropic API key, Ọrọ̀ sends Anthropic your question and the transactions it’s about, without account names or numbers, balances or notes. <a href="https://www.anthropic.com/legal/privacy">Anthropic’s privacy policy</a> applies. Ọrọ̀ forgets the conversation after 20 minutes or when it locks.</p>
+
+<h2>Keeping and deleting</h2>
+<p>Your data stays until you delete it. Backups are kept daily for 30 days and monthly for 12 months. Delete anything in the app, or delete the Ọrọ̀ folder to remove everything.</p>
+
+<h2>Security</h2>
+<p>Your data is encrypted with your passphrase, which Ọrọ̀ can’t recover if it’s lost. Bank connection keys stay in your Mac’s Keychain, and connecting a bank needs Touch ID on your Mac.</p>
+
+<h2>Children</h2>
+<p>Ọrọ̀ isn’t meant for children under 13.</p>
+
+<h2>Changes</h2>
+<p>Any change to this policy is posted here with a new date.</p>
+
+<h2>Contact</h2>
+<p>Questions about this policy: <a href="https://github.com/devanaire02/Oro">github.com/devanaire02/Oro</a></p>
+
+<footer><a href="./">Open Ọrọ̀</a></footer>
+</main>
+</body>
+</html>
