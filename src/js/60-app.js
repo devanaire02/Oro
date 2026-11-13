@@ -29,6 +29,7 @@ const ACTIONS = {
   'tx-select': () => { UI.txSelect = !UI.txSelect; if (!UI.txSelect) txSel().clear(); render(); },
   'more-money-date': () => { closeModal(true); ACTIONS['money-date'](); },
   'money-date': el => startMoneyDate(el?.dataset.mk),
+  'our-year': el => startYearDate(el?.dataset?.year),
   'privacy': () => { state.settings.privacy = !state.settings.privacy; commit({ silent: true }); render(); },
   'print': () => window.print(),
   'sync': () => syncSheet(),

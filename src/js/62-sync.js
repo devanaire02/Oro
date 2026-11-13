@@ -71,6 +71,7 @@ function diffInto(ops, b, c, path) {
 
 function opLabel(o, target) {
   if (o.path[0] === 'settings' && (o.path[1] === 'checkinQuiet' || o.k === 'checkinQuiet')) return 'check-in: a bill or charge you set aside';
+  if (o.path[0] === 'reviews' && /^y\d{4}$/.test(o.path[1] || o.k || '')) return `Our year ${(o.path[1] || o.k).slice(1)}: what you wrote down`;
   if (o.path[0] === 'tax' && o.path[1] === 'whatif') return `taxes: What if… for ${o.path[2] || 'the year'}`;
   if (o.path[0] === 'tax' && o.path[1] === 'payInfo') return 'taxes: how often someone is paid, a birth year or what an HSA covers';
   const v = o.v || (o.op === 'del' ? null : undefined);

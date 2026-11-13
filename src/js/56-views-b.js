@@ -231,7 +231,7 @@ VIEWS.review = p => {
   const cmp = (now, then) => then ? `<span class="small ${signClass(now - then)}">${money(now - then, { cents: false, sign: true })}</span>` : '';
 
   return pageHead(`${monthLabel(mk)} review`, rv.completedAt ? `Reviewed ${dateLabel(rv.completedAt, true)}` : 'Not reviewed yet',
-    `<label class="field inline"><span class="sr">Month</span><select data-filter="m">${months.map(m => `<option value="${m}" ${m === mk ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}</select></label><button class="btn" data-act="money-date" data-mk="${mk}">Present as Money date</button><button class="btn ghost" data-act="print">Print</button>`) + `
+    `<label class="field inline"><span class="sr">Month</span><select data-filter="m">${months.map(m => `<option value="${m}" ${m === mk ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}</select></label><button class="btn" data-act="money-date" data-mk="${mk}">Present as Money date</button><button class="btn" data-act="our-year" data-year="${mk.slice(0, 4)}">Our year</button><button class="btn ghost" data-act="print">Print</button>`) + `
   <section class="flows"><table class="ledger flows-table">
     <thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num${pay ? ' hide-sm' : ''}">Left over</th>${pay ? '<th class="num hide-sm">Saved through pay</th><th class="num">Kept</th>' : ''}<th class="num">Savings rate</th></tr></thead>
     <tbody>

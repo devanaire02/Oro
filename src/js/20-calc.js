@@ -357,6 +357,8 @@ function attentionItems() {
   if (behind.length) items.push({ tone: 'warn', k: 'off', text: `${behind.length} goal${behind.length > 1 ? 's are' : ' is'} behind pace: ${behind.map(g => g.name).slice(0, 2).join(', ')}`, go: '#/planning' });
   const lm = addMonths(mk, -1);
   if (state.transactions.some(t => t.date.startsWith(lm)) && !state.reviews[lm]?.completedAt) items.push({ tone: 'warn', text: `${MONTHS[+lm.slice(5) - 1]} hasn’t been reviewed yet`, go: `#/review?m=${lm}` });
+  // each January: the year just ended, to look back over together
+  if (mk.endsWith('-01')) { const y = +mk.slice(0, 4) - 1; if (state.transactions.some(t => t.date.startsWith(String(y))) && !state.reviews['y' + y]?.completedAt) items.push({ tone: 'info', text: `${y} is done. Look back over the year together`, act: 'our-year' }); }
   const rep = detectRepeating();
   const newSubs = rep.filter(d => d.isNew);
   if (newSubs.length) items.push({ tone: 'info', text: `New repeating charge${newSubs.length > 1 ? 's' : ''}: ${newSubs.slice(0, 2).map(d => `${d.payee} (${money(d.monthly)}/mo)`).join(', ')}`, go: '#/cashflow' });

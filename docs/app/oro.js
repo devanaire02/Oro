@@ -1236,6 +1236,8 @@ function attentionItems() {
   if (behind.length) items.push({ tone: 'warn', k: 'off', text: `${behind.length} goal${behind.length > 1 ? 's are' : ' is'} behind pace: ${behind.map(g => g.name).slice(0, 2).join(', ')}`, go: '#/planning' });
   const lm = addMonths(mk, -1);
   if (state.transactions.some(t => t.date.startsWith(lm)) && !state.reviews[lm]?.completedAt) items.push({ tone: 'warn', text: `${MONTHS[+lm.slice(5) - 1]} hasn’t been reviewed yet`, go: `#/review?m=${lm}` });
+  // each January: the year just ended, to look back over together
+  if (mk.endsWith('-01')) { const y = +mk.slice(0, 4) - 1; if (state.transactions.some(t => t.date.startsWith(String(y))) && !state.reviews['y' + y]?.completedAt) items.push({ tone: 'info', text: `${y} is done. Look back over the year together`, act: 'our-year' }); }
   const rep = detectRepeating();
   const newSubs = rep.filter(d => d.isNew);
   if (newSubs.length) items.push({ tone: 'info', text: `New repeating charge${newSubs.length > 1 ? 's' : ''}: ${newSubs.slice(0, 2).map(d => `${d.payee} (${money(d.monthly)}/mo)`).join(', ')}`, go: '#/cashflow' });
@@ -5364,7 +5366,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = 'ff392e0';
+const ORO_BUILD = '9174d87';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -5686,8 +5688,8 @@ function drillMonth(mk) {
     actions: `<a class="btn" href="#/transactions?m=${mk}" data-close>Open in Transactions</a><button class="btn primary" data-close>Done</button>` });
 }
 /* Net worth from one month's end to the next, account by account (the same accounts the figure counts). */
-function netWorthMoves(mk) {
-  const prev = addMonths(mk, -1), a0 = state.snapshots[prev] || {}, cur = mk === thisMonth();
+function netWorthMoves(mk, prev = addMonths(mk, -1)) {
+  const a0 = state.snapshots[prev] || {}, cur = mk === thisMonth();
   const a1 = cur ? Object.fromEntries(activeAccounts().map(a => [a.id, signedValue(a)])) : state.snapshots[mk] || {};
   const rows = [];
   for (const id of new Set([...Object.keys(a0), ...Object.keys(a1)])) {
@@ -6481,7 +6483,7 @@ VIEWS.review = p => {
   const cmp = (now, then) => then ? `<span class="small ${signClass(now - then)}">${money(now - then, { cents: false, sign: true })}</span>` : '';
 
   return pageHead(`${monthLabel(mk)} review`, rv.completedAt ? `Reviewed ${dateLabel(rv.completedAt, true)}` : 'Not reviewed yet',
-    `<label class="field inline"><span class="sr">Month</span><select data-filter="m">${months.map(m => `<option value="${m}" ${m === mk ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}</select></label><button class="btn" data-act="money-date" data-mk="${mk}">Present as Money date</button><button class="btn ghost" data-act="print">Print</button>`) + `
+    `<label class="field inline"><span class="sr">Month</span><select data-filter="m">${months.map(m => `<option value="${m}" ${m === mk ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}</select></label><button class="btn" data-act="money-date" data-mk="${mk}">Present as Money date</button><button class="btn" data-act="our-year" data-year="${mk.slice(0, 4)}">Our year</button><button class="btn ghost" data-act="print">Print</button>`) + `
   <section class="flows"><table class="ledger flows-table">
     <thead><tr><th></th><th class="num">Money in</th><th class="num">Money out</th><th class="num${pay ? ' hide-sm' : ''}">Left over</th>${pay ? '<th class="num hide-sm">Saved through pay</th><th class="num">Kept</th>' : ''}<th class="num">Savings rate</th></tr></thead>
     <tbody>
@@ -7999,9 +8001,20 @@ const MD_PROVERB = ['Àgbájọ ọwọ́ la fi ń sọ̀yà.', 'We are stronges
 function startMoneyDate(mk) {
   const lm = addMonths(thisMonth(), -1);
   MD.mk = mk || (state.transactions.some(t => t.date.startsWith(lm)) ? lm : thisMonth());
+  MD.year = null;
+  mdOpen(() => buildSlides(MD.mk));
+}
+/* Our year: the same walk through a whole year (so far, when it is this year). */
+function startYearDate(year) {
+  const now = new Date();
+  MD.year = +year || (now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear());   // in January, the year just ended
+  MD.mk = null;
+  mdOpen(() => buildYearSlides(MD.year));
+}
+function mdOpen(build) {
   MD.i = 0; MD.dir = 1;
   if (!$('#present')) { MD.lens = UI.lens; UI.lens = ''; }   // a Money date is about the whole household
-  MD.slides = buildSlides(MD.mk);
+  MD.slides = build();
   let el = $('#present');
   if (!el) { el = document.createElement('div'); el.id = 'present'; el.className = 'present'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Money date'); document.body.appendChild(el); }
   document.body.classList.add('presenting');
@@ -8030,7 +8043,7 @@ function paintSlide() {
   const n = MD.slides.length, s = MD.slides[MD.i], last = MD.i === n - 1;
   el.dataset.kind = s.kind || '';
   el.innerHTML = `
-    <header class="present-top"><span class="brand" title="Ọrọ̀ is Yoruba for wealth">${BRAND_MARK}</span><span class="present-title">Money date · ${monthLabel(MD.mk)}</span>
+    <header class="present-top"><span class="brand" title="Ọrọ̀ is Yoruba for wealth">${BRAND_MARK}</span><span class="present-title">${MD.year ? `Our year · ${MD.year}` : `Money date · ${monthLabel(MD.mk)}`}</span>
       <div class="present-prog" role="group" aria-label="Pages">${MD.slides.map((x, k) => `<button type="button" class="${k === MD.i ? 'on' : k < MD.i ? 'done' : ''}" data-md="go:${k}" aria-label="Page ${k + 1}: ${esc(x.title)}"${k === MD.i ? ' aria-current="step"' : ''}></button>`).join('')}</div>
       ${document.fullscreenEnabled && !isTouch() ? '<button class="icon-btn present-full" data-md="full" aria-label="Full screen" title="Full screen"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>' : ''}
       <button class="icon-btn" data-md="close" aria-label="Exit Money date">×</button></header>
@@ -8042,7 +8055,7 @@ function paintSlide() {
 /* Something changed underneath (a transaction filed from a page of the date): work the pages out again, in place. */
 function mdRefresh() {
   const el = $('#present'); if (!el || el.querySelector('textarea:focus')) return;
-  MD.slides = buildSlides(MD.mk); MD.i = Math.min(MD.i, MD.slides.length - 1); MD.dir = 0;
+  MD.slides = MD.year ? buildYearSlides(MD.year) : buildSlides(MD.mk); MD.i = Math.min(MD.i, MD.slides.length - 1); MD.dir = 0;
   const y = el.querySelector('.slide')?.scrollTop || 0;
   paintSlide();
   if (y) el.querySelector('.slide').scrollTop = y;
@@ -8070,7 +8083,8 @@ function buildSlides(mk) {
       <h1 class="md-month">${M} <span>${mk.slice(0, 4)}</span></h1>
       <div class="md-band" aria-hidden="true"></div>
       <p class="slide-lede">${who ? `${esc(who)}: the` : 'The'} month in ${slides.length} short pages. Tap any chart or figure to see what’s behind it.</p>
-      <p class="md-proverb"><span lang="yo">${MD_PROVERB[0]}</span> ${MD_PROVERB[1]}</p></div>` });
+      <p class="md-proverb"><span lang="yo">${MD_PROVERB[0]}</span> ${MD_PROVERB[1]}</p>
+      ${yearMonths(+mk.slice(0, 4)).length >= 3 ? `<button class="linklike md-year-link" data-md="year:${mk.slice(0, 4)}">Or look back over the whole year: Our ${mk.slice(0, 4)}</button>` : ''}</div>` });
   slides.push({ title: 'The big picture', kind: 'big', html: () => `<div class="slide-center">
       <p class="eyebrow-plain">${monthLabel(mk)}</p>
       <h1 class="slide-h">${K.kept >= 0 ? `We kept <span class="num pos">${sm(K.kept)}</span> ${cur ? 'so far this month' : 'this month'}.` : `We spent <span class="num neg">${sm(-K.kept)}</span> more than came in.`}</h1>
@@ -8145,12 +8159,112 @@ document.addEventListener('change', e => {
   r.done = { ...(r.done || {}) }; if (el.checked) r.done[i] = true; else delete r.done[i];
   commit({ silent: true });
 });
+/* ---------- Our year ----------
+   The months of a year that have anything in them, through this month when it is this year. Notes for a year are kept
+   with the reviews under 'y2026' (a month's are under '2026-10'). */
+function yearMonths(year) {
+  const end = year === new Date().getFullYear() ? thisMonth() : `${year}-12`, out = [];
+  for (let m = `${year}-01`; m <= end; m = addMonths(m, 1)) out.push(m);
+  return out.filter(m => txInMonth(m).length);
+}
+function buildYearSlides(year) {
+  const ms = yearMonths(year), sm = n => money(n, { cents: false }), curYear = year === new Date().getFullYear();
+  const from = `${year}-01-01`, to = curYear ? today() : `${year}-12-31`, lastMk = ms[ms.length - 1] || `${year}-12`;
+  const per = ms.map(m => ({ m, K: keptWithPayroll(m, { lens: false }) }));
+  const T = { in: round2(sum(per.map(x => x.K.moneyIn))), out: round2(sum(per.map(x => x.K.spent))), pay: round2(sum(per.map(x => x.K.savedThroughPay))), kept: round2(sum(per.map(x => x.K.kept))) };
+  const rate = T.in + T.pay > 0 ? T.kept / (T.in + T.pay) : NaN, pay = T.pay > 0, so = curYear ? ' so far' : '';
+  // net worth: from the end of the year before (or the year's first month on record) to now, or to December
+  const snaps = Object.keys(state.snapshots).sort(), startMk = snaps.includes(`${year - 1}-12`) ? `${year - 1}-12` : snaps.find(k => k.startsWith(String(year))) || null;
+  const endMk = curYear ? thisMonth() : snaps.filter(k => k.startsWith(String(year))).pop() || null;
+  const startNW = startMk ? snapshotNW(startMk) : null, endNW = curYear ? totals().netWorth : endMk ? snapshotNW(endMk) : null;
+  const nwChange = startNW != null && endNW != null && startMk !== endMk ? endNW - startNW : null;
+  const startWord = startMk ? (startMk.startsWith(String(year - 1)) ? `the end of ${year - 1}` : monthLabel(startMk)) : '';
+  const txs = txInRange(from, to), groups = spendByGroup(txs), items = donutItems(groups, 6), spendTotal = sum(groups.map(g => g.value));
+  // the same months of the year before, when that year is on record, for "more than" and "less than"
+  const before = ms.map(m => addMonths(m, -12)).filter(m => txInMonth(m).length), cmp = before.length >= Math.max(3, ms.length - 1);
+  const gPrev = cmp ? Object.fromEntries(spendByGroup(before.flatMap(m => txInMonth(m))).map(g => [g.label, g.value])) : {};
+  const shifts = cmp ? groups.map(g => ({ label: g.label, d: round2(g.value - (gPrev[g.label] || 0)) })).filter(x => Math.abs(x.d) >= 100).sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 4) : [];
+  const best = per.slice().sort((a, b) => b.K.kept - a.K.kept)[0], tight = per.slice().sort((a, b) => a.K.kept - b.K.kept)[0], big = per.slice().sort((a, b) => b.K.spent - a.K.spent)[0];
+  const adults = people().filter(m => roleOf(m.id) === 'adult').map(m => m.name);
+  const who = adults.length === 2 ? `${adults[0]} and ${adults[1]}` : adults.length === 1 ? adults[0] : '';
+  const mName = m => MONTHS[+m.slice(5) - 1];
+  const slides = [];
+  slides.push({ title: 'Welcome', kind: 'cover', html: () => `<div class="md-cover">
+      <p class="md-kicker">Our year</p>
+      <h1 class="md-month">${year}${curYear ? ' <span>so far</span>' : ''}</h1>
+      <div class="md-band" aria-hidden="true"></div>
+      <p class="slide-lede">${who ? `${esc(who)}: ` : ''}${ms.length === 12 ? 'twelve months' : ms.length === 1 ? 'one month' : `${ms.length} months`} in ${slides.length} short pages. Tap a month or a chart to see what’s behind it.</p>
+      <p class="md-proverb"><span lang="yo">${MD_PROVERB[0]}</span> ${MD_PROVERB[1]}</p></div>` });
+  slides.push({ title: 'The big picture', kind: 'big', html: () => `<div class="slide-center">
+      <p class="eyebrow-plain">${year}${so}</p>
+      <h1 class="slide-h">${T.kept >= 0 ? `We kept <span class="num pos">${sm(T.kept)}</span> ${curYear ? 'so far this year' : `in ${year}`}.` : `We spent <span class="num neg">${sm(-T.kept)}</span> more than came in.`}</h1>
+      <p class="slide-lede">${sm(T.in)} came in and ${sm(T.out)} went out${pay ? `, ${sm(T.pay)} more was saved through pay before it reached the bank` : ''}${nwChange != null ? `, and our net worth ${nwChange >= 0 ? 'grew' : 'fell'} by ${sm(Math.abs(nwChange))}` : ''}.</p>
+      <div class="md-trio${pay ? ' four' : ''}">
+        <div class="md-fig still"><span>Came in</span><strong class="num">${sm(T.in)}</strong></div>
+        <div class="md-fig still"><span>Went out</span><strong class="num">${sm(T.out)}</strong></div>
+        ${pay ? `<div class="md-fig still"><span>Saved through pay</span><strong class="num">${sm(T.pay)}</strong></div>` : ''}
+        <div class="md-fig still"><span>Kept${isFinite(rate) ? `, ${pct(rate, 0)} of what came in` : ''}</span><strong class="num ${signClass(T.kept)}">${sm(T.kept)}</strong></div></div></div>` });
+  if (endNW != null) {
+    const series = netWorthSeries().filter(p => (!startMk || p.x >= startMk) && p.x <= (endMk || lastMk));
+    const moves = nwChange != null ? netWorthMoves(endMk, startMk).slice(0, 4) : [];
+    slides.push({ title: 'Net worth', kind: 'nw', html: () => `<div class="slide-split">
+      <div><p class="eyebrow-plain">What we own, minus what we owe</p><p class="slide-num num">${sm(endNW)}</p>
+        ${nwChange != null ? `<p class="slide-lede">${deltaChip(endNW, startNW, { pct: true })} since ${startWord}, when it was ${sm(startNW)}</p>` : '<p class="slide-lede">History builds month by month.</p>'}
+        ${moves.length ? `<div class="md-moves"><h3>What moved it most over the year</h3><ul class="simple-list">${moves.map(r => `<li><span>${esc(r.name)}</span><span></span><span class="num ${signClass(r.d)}">${money(r.d, { cents: false, sign: true })}</span></li>`).join('')}</ul></div>` : ''}</div>
+      <div>${chartHost({ h: 300, label: `Net worth through ${year}`, series: [{ points: series, color: 'var(--ink-accent)', area: true }], xFmt: x => MON[+x.slice(5) - 1], pick: i => drillNetWorth(series[i].x), pickLabel: 'See what changed', tip: i => `<strong>${monthLabel(series[i].x)}</strong><br>${sm(series[i].y)}` })}</div></div>` });
+  }
+  if (per.length) slides.push({ title: 'Month by month', kind: 'months', html: () => `<h2 class="slide-h2">Month by month</h2>
+      ${chartHost({ type: 'bars', h: 260, label: `Money in and out by month, ${year}`, labels: ms.map(m => MON[+m.slice(5) - 1]), series: [{ name: 'Came in', values: per.map(x => x.K.moneyIn), color: 'var(--pos)' }, { name: 'Went out', values: per.map(x => x.K.spent), color: 'var(--c4)' }], pick: i => drillMonth(ms[i]), pickLabel: 'Open the month',
+        tip: i => `<strong>${monthLabel(ms[i])}</strong><br><i class="tip-key" style="background:var(--pos)"></i>${sm(per[i].K.moneyIn)} came in<br><i class="tip-key" style="background:var(--c4)"></i>${sm(per[i].K.spent)} went out<br>Kept ${sm(per[i].K.kept)}` })}
+      <p class="legend"><span><i style="background:var(--pos)"></i>Came in</span><span><i style="background:var(--c4)"></i>Went out</span></p>
+      <div class="md-callouts">
+        <button class="md-fig" data-drill="month|${best.m}"><span>Kept the most</span><strong>${mName(best.m)}</strong><em class="num">${sm(best.K.kept)} kept</em></button>
+        ${per.length > 1 ? `<button class="md-fig" data-drill="month|${tight.m}"><span>${tight.K.kept < 0 ? 'Spent more than came in' : 'Kept the least'}</span><strong>${mName(tight.m)}</strong><em class="num">${tight.K.kept < 0 ? `${sm(-tight.K.kept)} over` : `${sm(tight.K.kept)} kept`}</em></button>
+        <button class="md-fig" data-drill="month|${big.m}"><span>Spent the most</span><strong>${mName(big.m)}</strong><em class="num">${sm(big.K.spent)} went out</em></button>` : ''}</div>` });
+  if (items.length) slides.push({ title: 'Where it went', kind: 'where', html: () => `<div class="slide-split">
+      <div>${chartHost({ type: 'donut', h: 330, label: `Where the money went in ${year}`, items, center: { value: sm(spendTotal), label: `spent${so}` } })}</div>
+      <div><h2 class="slide-h2">Where it went</h2>${legendList(items, spendTotal)}
+        ${shifts.length ? `<div class="md-moves"><h3>Against the same months of ${year - 1}</h3><ul class="simple-list">${shifts.map(x => `<li><span>${esc(x.label)}</span><span></span><span class="num">${sm(Math.abs(x.d))} ${x.d > 0 ? 'more' : 'less'}</span></li>`).join('')}</ul></div>` : `<p class="slide-lede">${groups[0] ? `${esc(groups[0].label)} was the biggest piece at ${pct(groups[0].value / spendTotal, 0)}.` : ''}</p>`}</div></div>` });
+  if (people().length > 1) {
+    const pp = people().map(m => ({ m, v: flowSummary(txs.filter(t => personOf(t) === m.id)).spending })).filter(x => x.v > 0), tot = sum(pp.map(x => x.v)) || 1;
+    if (pp.length > 1) slides.push({ title: 'Who spent what', kind: 'who', html: () => `<h2 class="slide-h2 center">Who spent what</h2>
+      <div class="stack huge">${pp.map(x => `<span style="width:${x.v / tot * 100}%;background:${memberColor(x.m.id)}"></span>`).join('')}</div>
+      <div class="people-cards">${pp.map(x => `<div class="person-card" style="--pc:${memberColor(x.m.id)}"><span class="person-name">${esc(x.m.name)}</span><span class="s-value num">${sm(x.v)}</span><span class="muted">${pct(x.v / tot, 0)}</span></div>`).join('')}</div>` });
+  }
+  if (state.goals.length) slides.push({ title: 'Goals', kind: 'goals', html: () => `<h2 class="slide-h2 center">Our goals</h2><div class="goal-strip big">${state.goals.map(goalTile).join('')}</div>` });
+  const rep = curYear ? detectRepeating() : [];
+  if (rep.length) {
+    const fresh = rep.filter(d => d.firstSeen.startsWith(String(year))), changed = priceChanges();
+    slides.push({ title: 'What repeats', kind: 'repeat', html: () => `<div class="slide-split top">
+      <div><h2 class="slide-h2">What repeats</h2><p class="slide-num num">${sm(sum(rep.map(d => d.monthly)) * 12)}</p><p class="slide-lede">a year, across ${rep.length} charges that come every month (${sm(sum(rep.map(d => d.monthly)))} a month).</p>
+        ${fresh.length || changed.length ? `<ul class="insights big">${fresh.slice(0, 3).map(d => `<li class="info">New this year: ${esc(d.payee)}, ${money(d.monthly)} a month.</li>`).join('')}${changed.slice(0, 2).map(c => `<li class="warn">${esc(prettyPayee(c.payee) || c.payee)} went from ${money(c.was)} to ${money(c.now)} a month.</li>`).join('')}</ul>` : ''}</div>
+      <div><h3>The largest</h3><ul class="simple-list">${rep.slice(0, 8).map(d => `<li><span class="date-chip">${sm(d.monthly * 12)}/yr</span><span>${esc(d.payee)}</span><span class="num">${money(d.monthly)}</span></li>`).join('')}</ul></div></div>` });
+  }
+  const X = taxEstimate(year);
+  if (X.H.entered) {
+    const D = taxDue(year), due = D.all;
+    slides.push({ title: 'Taxes', kind: 'tax', html: () => `<div class="slide-center">
+      <p class="eyebrow-plain">Of ${sm(X.income)} of pay${X.other ? ' and other income' : ''}${curYear ? ', projected to the end of the year' : ''}</p>
+      <h1 class="slide-h">We keep <span class="num pos">${sm(X.kept)}</span> after tax.</h1>
+      <p class="slide-lede">${pct(X.average, 1)} goes to federal and Illinois income tax, Social Security and Medicare${X.pretax ? `, ${sm(X.pretax)} (${pct(X.pretax / X.income, 0)}) is saved before tax` : ''}, and ${pct(X.kept / X.income, 0)} comes home.${D.withheldAny ? ` At this pace the returns come out ${Math.abs(due) < 0.5 ? 'even' : due > 0 ? `${sm(due)} owed` : `${sm(-due)} back`}.` : ''}</p></div>` });
+  }
+  slides.push({ title: 'Where we start next', kind: 'decide', html: () => { const n = Math.max(1, per.length); return `<div class="slide-narrow"><h2 class="slide-h2">Where we start ${curYear ? 'from here' : `${year + 1}`}</h2>
+      <ul class="slide-bars">${endNW != null ? `<li><span>Net worth</span><span class="num">${sm(endNW)}</span></li>` : ''}
+        <li><span>A usual month: came in</span><span class="num">${sm(T.in / n)}</span></li><li><span>A usual month: went out</span><span class="num">${sm(T.out / n)}</span></li><li><span>A usual month: kept</span><span class="num ${signClass(T.kept)}">${sm(T.kept / n)}</span></li></ul>
+      <p class="slide-lede">Write down what you want from the year ahead. It’s kept with ${year}.</p>
+      <textarea data-review-notes="y${year}" rows="5" placeholder="e.g. Finish the emergency fund by June; one big trip, paid for ahead">${esc(state.reviews['y' + year]?.notes || '')}</textarea>
+      <div class="actions"><button class="btn primary" data-md="done">We’ve looked over ${year}</button></div>
+      <p class="slide-sign"><span class="wordmark">Ọrọ̀</span> · ${ORO_TAGLINE}</p></div>`; } });
+  return slides;
+}
 function mdAction(a) {
   if (a === 'close') return endMoneyDate();
   if (a === 'full') { if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.().catch(() => {}); return; }
   if (a.startsWith('go:')) { const k = clamp(+a.slice(3), 0, MD.slides.length - 1); if (k !== MD.i) { MD.dir = k > MD.i ? 1 : -1; MD.i = k; paintSlide(); } return; }
   if (a === 'prev' && MD.i > 0) { MD.i--; MD.dir = -1; return paintSlide(); }
   if (a === 'next') { if (MD.i < MD.slides.length - 1) { MD.i++; MD.dir = 1; return paintSlide(); } return endMoneyDate(); }
+  if (a.startsWith('year:')) return startYearDate(+a.slice(5));
+  if (a === 'done' && MD.year) { (state.reviews['y' + MD.year] = state.reviews['y' + MD.year] || {}).completedAt = today(); commit({ silent: true }); toast(`${MD.year} looked over together.`); return endMoneyDate(); }
   if (a === 'done') { (state.reviews[MD.mk] = state.reviews[MD.mk] || {}).completedAt = today(); commit({ silent: true }); toast(`${monthLabel(MD.mk)} marked as reviewed.`); return endMoneyDate(); }
 }
 
@@ -8160,7 +8274,7 @@ function paletteItems(q) {
   q = q.trim().toLowerCase();
   const out = [];
   for (const [id, label] of shownPages()) out.push({ group: 'Go to', label, run: () => go(`#/${id}`) });
-  const acts = [['Add a transaction', () => txnModal()], ['Import a file', () => startImport()], ['Add an account', () => acctModal()], ['Add a goal', () => goalModal()], ['Start a Money date', () => startMoneyDate()],
+  const acts = [['Add a transaction', () => txnModal()], ['Import a file', () => startImport()], ['Add an account', () => acctModal()], ['Add a goal', () => goalModal()], ['Start a Money date', () => startMoneyDate()], ['Look back over the year (Our year)', () => startYearDate()],
     [state.settings.privacy ? 'Show amounts' : 'Hide amounts', () => ACTIONS.privacy()], [UI.mode === 'simple' ? 'Switch to Detailed view' : 'Switch to Simple view', () => { setMode(UI.mode === 'simple' ? 'detailed' : 'simple'); }],
     ['Undo', undo], ['Redo', redo], ['Download a backup', () => ACTIONS.backup()], ['Update balances', () => go('#/accounts?update=1')], ['Monthly review', () => go('#/review')]];
   if (Store.key) acts.push(['Lock Ọrọ̀ now', () => lockNow()]);
@@ -8266,6 +8380,7 @@ const ACTIONS = {
   'tx-select': () => { UI.txSelect = !UI.txSelect; if (!UI.txSelect) txSel().clear(); render(); },
   'more-money-date': () => { closeModal(true); ACTIONS['money-date'](); },
   'money-date': el => startMoneyDate(el?.dataset.mk),
+  'our-year': el => startYearDate(el?.dataset?.year),
   'privacy': () => { state.settings.privacy = !state.settings.privacy; commit({ silent: true }); render(); },
   'print': () => window.print(),
   'sync': () => syncSheet(),
@@ -9285,6 +9400,7 @@ function diffInto(ops, b, c, path) {
 
 function opLabel(o, target) {
   if (o.path[0] === 'settings' && (o.path[1] === 'checkinQuiet' || o.k === 'checkinQuiet')) return 'check-in: a bill or charge you set aside';
+  if (o.path[0] === 'reviews' && /^y\d{4}$/.test(o.path[1] || o.k || '')) return `Our year ${(o.path[1] || o.k).slice(1)}: what you wrote down`;
   if (o.path[0] === 'tax' && o.path[1] === 'whatif') return `taxes: What if… for ${o.path[2] || 'the year'}`;
   if (o.path[0] === 'tax' && o.path[1] === 'payInfo') return 'taxes: how often someone is paid, a birth year or what an HSA covers';
   const v = o.v || (o.op === 'del' ? null : undefined);

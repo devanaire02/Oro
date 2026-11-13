@@ -84,8 +84,8 @@ function drillMonth(mk) {
     actions: `<a class="btn" href="#/transactions?m=${mk}" data-close>Open in Transactions</a><button class="btn primary" data-close>Done</button>` });
 }
 /* Net worth from one month's end to the next, account by account (the same accounts the figure counts). */
-function netWorthMoves(mk) {
-  const prev = addMonths(mk, -1), a0 = state.snapshots[prev] || {}, cur = mk === thisMonth();
+function netWorthMoves(mk, prev = addMonths(mk, -1)) {
+  const a0 = state.snapshots[prev] || {}, cur = mk === thisMonth();
   const a1 = cur ? Object.fromEntries(activeAccounts().map(a => [a.id, signedValue(a)])) : state.snapshots[mk] || {};
   const rows = [];
   for (const id of new Set([...Object.keys(a0), ...Object.keys(a1)])) {
