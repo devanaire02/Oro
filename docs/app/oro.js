@@ -4783,6 +4783,15 @@ function ppApply() {
    transactions already there, leaving any you assigned to someone yourself as they are. */
 const cardL4 = v => { const d = String(v || '').replace(/\D/g, ''); return d.length >= 4 ? d.slice(-4) : ''; };
 const isTransferTx = t => catById(t.categoryId)?.kind === 'transfer';
+/* Plaid's cardholder on a transaction (its account_owner): usually empty, but on one account with several cards it can
+   name the card, by the cardholder's name and/or the card's last 4. The last 4 when it has them (the same as a QFX's),
+   otherwise the name as the bank gives it. */
+function plaidCard(owner) {
+  const s = String(owner || '').replace(/\s+/g, ' ').trim();
+  return s ? cardL4(s) || s.toUpperCase().slice(0, 40) : '';
+}
+const cardIsL4 = k => /^\d{4}$/.test(k);
+const cardLabel = k => cardIsL4(k) ? `Card ending ${k}` : `Cardholder ${k}`;
 
 /* The cards in an import item, most used first: [{ l4, n }] — only worth asking about when there are two or more */
 function itemCards(it) {
@@ -4827,8 +4836,8 @@ function cardsBlock(it, k = null) {
   if (!cards.length || members().length < 2) return '';
   const map = itemCardMap(it), old = itemCardOld(it), at = k == null ? '' : `${k}|`;
   return `<div class="cards-box">
-    <p><strong>${cards.length} cards on this account.</strong> Whose is each? Their purchases go under that person. Only the last 4 digits are kept.</p>
-    <div class="cards-rows">${cards.map(c => `<label class="field"><span>Card ending ${esc(c.l4)}${c.n ? ` · ${c.n.toLocaleString()}` : ''}</span><select data-card="${at}${esc(c.l4)}">${memberOptions(map[c.l4], ownerLabel(it), true)}</select></label>`).join('')}</div>
+    <p><strong>${cards.length} cards on this account.</strong> Whose is each? Their purchases go under that person. ${cards.every(c => cardIsL4(c.l4)) ? 'Only the last 4 digits are kept.' : 'Only the cardholder’s name or the card’s last 4 digits are kept.'}</p>
+    <div class="cards-rows">${cards.map(c => `<label class="field"><span>${esc(cardLabel(c.l4))}${c.n ? ` · ${c.n.toLocaleString()}` : ''}</span><select data-card="${at}${esc(c.l4)}">${memberOptions(map[c.l4], ownerLabel(it), true)}</select></label>`).join('')}</div>
     ${old ? `<label class="check small"><input type="checkbox" data-cardsold="${at}" ${it.cardsOld !== false ? 'checked' : ''}> Also mark whose card it was on the ${old.toLocaleString()} already in Ọrọ̀ (any you put under someone yourself stay as they are)</label>` : ''}
   </div>`;
 }
@@ -4865,6 +4874,14 @@ function personFromCard(acct, card, t) {
   const p = card && acct?.cards?.[card];
   return p && !isTransferTx(t) ? p : '';
 }
+/* A bank connection's transaction matched to one already here: note its card when that one has none, and whose,
+   when no one is set on it yet */
+function cardOnto(t, acct, card) {
+  if (!card || t.card) return;
+  t.card = card;
+  const p = personFromCard(acct, card, t);
+  if (p && !t.person && !isSplit(t)) t.person = p;
+}
 
 /* ---- the account window: change whose a card is later ---- */
 function acctCardsFields(a) {
@@ -4874,7 +4891,7 @@ function acctCardsFields(a) {
   const cards = [...new Set([...Object.keys(a.cards || {}), ...Object.keys(n)])];
   if (cards.length < 2) return '';
   return `<div class="wide cards-acct"><span class="field-label">Cards on this account</span>
-    <div class="cards-rows">${cards.map(c => `<label class="field"><span>Card ending ${esc(c)}${n[c] ? ` · ${n[c].toLocaleString()}` : ''}</span><select data-acard="${esc(c)}">${memberOptions(a.cards?.[c] || '', `Account owner (${memberName(a.owner || 'joint')})`, true)}</select></label>`).join('')}</div>
+    <div class="cards-rows">${cards.map(c => `<label class="field"><span>${esc(cardLabel(c))}${n[c] ? ` · ${n[c].toLocaleString()}` : ''}</span><select data-acard="${esc(c)}">${memberOptions(a.cards?.[c] || '', `Account owner (${memberName(a.owner || 'joint')})`, true)}</select></label>`).join('')}</div>
     <small class="muted">Purchases on each card go under that person. Ones you put under someone yourself stay as they are.</small></div>`;
 }
 /* Saving the account window: move the card's transactions that followed the old choice */
@@ -5366,7 +5383,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = 'cc059d3';
+const ORO_BUILD = '6c8ba52';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -7482,7 +7499,7 @@ function txnModal(id) {
       ${t ? '<div class="wide tx-rule" id="tx-rule"></div>' : ''}
       <div class="wide attach-box"><span class="field-label">Receipts</span><div id="att-list"></div>
         <label class="btn small ${hasFolder() ? '' : 'disabled'}" title="${hasFolder() ? 'Saved into receipts/ in your Ọrọ̀ folder' : isCompanion() ? 'Attach receipts in Ọrọ̀ on your Mac' : 'Choose your Ọrọ̀ folder in Settings first'}">Attach a file<input type="file" id="att-input" accept="image/*,application/pdf" hidden ${hasFolder() ? '' : 'disabled'}></label></div>
-      ${t?.card ? `<p class="muted small wide">Card ending ${esc(t.card)}</p>` : ''}
+      ${t?.card ? `<p class="muted small wide">${esc(cardLabel(t.card))}</p>` : ''}
       ${t?.pp ? `<p class="muted small wide">Paid through PayPal. Bank description: ${esc(t.pp.was)}</p>` : t?.rawPayee && t.rawPayee !== t.payee ? `<p class="muted small wide">Bank description: ${esc(t.rawPayee)}</p>` : ''}
       ${t?.reconciled ? '<p class="muted small wide">✓ Reconciled with a statement</p>' : ''}
       ${t ? stubLineForTxn(t) : ''}
@@ -13266,7 +13283,7 @@ function bankReview(results) {
     for (const [pid, pa] of Object.entries(item.accounts)) {
       if (!pa.to) continue;
       const acct = acctById(pa.to); if (!acct) continue;
-      const sec = { item, pid, pa, acct, rows: [], links: [], have: 0, older: 0, balance: null };
+      const sec = { item, pid, pa, acct, accountId: acct.id, rows: [], txRows: [], links: [], have: 0, older: 0, balance: null };
       const incoming = r.added.filter(t => t.account === pid);
       const fresh = [];
       for (const t of incoming) {
@@ -13278,12 +13295,12 @@ function bankReview(results) {
       const pairs = bankPair1to1(fresh, txByAccount(acct.id).filter(t => !plIdOf(t)), t => `${t.text} ${t.merchant}`);
       for (const t of fresh) {
         const m = pairs.get(t);
-        if (m && m.sure) { sec.links.push({ plId: 'pl:' + t.id, tx: m.tx }); continue; }
+        if (m && m.sure) { sec.links.push({ plId: 'pl:' + t.id, tx: m.tx, card: plaidCard(t.owner) }); continue; }
         const raw = t.text || t.merchant, rule = matchRule(raw, { amount: t.amount, accountId: acct.id }) || (t.merchant ? matchRule(t.merchant, { amount: t.amount, accountId: acct.id }) : null);
         const auto = rule ? null : autoCategory(raw, t.amount, { bankCategory: plaidCategoryName(t.cat) }, hist);
         let categoryId = rule ? rule.categoryId : auto ? auto.id : null;
         if (acct.type === 'credit' && t.amount > 0 && cardPayId && (!categoryId || categoryId === transferId) && /payment|thank you|autopay|pymt/i.test(raw)) categoryId = cardPayId;
-        sec.rows.push({ kind: m ? 'maybe' : 'new', include: !m, plId: 'pl:' + t.id, date: t.date, amount: t.amount, payee: rule?.rename || t.merchant || prettyPayee(raw), raw, categoryId: categoryId || '', guess: auto && categoryId === auto.id ? auto.how : '', person: rule?.person || '', match: m?.tx.id || '' });
+        sec.rows.push({ kind: m ? 'maybe' : 'new', include: !m, plId: 'pl:' + t.id, date: t.date, amount: t.amount, payee: rule?.rename || t.merchant || prettyPayee(raw), raw, categoryId: categoryId || '', guess: auto && categoryId === auto.id ? auto.how : '', person: rule?.person || '', card: plaidCard(t.owner), match: m?.tx.id || '' });
       }
       for (const t of r.modified.filter(x => x.account === pid)) {
         const have = byPl.get('pl:' + t.id);
@@ -13299,6 +13316,10 @@ function bankReview(results) {
         sec.balance = { value, date, have: accountValue(acct), set: date >= (acct.balanceDate || '') };
       }
       sec.rows.sort((a, b) => b.date.localeCompare(a.date));
+      // whose card: the same question a Capital One QFX asks (48-cards.js); or, on an account known to have two
+      // cards, that the bank didn't say which one made these
+      sec.txRows = sec.rows.filter(r => r.kind === 'new' || r.kind === 'maybe');
+      sec.noCard = Object.keys(acct.cards || {}).length >= 2 && sec.txRows.length > 0 && !sec.txRows.some(r => r.card) && !sec.links.some(l => l.card);
       sections.push(sec);
     }
   }
@@ -13323,11 +13344,13 @@ function bankRenderReview() {
     return `<section class="bank-sec">
       <h3>${esc(s.item.inst)} ${esc(s.pa.name || '')}${s.pa.mask ? ` ···${esc(s.pa.mask)}` : ''} <span class="muted small">into ${esc(s.acct.name)}</span></h3>
       <p class="small">${[n ? `${n} new` : 'Nothing new', s.links.length ? `${s.links.length} matched to ones you have` : '', s.have ? `${s.have} already in Ọrọ̀` : '', s.older ? `${s.older} older than ${dateLabel(s.pa.from, true)}, left out` : ''].filter(Boolean).join(' · ')}</p>
+      ${cardsBlock(s, si)}
+      ${s.noCard && members().length > 1 ? `<p class="small bank-nocard">${esc(s.item.inst)} didn’t say which card made these, so they go under the account owner (${esc(memberName(s.acct.owner || 'joint'))}) for now. Importing ${esc(s.item.inst)}’s QFX file later fills in whose card each one was.</p>` : ''}
       ${b ? `<p class="small bank-bal">Plaid says ${money(b.value)} · Ọrọ̀ has ${money(b.have)}${Math.abs(apart) >= 0.005 ? ` · <strong>${money(Math.abs(apart))} apart</strong>` : ' · the same'}
         <label class="check"><input type="checkbox" data-bankbal="${si}" ${b.set ? 'checked' : ''}> Set the balance to ${money(b.value)} as of ${dateLabel(b.date, true)}</label></p>` : ''}
       ${s.rows.length ? `<div class="scroll-table"><table class="ledger compact bank-rows"><thead><tr><th class="cb"></th><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th><th></th></tr></thead><tbody>
         ${s.rows.map((r, ri) => `<tr class="${r.include ? '' : 'off'}"><td class="cb"><input type="checkbox" data-bankrow="${si}:${ri}" ${r.include ? 'checked' : ''} aria-label="${r.kind === 'removed' ? 'Remove it' : r.kind === 'changed' ? 'Update it' : 'Add it'}"></td>
-          <td class="nowrap">${dateLabel(r.date, true)}</td><td>${esc(r.payee)}<div class="muted small">${esc(r.raw)}</div></td>
+          <td class="nowrap">${dateLabel(r.date, true)}</td><td>${esc(r.payee)}<div class="muted small">${esc(r.raw)}${r.card ? ` · ${esc(cardLabel(r.card))}` : ''}</div></td>
           <td>${r.kind === 'new' || r.kind === 'maybe' ? `<select data-bankcat="${si}:${ri}" aria-label="Category">${opts.replace(`value="${r.categoryId}"`, `value="${r.categoryId}" selected`)}</select>` : ''}</td>
           <td class="num ${signClass(r.amount)}">${money(r.amount)}</td><td>${bankRowTag(r)}</td></tr>`).join('')}
       </tbody></table></div>` : ''}</section>`;
@@ -13342,6 +13365,7 @@ function bankRenderReview() {
     if (d.bankrow) { const [si, ri] = d.bankrow.split(':').map(Number); rv.sections[si].rows[ri].include = t.checked; t.closest('tr').classList.toggle('off', !t.checked); }
     if (d.bankcat) { const [si, ri] = d.bankcat.split(':').map(Number); const r = rv.sections[si].rows[ri]; r.categoryId = t.value; r.guess = ''; }
     if (d.bankbal != null) rv.sections[+d.bankbal].balance.set = t.checked;
+    cardsChange(t, rv.sections);
     const go = $('#bank-go'); if (go) go.textContent = bankAddLabel(rv);
   };
 }
@@ -13351,13 +13375,16 @@ function bankApply() {
   let added = 0, unc = 0, linked = 0, changed = 0, removed = 0;
   const gone = new Set(), addId = (t, id) => { if (!txIds(t).includes(id)) { if (!t.importId) t.importId = id; else (t.ids ||= []).push(id); } };
   for (const s of rv.sections) {
-    for (const l of s.links) { addId(l.tx, l.plId); linked++; }
+    applyItemCards(s, s.acct);   // whose each card is, remembered on the account (48-cards.js)
+    for (const l of s.links) { addId(l.tx, l.plId); cardOnto(l.tx, s.acct, l.card); linked++; }
     for (const r of s.rows) {
       const have = r.match && state.transactions.find(t => t.id === r.match);
       if (r.kind === 'new' || r.kind === 'maybe') {
-        if (!r.include) { if (r.kind === 'maybe' && have) { addId(have, r.plId); linked++; } continue; }
+        if (!r.include) { if (r.kind === 'maybe' && have) { addId(have, r.plId); cardOnto(have, s.acct, r.card); linked++; } continue; }
         const t = { id: uid(), date: r.date, accountId: s.acct.id, payee: r.payee, rawPayee: r.raw, amount: r.amount, categoryId: r.categoryId || null, memo: '', importId: r.plId, added: today() };
+        if (r.card) t.card = r.card;
         if (r.person) t.person = r.person;
+        else { const p = personFromCard(s.acct, r.card, t); if (p) t.person = p; }
         state.transactions.push(t); added++; if (!t.categoryId) unc++;
       } else if (r.kind === 'changed' && r.include && have) { have.amount = r.amount; have.date = r.date; changed++; }
       else if (r.kind === 'removed' && r.include && have) { gone.add(have.id); removed++; }

@@ -6,6 +6,15 @@
    transactions already there, leaving any you assigned to someone yourself as they are. */
 const cardL4 = v => { const d = String(v || '').replace(/\D/g, ''); return d.length >= 4 ? d.slice(-4) : ''; };
 const isTransferTx = t => catById(t.categoryId)?.kind === 'transfer';
+/* Plaid's cardholder on a transaction (its account_owner): usually empty, but on one account with several cards it can
+   name the card, by the cardholder's name and/or the card's last 4. The last 4 when it has them (the same as a QFX's),
+   otherwise the name as the bank gives it. */
+function plaidCard(owner) {
+  const s = String(owner || '').replace(/\s+/g, ' ').trim();
+  return s ? cardL4(s) || s.toUpperCase().slice(0, 40) : '';
+}
+const cardIsL4 = k => /^\d{4}$/.test(k);
+const cardLabel = k => cardIsL4(k) ? `Card ending ${k}` : `Cardholder ${k}`;
 
 /* The cards in an import item, most used first: [{ l4, n }] — only worth asking about when there are two or more */
 function itemCards(it) {
@@ -50,8 +59,8 @@ function cardsBlock(it, k = null) {
   if (!cards.length || members().length < 2) return '';
   const map = itemCardMap(it), old = itemCardOld(it), at = k == null ? '' : `${k}|`;
   return `<div class="cards-box">
-    <p><strong>${cards.length} cards on this account.</strong> Whose is each? Their purchases go under that person. Only the last 4 digits are kept.</p>
-    <div class="cards-rows">${cards.map(c => `<label class="field"><span>Card ending ${esc(c.l4)}${c.n ? ` · ${c.n.toLocaleString()}` : ''}</span><select data-card="${at}${esc(c.l4)}">${memberOptions(map[c.l4], ownerLabel(it), true)}</select></label>`).join('')}</div>
+    <p><strong>${cards.length} cards on this account.</strong> Whose is each? Their purchases go under that person. ${cards.every(c => cardIsL4(c.l4)) ? 'Only the last 4 digits are kept.' : 'Only the cardholder’s name or the card’s last 4 digits are kept.'}</p>
+    <div class="cards-rows">${cards.map(c => `<label class="field"><span>${esc(cardLabel(c.l4))}${c.n ? ` · ${c.n.toLocaleString()}` : ''}</span><select data-card="${at}${esc(c.l4)}">${memberOptions(map[c.l4], ownerLabel(it), true)}</select></label>`).join('')}</div>
     ${old ? `<label class="check small"><input type="checkbox" data-cardsold="${at}" ${it.cardsOld !== false ? 'checked' : ''}> Also mark whose card it was on the ${old.toLocaleString()} already in Ọrọ̀ (any you put under someone yourself stay as they are)</label>` : ''}
   </div>`;
 }
@@ -88,6 +97,14 @@ function personFromCard(acct, card, t) {
   const p = card && acct?.cards?.[card];
   return p && !isTransferTx(t) ? p : '';
 }
+/* A bank connection's transaction matched to one already here: note its card when that one has none, and whose,
+   when no one is set on it yet */
+function cardOnto(t, acct, card) {
+  if (!card || t.card) return;
+  t.card = card;
+  const p = personFromCard(acct, card, t);
+  if (p && !t.person && !isSplit(t)) t.person = p;
+}
 
 /* ---- the account window: change whose a card is later ---- */
 function acctCardsFields(a) {
@@ -97,7 +114,7 @@ function acctCardsFields(a) {
   const cards = [...new Set([...Object.keys(a.cards || {}), ...Object.keys(n)])];
   if (cards.length < 2) return '';
   return `<div class="wide cards-acct"><span class="field-label">Cards on this account</span>
-    <div class="cards-rows">${cards.map(c => `<label class="field"><span>Card ending ${esc(c)}${n[c] ? ` · ${n[c].toLocaleString()}` : ''}</span><select data-acard="${esc(c)}">${memberOptions(a.cards?.[c] || '', `Account owner (${memberName(a.owner || 'joint')})`, true)}</select></label>`).join('')}</div>
+    <div class="cards-rows">${cards.map(c => `<label class="field"><span>${esc(cardLabel(c))}${n[c] ? ` · ${n[c].toLocaleString()}` : ''}</span><select data-acard="${esc(c)}">${memberOptions(a.cards?.[c] || '', `Account owner (${memberName(a.owner || 'joint')})`, true)}</select></label>`).join('')}</div>
     <small class="muted">Purchases on each card go under that person. Ones you put under someone yourself stay as they are.</small></div>`;
 }
 /* Saving the account window: move the card's transactions that followed the old choice */

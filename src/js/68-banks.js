@@ -342,7 +342,7 @@ function bankReview(results) {
     for (const [pid, pa] of Object.entries(item.accounts)) {
       if (!pa.to) continue;
       const acct = acctById(pa.to); if (!acct) continue;
-      const sec = { item, pid, pa, acct, rows: [], links: [], have: 0, older: 0, balance: null };
+      const sec = { item, pid, pa, acct, accountId: acct.id, rows: [], txRows: [], links: [], have: 0, older: 0, balance: null };
       const incoming = r.added.filter(t => t.account === pid);
       const fresh = [];
       for (const t of incoming) {
@@ -354,12 +354,12 @@ function bankReview(results) {
       const pairs = bankPair1to1(fresh, txByAccount(acct.id).filter(t => !plIdOf(t)), t => `${t.text} ${t.merchant}`);
       for (const t of fresh) {
         const m = pairs.get(t);
-        if (m && m.sure) { sec.links.push({ plId: 'pl:' + t.id, tx: m.tx }); continue; }
+        if (m && m.sure) { sec.links.push({ plId: 'pl:' + t.id, tx: m.tx, card: plaidCard(t.owner) }); continue; }
         const raw = t.text || t.merchant, rule = matchRule(raw, { amount: t.amount, accountId: acct.id }) || (t.merchant ? matchRule(t.merchant, { amount: t.amount, accountId: acct.id }) : null);
         const auto = rule ? null : autoCategory(raw, t.amount, { bankCategory: plaidCategoryName(t.cat) }, hist);
         let categoryId = rule ? rule.categoryId : auto ? auto.id : null;
         if (acct.type === 'credit' && t.amount > 0 && cardPayId && (!categoryId || categoryId === transferId) && /payment|thank you|autopay|pymt/i.test(raw)) categoryId = cardPayId;
-        sec.rows.push({ kind: m ? 'maybe' : 'new', include: !m, plId: 'pl:' + t.id, date: t.date, amount: t.amount, payee: rule?.rename || t.merchant || prettyPayee(raw), raw, categoryId: categoryId || '', guess: auto && categoryId === auto.id ? auto.how : '', person: rule?.person || '', match: m?.tx.id || '' });
+        sec.rows.push({ kind: m ? 'maybe' : 'new', include: !m, plId: 'pl:' + t.id, date: t.date, amount: t.amount, payee: rule?.rename || t.merchant || prettyPayee(raw), raw, categoryId: categoryId || '', guess: auto && categoryId === auto.id ? auto.how : '', person: rule?.person || '', card: plaidCard(t.owner), match: m?.tx.id || '' });
       }
       for (const t of r.modified.filter(x => x.account === pid)) {
         const have = byPl.get('pl:' + t.id);
@@ -375,6 +375,10 @@ function bankReview(results) {
         sec.balance = { value, date, have: accountValue(acct), set: date >= (acct.balanceDate || '') };
       }
       sec.rows.sort((a, b) => b.date.localeCompare(a.date));
+      // whose card: the same question a Capital One QFX asks (48-cards.js); or, on an account known to have two
+      // cards, that the bank didn't say which one made these
+      sec.txRows = sec.rows.filter(r => r.kind === 'new' || r.kind === 'maybe');
+      sec.noCard = Object.keys(acct.cards || {}).length >= 2 && sec.txRows.length > 0 && !sec.txRows.some(r => r.card) && !sec.links.some(l => l.card);
       sections.push(sec);
     }
   }
@@ -399,11 +403,13 @@ function bankRenderReview() {
     return `<section class="bank-sec">
       <h3>${esc(s.item.inst)} ${esc(s.pa.name || '')}${s.pa.mask ? ` ···${esc(s.pa.mask)}` : ''} <span class="muted small">into ${esc(s.acct.name)}</span></h3>
       <p class="small">${[n ? `${n} new` : 'Nothing new', s.links.length ? `${s.links.length} matched to ones you have` : '', s.have ? `${s.have} already in Ọrọ̀` : '', s.older ? `${s.older} older than ${dateLabel(s.pa.from, true)}, left out` : ''].filter(Boolean).join(' · ')}</p>
+      ${cardsBlock(s, si)}
+      ${s.noCard && members().length > 1 ? `<p class="small bank-nocard">${esc(s.item.inst)} didn’t say which card made these, so they go under the account owner (${esc(memberName(s.acct.owner || 'joint'))}) for now. Importing ${esc(s.item.inst)}’s QFX file later fills in whose card each one was.</p>` : ''}
       ${b ? `<p class="small bank-bal">Plaid says ${money(b.value)} · Ọrọ̀ has ${money(b.have)}${Math.abs(apart) >= 0.005 ? ` · <strong>${money(Math.abs(apart))} apart</strong>` : ' · the same'}
         <label class="check"><input type="checkbox" data-bankbal="${si}" ${b.set ? 'checked' : ''}> Set the balance to ${money(b.value)} as of ${dateLabel(b.date, true)}</label></p>` : ''}
       ${s.rows.length ? `<div class="scroll-table"><table class="ledger compact bank-rows"><thead><tr><th class="cb"></th><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th><th></th></tr></thead><tbody>
         ${s.rows.map((r, ri) => `<tr class="${r.include ? '' : 'off'}"><td class="cb"><input type="checkbox" data-bankrow="${si}:${ri}" ${r.include ? 'checked' : ''} aria-label="${r.kind === 'removed' ? 'Remove it' : r.kind === 'changed' ? 'Update it' : 'Add it'}"></td>
-          <td class="nowrap">${dateLabel(r.date, true)}</td><td>${esc(r.payee)}<div class="muted small">${esc(r.raw)}</div></td>
+          <td class="nowrap">${dateLabel(r.date, true)}</td><td>${esc(r.payee)}<div class="muted small">${esc(r.raw)}${r.card ? ` · ${esc(cardLabel(r.card))}` : ''}</div></td>
           <td>${r.kind === 'new' || r.kind === 'maybe' ? `<select data-bankcat="${si}:${ri}" aria-label="Category">${opts.replace(`value="${r.categoryId}"`, `value="${r.categoryId}" selected`)}</select>` : ''}</td>
           <td class="num ${signClass(r.amount)}">${money(r.amount)}</td><td>${bankRowTag(r)}</td></tr>`).join('')}
       </tbody></table></div>` : ''}</section>`;
@@ -418,6 +424,7 @@ function bankRenderReview() {
     if (d.bankrow) { const [si, ri] = d.bankrow.split(':').map(Number); rv.sections[si].rows[ri].include = t.checked; t.closest('tr').classList.toggle('off', !t.checked); }
     if (d.bankcat) { const [si, ri] = d.bankcat.split(':').map(Number); const r = rv.sections[si].rows[ri]; r.categoryId = t.value; r.guess = ''; }
     if (d.bankbal != null) rv.sections[+d.bankbal].balance.set = t.checked;
+    cardsChange(t, rv.sections);
     const go = $('#bank-go'); if (go) go.textContent = bankAddLabel(rv);
   };
 }
@@ -427,13 +434,16 @@ function bankApply() {
   let added = 0, unc = 0, linked = 0, changed = 0, removed = 0;
   const gone = new Set(), addId = (t, id) => { if (!txIds(t).includes(id)) { if (!t.importId) t.importId = id; else (t.ids ||= []).push(id); } };
   for (const s of rv.sections) {
-    for (const l of s.links) { addId(l.tx, l.plId); linked++; }
+    applyItemCards(s, s.acct);   // whose each card is, remembered on the account (48-cards.js)
+    for (const l of s.links) { addId(l.tx, l.plId); cardOnto(l.tx, s.acct, l.card); linked++; }
     for (const r of s.rows) {
       const have = r.match && state.transactions.find(t => t.id === r.match);
       if (r.kind === 'new' || r.kind === 'maybe') {
-        if (!r.include) { if (r.kind === 'maybe' && have) { addId(have, r.plId); linked++; } continue; }
+        if (!r.include) { if (r.kind === 'maybe' && have) { addId(have, r.plId); cardOnto(have, s.acct, r.card); linked++; } continue; }
         const t = { id: uid(), date: r.date, accountId: s.acct.id, payee: r.payee, rawPayee: r.raw, amount: r.amount, categoryId: r.categoryId || null, memo: '', importId: r.plId, added: today() };
+        if (r.card) t.card = r.card;
         if (r.person) t.person = r.person;
+        else { const p = personFromCard(s.acct, r.card, t); if (p) t.person = p; }
         state.transactions.push(t); added++; if (!t.categoryId) unc++;
       } else if (r.kind === 'changed' && r.include && have) { have.amount = r.amount; have.date = r.date; changed++; }
       else if (r.kind === 'removed' && r.include && have) { gone.add(have.id); removed++; }
