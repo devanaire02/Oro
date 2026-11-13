@@ -83,6 +83,7 @@ function txnModal(id) {
       <label class="field wide"><span>Memo</span><input name="memo" value="${esc(v.memo || '')}" placeholder="${v.flag ? 'What to check, e.g. ask Julissa' : ''}"></label>
       <label class="check wide flag-check"><input type="checkbox" name="flag" id="tx-flag" ${v.flag ? 'checked' : ''}> ${FLAG_ICON} Flag it: not sure what this was for</label>
       <div class="wide" id="split-box"></div>
+      ${t ? '<div class="wide tx-rule" id="tx-rule"></div>' : ''}
       <div class="wide attach-box"><span class="field-label">Receipts</span><div id="att-list"></div>
         <label class="btn small ${hasFolder() ? '' : 'disabled'}" title="${hasFolder() ? 'Saved into receipts/ in your Ọrọ̀ folder' : isCompanion() ? 'Attach receipts in Ọrọ̀ on your Mac' : 'Choose your Ọrọ̀ folder in Settings first'}">Attach a file<input type="file" id="att-input" accept="image/*,application/pdf" hidden ${hasFolder() ? '' : 'disabled'}></label></div>
       ${t?.card ? `<p class="muted small wide">Card ending ${esc(t.card)}</p>` : ''}
@@ -100,6 +101,7 @@ function txnModal(id) {
       : `<span class="field-label">Category</span><div class="cat-row"><select name="categoryId" id="tx-cat">${catOptions(v.categoryId === '__split' ? '' : v.categoryId)}${newCatOption()}</select><button type="button" class="btn small ghost" id="do-split">Split</button></div>
          <div class="nc-inline" id="nc-inline" hidden></div>`;
     $('#cat-field').classList.remove('wide');
+    paintRule();   // only when the split changes: redrawing it as the amount box loses focus would swallow a tap on its button
     if ($('#tx-cat')) $('#tx-cat').addEventListener('change', e => {   // "New category…": its fields open right here
       const box = $('#nc-inline'), on = e.target.value === NEWCAT;
       $('#cat-field').classList.toggle('wide', on); box.hidden = !on;
@@ -109,6 +111,17 @@ function txnModal(id) {
     });
     if ($('#do-split')) $('#do-split').onclick = () => { const a = total(); splits = [{ categoryId: $('#tx-cat').value, amount: isFinite(a) ? round2(a) : 0, memo: '' }, { categoryId: '', amount: 0, memo: '' }]; paintCat(); paintSplits(); };
     if ($('#unsplit')) $('#unsplit').onclick = () => { v.categoryId = splits[0]?.categoryId || ''; splits = null; paintCat(); paintSplits(); };
+  };
+  // The rule for this payee, each time the window opens (not only right after a category changes): what it does, and a
+  // button that saves what's typed here, then opens the rule to change it, or a new one filled in from this transaction
+  const paintRule = () => {
+    const box = $('#tx-rule'); if (!box) return;
+    box.hidden = !!splits; if (splits) { box.innerHTML = ''; return; }   // a rule can't split a transaction
+    const r = matchRule(t.rawPayee || t.payee, t);
+    const also = r ? [r.rename ? `named “${esc(r.rename)}”` : '', r.person && multi ? `for ${esc(memberName(r.person))}` : ''].filter(Boolean) : [];
+    box.innerHTML = `<span class="field-label">Rule</span>
+      <p class="small tx-rule-text">${r ? `Payee contains <code>${esc(r.text || 'any payee')}</code>${ruleHasConds(r) ? ` (${esc(ruleCondText(r))})` : ''} → ${esc(catName(r.categoryId))}${also.length ? `, ${also.join(', ')}` : ''}` : '<span class="muted">No rule for this payee yet. A rule files the others like it, and future ones, by itself.</span>'}</p>
+      <button type="button" class="btn small" id="tx-rule-btn">${r ? 'Save and change the rule…' : 'Save and make a rule…'}</button>`;
   };
   const paintSplits = () => {
     const box = $('#split-box');
@@ -139,18 +152,18 @@ function txnModal(id) {
     try { const d = formData($('#f')); atts.push(await saveAttachment(file, { date: d.date || today(), payee: d.payee || 'receipt' })); paintAtts(); }
     catch (err) { toast(err.message); }
   };
-  $('#save').onclick = () => {
+  const save = () => {   // the saved transaction and what it was before, or nothing if something needs fixing first
     const d = formData($('#f'));
     const amount = parseAmount(d.amount);
-    if (!d.date || !d.payee.trim() || !isFinite(amount)) return toast('Fill in a date, payee and amount.');
+    if (!d.date || !d.payee.trim() || !isFinite(amount)) { toast('Fill in a date, payee and amount.'); return null; }
     if (splits) {
       const rem = round2(amount - sum(splits.map(s => +s.amount || 0)));
-      if (Math.abs(rem) > 0.004) return toast(`The split lines are ${money(rem)} short of the total.`);
+      if (Math.abs(rem) > 0.004) { toast(`The split lines are ${money(rem)} short of the total.`); return null; }
     }
-    const prevCat = t?.categoryId;
+    const prevCat = t?.categoryId, prevPayee = t?.payee;
     if (!splits && d.categoryId === NEWCAT) {   // a category named right here in the window
       const r = newCatFrom(d);
-      if (r.error) { toast(r.error); return $('#nc-inline [name=nc-name]')?.focus(); }
+      if (r.error) { toast(r.error); $('#nc-inline [name=nc-name]')?.focus(); return null; }
       d.categoryId = r.cat.id;
     }
     const rec = { date: d.date, payee: d.payee.trim(), amount: round2(amount), accountId: d.accountId, memo: d.memo, tags: parseTags(d.tags), attachments: atts, flag: d.flag || undefined };
@@ -165,7 +178,21 @@ function txnModal(id) {
     if (!target.flag) delete target.flag;
     state.transactions.sort((a, b) => b.date.localeCompare(a.date));
     closeModal(); commit();
-    if (t && !splits && prevCat !== target.categoryId) offerRule(target, target.categoryId);
+    return { target, prevCat, prevPayee };
+  };
+  $('#save').onclick = () => {
+    const s = save();
+    if (s && t && !splits && s.prevCat !== s.target.categoryId) offerRule(s.target, s.target.categoryId);
+  };
+  if ($('#tx-rule')) $('#tx-rule').onclick = e => {
+    if (!e.target.closest('#tx-rule-btn')) return;
+    const s = save(); if (!s) return;
+    const x = s.target, src = x.rawPayee || x.payee, r = matchRule(src, x);
+    const preset = { from: { amount: x.amount, accountId: x.accountId } };   // for Match this amount / Only this account
+    if (x.categoryId && x.categoryId !== '__split') preset.categoryId = x.categoryId;
+    if (multi && x.person) preset.person = x.person;
+    if (x.payee !== s.prevPayee) preset.rename = x.payee;   // a name typed here is one the rule can give the others
+    if (r) ruleModal(r.id, preset); else ruleModal(null, { text: ruleKeyFor(src, x.id), ...preset });
   };
   if (t) $('#del').onclick = async () => { if (await confirmBox('Delete transaction', `Delete “${esc(t.payee)}” for ${money(t.amount)}?`, 'Delete', true)) { state.transactions = state.transactions.filter(x => x.id !== t.id); commit(); toast('Transaction deleted.', { label: 'Undo', fn: undo }); } };
 }

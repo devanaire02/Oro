@@ -470,6 +470,10 @@ tr.needs .cat-select { border-color: var(--warn); color: var(--warn); }
 .split-head { display: flex; justify-content: space-between; margin-bottom: 8px; }
 .split-row { display: grid; grid-template-columns: 1.4fr 110px 1fr 32px; gap: 8px; margin-bottom: 6px; }
 .attach-box { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* The transaction window's Rule line: what the payee's rule does, and a button to change it or make one */
+.tx-rule { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.tx-rule .field-label { flex: 0 0 100%; }
+.tx-rule-text { margin: 0; flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
 #att-list { display: flex; gap: 8px; flex-wrap: wrap; }
 .att-chip { display: inline-flex; align-items: center; gap: 2px; background: var(--pad); border-radius: 6px; padding: 1px 2px 1px 8px; font-size: 13px; }
 .att-chip .icon-btn { width: 24px; height: 24px; font-size: 16px; }
@@ -764,6 +768,9 @@ body.presenting { overflow: hidden; }
    Up to 860px wide (iPhone, iPad portrait): a tab bar at the bottom replaces the sidebar, search and the eye move to the header.
    Up to 640px (iPhone): tables that need it become stacked rows, filters fold away, dialogs open as sheets from the bottom. */
 .tabbar, .side-tools, .filters-sm, .tx-acct-sm, .cat-pill-text { display: none; }
+/* Select all, over the one-row list while selecting (the table's own heading box is hidden there) */
+.tx-selall { display: none; grid-template-columns: 32px minmax(0, 1fr); column-gap: 10px; align-items: center; padding: 10px 2px; border-bottom: 1px solid var(--rule); font-size: 15px; font-weight: 500; cursor: pointer; }
+.tx-selall input { width: 22px; height: 22px; margin: 0; }
 body.page-held { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden; }
 .cat-pill { display: contents; }
 html { -webkit-tap-highlight-color: transparent; }
@@ -843,7 +850,7 @@ a, button, select, label, summary { touch-action: manipulation; }
   .filters .field.inline.grow { flex: 2 1 180px; }
   .filters .field.inline.more { display: none; }
   .filters.open .field.inline.more { display: flex; }
-  .filters-sm { display: flex; gap: 8px; width: 100%; margin-top: -2px; }
+  .filters-sm { display: flex; flex-wrap: wrap; gap: 4px 8px; width: 100%; margin-top: -2px; }
   .filters .tx-clear-wide { display: none; }
   .tx-table, .tx-table tbody, .tx-table tfoot { display: block; }
   .tx-table thead { display: none; }
@@ -854,6 +861,7 @@ a, button, select, label, summary { touch-action: manipulation; }
   .tx-table td.cb { display: none; grid-area: cb; width: auto; }
   .tx-table.selecting td.cb { display: flex; align-items: center; }
   .tx-table td.cb input { width: 22px; height: 22px; }
+  .tx-selall { display: grid; }
   .tx-table td.tx-payee { grid-area: payee; font-weight: 500; font-size: 16px; }
   .tx-table td.tx-payee .payee-line { display: flex; }
   .tx-table td.tx-payee .payee-line > .linklike { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1125,6 +1133,8 @@ body.talk-open .main-wrap { margin-right: 390px; }
   .tx-table td.cb { display: none; grid-area: cb; width: auto; }
   .tx-table.selecting td.cb { display: flex; align-items: center; }
   .tx-table td.cb input { width: 22px; height: 22px; }
+  .tx-selall { display: grid; }
+  .filters-sm { display: flex; flex-wrap: wrap; gap: 4px 8px; width: 100%; margin-top: -2px; }
   .tx-table td.tx-payee { grid-area: payee; font-weight: 500; font-size: 16px; }
   .tx-table td.tx-payee .payee-line { display: flex; }
   .tx-table td.tx-payee .payee-line > .linklike { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1161,6 +1171,9 @@ body.talk-open .main-wrap { margin-right: 390px; }
 /* No column headings in the transactions list on the iPhone or a narrow page area (Talk open): sort from the menu instead */
 @media (max-width: 640px) { .filters .sort-field { display: flex; } }
 @container main (max-width: 700px) { .filters .sort-field { display: flex; } }
+/* A narrow list on a wider screen (Talk open on an iPad in landscape, a narrow Mac window) shows every filter already,
+   so its row under the filters has only Select */
+@media (min-width: 641px) { .filters-sm [data-act=tx-filters], .filters-sm .tx-clear { display: none; } }
 /* ---------- Cryptocurrency (27-crypto.js) ---------- */
 .only-sm { display: none; }
 @media (max-width: 640px) { .only-sm { display: block; } }

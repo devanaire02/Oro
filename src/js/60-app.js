@@ -296,12 +296,19 @@ function applyTheme() {
 /* The ticked transactions, kept outside the page so sorting or redrawing the list doesn't untick them */
 const txSel = () => (UI.txSel ||= new Set());
 const txSelIds = () => [...txSel()].filter(id => state.transactions.some(t => t.id === id));
+/* Select all: every transaction in the list (all that match the month, filters and search), drawn yet or not */
+const txAllTicked = () => !!UI.txVisible?.length && UI.txVisible.every(id => txSel().has(id));
+function txSelectAll(on) {
+  for (const id of UI.txVisible || []) if (on) txSel().add(id); else txSel().delete(id);
+  $$('.tx-cb').forEach(c => { c.checked = txSel().has(c.value); });
+  updateBulk();
+}
 function updateBulk() {
   const n = txSel().size, b = $('#bulk');
   if (!b) return;
-  b.hidden = !n; $('#bulk-count').textContent = `${n} selected`;
-  const all = $('#tx-all'), cbs = $$('.tx-cb');
-  if (all) all.checked = cbs.length > 0 && cbs.every(c => c.checked);
+  b.hidden = !n; $('#bulk-count').textContent = `${n.toLocaleString()} selected`;
+  const all = txAllTicked();
+  for (const box of [$('#tx-all'), $('#tx-all-sm')]) if (box) box.checked = all;
 }
 
 document.addEventListener('click', e => {
@@ -402,7 +409,7 @@ document.addEventListener('change', e => {
   if (d.memberRole) { const m = state.settings.members.find(x => x.id === d.memberRole); if (m) { if (el.value === 'adult') delete m.role; else m.role = el.value; if (isTouch()) el.blur(); commit({ silent: true }); setTimeout(render, 0); } return; }
   if (d.member) { const m = state.settings.members.find(x => x.id === d.member); if (m && el.value.trim()) { m.name = el.value.trim(); commit({ silent: true }); setTimeout(render, 0); } return; }
   if (el.classList.contains('tx-cb')) { if (el.checked) txSel().add(el.value); else txSel().delete(el.value); return updateBulk(); }
-  if (el.id === 'tx-all') { $$('.tx-cb').forEach(c => { c.checked = el.checked; if (el.checked) txSel().add(c.value); else txSel().delete(c.value); }); return updateBulk(); }
+  if (el.id === 'tx-all' || el.id === 'tx-all-sm') return txSelectAll(el.checked);
 });
 const searchDebounced = debounce(v => setParam('q', v), 300);
 const notesDebounced = debounce((mk, v) => { (state.reviews[mk] = state.reviews[mk] || {}).notes = v; commit({ silent: true }); }, 500);

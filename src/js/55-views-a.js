@@ -241,7 +241,7 @@ VIEWS.transactions = p => {
   // ticked rows stay ticked through sorting, Show more and edits; ones no longer in the list (filtered out, re-filed off
   // the flagged list, deleted) drop out of the selection
   { const inList = new Set(UI.txVisible); for (const id of txSel()) if (!inList.has(id)) txSel().delete(id); }
-  const allTicked = shown.length > 0 && shown.every(t => txSel().has(t.id));
+  const allTicked = txAllTicked();   // Select all means every one that matches, not just the first 250 drawn
   const months = [...new Set(state.transactions.map(t => monthKey(t.date)))].sort().reverse();
   if (!months.includes(thisMonth())) months.unshift(thisMonth());
   // Totals leave out transfers (credit card payments, moves between your own accounts), like Overview and Cash flow do
@@ -283,8 +283,9 @@ VIEWS.transactions = p => {
     <button class="btn small" data-act="bulk-flag">Flag</button><button class="btn small ghost" data-act="bulk-unflag">Clear flag</button>
     <button class="btn small ghost danger-text" data-act="bulk-del">Delete</button>
   </div>
+  ${shown.length && UI.txSelect ? `<label class="tx-selall"><input type="checkbox" id="tx-all-sm" ${allTicked ? 'checked' : ''}><span>Select all ${list.length.toLocaleString()}</span></label>` : ''}
   ${shown.length ? `<div class="scroll-table"><table class="ledger tx-table ${UI.txSelect ? 'selecting' : ''}" id="tx-table">
-    <thead><tr><th class="cb"><input type="checkbox" id="tx-all" aria-label="Select all shown" ${allTicked ? 'checked' : ''}></th>${txSortHead('date', sort)}${txSortHead('payee', sort)}${txSortHead('cat', sort)}${multi ? txSortHead('who', sort, 'hide-sm detail-only') : ''}${txSortHead('acct', sort, 'hide-sm')}${txSortHead('amount', sort, 'num')}</tr></thead>
+    <thead><tr><th class="cb"><input type="checkbox" id="tx-all" aria-label="Select all ${list.length.toLocaleString()}" ${allTicked ? 'checked' : ''}></th>${txSortHead('date', sort)}${txSortHead('payee', sort)}${txSortHead('cat', sort)}${multi ? txSortHead('who', sort, 'hide-sm detail-only') : ''}${txSortHead('acct', sort, 'hide-sm')}${txSortHead('amount', sort, 'num')}</tr></thead>
     <tbody>${shown.map(t => {
       const who = personOf(t);
       return `<tr data-id="${t.id}" class="${isUncat(t) ? 'needs' : ''}">
