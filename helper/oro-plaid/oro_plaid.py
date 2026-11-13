@@ -129,6 +129,10 @@ def plaid(path, body):
         try: err = json.loads(e.read() or b'{}')
         except ValueError: err = {}
         code = err.get('error_code') or f'HTTP_{e.code}'
+        # Plaid's reason, for the log: its codes and its own developer message (never keys, tokens or account data).
+        why = ' '.join(str(err.get('error_message') or '').split())[:300]
+        sys.stderr.write(f'{time.strftime("%Y-%m-%d %H:%M:%S")} Plaid {path} {e.code} {err.get("error_type") or "-"} {code} '
+                         f'request {err.get("request_id") or "-"}: {why}\n'); sys.stderr.flush()
         if code == 'ITEM_LOGIN_REQUIRED': raise Problem('login_required', 'This bank needs you to sign in again.', 409, plaid=code)
         if code in ('INVALID_API_KEYS', 'INVALID_SECRET', 'INVALID_CLIENT_ID'): _cache.pop('creds', None); raise Problem('bad_keys', f'Plaid didn’t accept the {ENV} keys in the Keychain.', 409, plaid=code)
         if code in ('PRODUCTS_NOT_SUPPORTED', 'PRODUCT_NOT_ENABLED', 'INVALID_PRODUCT', 'PRODUCT_NOT_READY'): raise Problem('product', 'That isn’t on your Plaid plan yet (add it in Plaid’s Dashboard).', 409, plaid=code)
