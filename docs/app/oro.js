@@ -5383,7 +5383,7 @@ function acctOptions(sel, filter, emptyLabel) {
     activeAccounts().filter(a => !filter || filter(a)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 }
 const amt = (n, opts) => `<span class="num ${signClass(n)}">${money(n, opts)}</span>`;
-const ORO_BUILD = '6c8ba52';
+const ORO_BUILD = '5cd68e2';
 const ORO_MEANING = 'Yoruba for wealth', ORO_TAGLINE = 'Know your wealth. Keep it close.';
 // the wordmark: real text for Classic and screen readers; the Ọrọ̀ look draws its two under-dots as brass coins
 const BRAND_MARK = '<span class="bm-cl">Ọrọ̀</span><span class="bm-ng" aria-hidden="true"><span>O<i></i></span>r<span>ò<i></i></span></span>';
@@ -6733,7 +6733,7 @@ function bsTable(list, owners, { simple, totalLabel }) {
   let html = '';
   const section = (title, groups) => {
     const all = [];
-    html += `<tr class="bs-sect"><th colspan="${n}">${title}</th></tr>`;
+    html += `<tr class="bs-sect"><th colspan="${n}"><span class="sect-l">${title}</span></th></tr>`;
     for (const [label, types] of groups) {
       const accts = list.filter(a => types.includes(a.type)).sort((x, y) => val(y) - val(x));
       if (!accts.length) continue;
@@ -6853,11 +6853,11 @@ VIEWS.reports = p => {
     const payT = ms.map(m => payrollSaving(`${m}-01`, monthEnd(m)).total), anyPay = payT.some(Boolean);   // on pay stubs: saved before it reached the bank
     return head + `<div class="toolbar"><button class="btn small" data-act="export-statement" data-from="${R.from}" data-to="${R.to}">Export CSV</button><span class="muted small">Showing ${ms.length} month${ms.length > 1 ? 's' : ''}. Transfers are left out.</span></div>
     <div class="scroll-table"><table class="ledger statement"><thead><tr><th>Category</th>${ms.map(m => `<th class="num">${monthLabel(m, true)}</th>`).join('')}<th class="num">Total</th></tr></thead><tbody>
-      <tr class="sect"><th colspan="${ms.length + 2}">Income</th></tr>
+      <tr class="sect"><th colspan="${ms.length + 2}"><span class="sect-l">Income</span></th></tr>
       ${inc.map(c => row(`<span class="indent-in">${esc(c.name)}</span>`, ms.map((_, i) => per[i][c.id] || 0))).join('')}
       ${uncIn.some(Boolean) ? row('<span class="indent-in">Uncategorized</span>', uncIn) : ''}
       ${row('Total income', incT, 'subtotal')}
-      <tr class="sect"><th colspan="${ms.length + 2}">Spending</th></tr>
+      <tr class="sect"><th colspan="${ms.length + 2}"><span class="sect-l">Spending</span></th></tr>
       ${Object.entries(exp).map(([g, cs]) => row(`<strong>${esc(g)}</strong>`, ms.map((_, i) => sum(cs.map(c => per[i][c.id] || 0))), 'grp') + cs.map(c => row(`<span class="indent-in">${esc(c.name)}</span>`, ms.map((_, i) => per[i][c.id] || 0), 'detail-only')).join('')).join('')}
       ${uncOut.some(Boolean) ? row('<strong>Uncategorized</strong>', uncOut, 'grp') : ''}
       ${row('Total spending', expT, 'subtotal')}

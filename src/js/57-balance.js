@@ -35,7 +35,7 @@ function bsTable(list, owners, { simple, totalLabel }) {
   let html = '';
   const section = (title, groups) => {
     const all = [];
-    html += `<tr class="bs-sect"><th colspan="${n}">${title}</th></tr>`;
+    html += `<tr class="bs-sect"><th colspan="${n}"><span class="sect-l">${title}</span></th></tr>`;
     for (const [label, types] of groups) {
       const accts = list.filter(a => types.includes(a.type)).sort((x, y) => val(y) - val(x));
       if (!accts.length) continue;

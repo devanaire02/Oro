@@ -186,7 +186,14 @@ body.simple .detail-only { display: none !important; }
 .ledger.compact thead th:first-child { font: 500 12.5px var(--sans); color: var(--muted); }
 .ledger tr.off td, .ledger tr.off th { opacity: .45; }
 .ledger tr.needs td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
-.ledger tbody tr:hover > * { background: color-mix(in srgb, var(--accent-soft) 35%, transparent); }
+/* A row tints under the pointer on the Mac only: on a touch screen the tint would stay on whatever was last tapped.
+   A first column that stays put while the figures slide under it (the income statement, the balance sheet) tints
+   solid, so the figures never show through it. */
+@media (hover: hover) {
+  .ledger tbody tr:hover > * { background: color-mix(in srgb, var(--accent-soft) 35%, transparent); }
+  .statement tbody tr:hover > th { background: color-mix(in srgb, var(--accent-soft) 35%, var(--pad)); }
+  .bs-table tbody tr:hover > th { background: color-mix(in srgb, var(--accent-soft) 35%, var(--sheet)); }
+}
 .ledger .cb { width: 30px; padding-right: 0; }
 .ledger .acts { width: 1%; white-space: nowrap; text-align: right; }
 .scroll-table { overflow-x: auto; margin: 0 -2px; }
@@ -205,7 +212,11 @@ body.simple .detail-only { display: none !important; }
 .statement .subtotal th, .statement .subtotal td { font-weight: 600; border-top: 1px solid var(--ink); }
 .statement .net th, .statement .net td { font-weight: 700; border-bottom: 3px double var(--ink); }
 .statement .total-col { background: color-mix(in srgb, var(--pad) 55%, transparent); font-weight: 600; }
-.statement tbody th { position: sticky; left: 0; background: var(--pad); z-index: 1; }
+.statement tbody th, .statement thead th:first-child { position: sticky; left: 0; background: var(--pad); z-index: 1; }
+/* Income and Spending span the whole row, so the words themselves stay in view when the table is slid sideways */
+.statement .sect th, .bs-table .bs-sect th { position: static; }
+.sect-l { position: sticky; left: 8px; display: inline-block; }
+@media (max-width: 640px) { .statement tbody th:not([colspan]), .statement thead th:first-child { box-shadow: 6px 0 8px -8px rgba(0,0,0,.25); } }
 .diverge-cell { width: 26%; vertical-align: middle !important; }
 .diverge { position: relative; height: 10px; }
 .diverge::before { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--rule-strong); }
@@ -777,7 +788,6 @@ html { -webkit-tap-highlight-color: transparent; }
 a, button, select, label, summary { touch-action: manipulation; }
 @media (hover: none) {
   .pal-foot { display: none; }
-  .ledger tbody tr:hover > * { background: none; }
   .nav a:hover, .icon-btn:hover:not(:disabled) { background: none; }
   .linklike:hover { color: inherit; text-decoration: none; }
 }
@@ -1226,12 +1236,13 @@ body.talk-open .main-wrap { margin-right: 390px; }
 .bs-table .bs-acct th { padding-left: 14px; }
 .bs-table .bs-sub th, .bs-table .bs-sub td { font-weight: 600; border-bottom: 1px solid var(--rule); }
 .bs-table .bs-sub:not(.flat) th, .bs-table .bs-sub:not(.flat) td { color: var(--ink); background: color-mix(in srgb, var(--pad) 60%, transparent); }
+.bs-table .bs-sub:not(.flat) th { background: color-mix(in srgb, var(--pad) 60%, var(--sheet)); }   /* the same shade, but solid: the column stays put */
 .bs-table .bs-total th, .bs-table .bs-total td { font-weight: 700; border-top: 1px solid var(--rule-strong); }
 .bs-table .bs-nw th, .bs-table .bs-nw td { font: 700 16px var(--serif); border-top: 2px solid var(--ink); border-bottom: 3px double var(--ink); padding-top: 10px; padding-bottom: 10px; }
 .bs-table .bs-tot { font-weight: 600; }
 .bs-table tbody th, .bs-table thead th:first-child { position: sticky; left: 0; background: var(--sheet); z-index: 1; }
 .bs-note { margin-top: 10px; }
-@media (max-width: 640px) { .bs-wrap { padding: 0 6px 4px; } .bs-table { min-width: 0; } .bs-table tbody th, .bs-table thead th:first-child { min-width: 9.5em; box-shadow: 6px 0 8px -8px rgba(0,0,0,.25); } .bs-swipe { margin: 0 0 6px; } .bs-table th, .bs-table td { padding-left: 6px; padding-right: 6px; } .bs-kpis dd { font-size: 21px; } }
+@media (max-width: 640px) { .bs-wrap { padding: 0 6px 4px; } .bs-table { min-width: 0; } .bs-table tbody th:not([colspan]), .bs-table thead th:first-child { min-width: 9.5em; box-shadow: 6px 0 8px -8px rgba(0,0,0,.25); } .bs-swipe { margin: 0 0 6px; } .bs-table th, .bs-table td { padding-left: 6px; padding-right: 6px; } .bs-kpis dd { font-size: 21px; } }
 @media print { .bs-table { min-width: 0; } .bs-table tbody th, .bs-table thead th:first-child { position: static; } }
 /* Three figures side by side don't fit a 320px phone: two to a row there */
 @media (max-width: 400px) { .kpis.three { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -1700,12 +1711,19 @@ body.presenting .modal-wrap { z-index: 90; }
     .goal-card, .b-card, .s-card, .person-card { border-radius: var(--radius); }
     .empty { position: relative; overflow: hidden; padding-top: 46px; border-radius: 18px; }
     .empty::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 8px; background-image: var(--threads), var(--weave); }
-    .ledger tbody tr:hover > * { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
     .toast { border-radius: 12px; }
     .fee-src { display: inline-block; min-width: 34px; margin-left: 4px; font: 500 11px/16px var(--sans); text-align: center; color: var(--muted); background: var(--pad); border-radius: 999px; padding: 0 6px; }
     .fee-src.typed { color: var(--ink-accent); background: var(--accent-soft); }
     .fee-more { margin: 6px 0; } .fee-more summary { cursor: pointer; font-size: 13.5px; color: var(--ink-accent); padding: 4px 0; }
     .fee-note { margin-top: 8px; }
+  }
+  /* calmer tables: a row tints under the pointer (the Mac only; solid where the first column stays put) */
+  @media (hover: hover) {
+    :root:not([data-look="classic"]) {
+      .ledger tbody tr:hover > * { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
+      .statement tbody tr:hover > th { background: color-mix(in srgb, var(--accent-soft) 45%, var(--pad)); }
+      .bs-table tbody tr:hover > th { background: color-mix(in srgb, var(--accent-soft) 45%, var(--sheet)); }
+    }
   }
   /* on a phone a one-line summary drops its row name so the figures fit */
   @media (max-width: 640px) {
