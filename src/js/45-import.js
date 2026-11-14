@@ -88,8 +88,14 @@ async function handleImportFile(file, opts = {}) {
       } else {
         const rows = parseCSV(text);
         if (rows.length < 2) throw new Error('That file looks empty.');
-        const hi = findHeaderRow(rows);
-        if (isPayPalFile(rows[hi], file.name)) {
+        const hi = findHeaderRow(rows), app = findAppFile(rows);
+        if (app) {   // Venmo's statement or Cash App's activity: details for the bank lines, like PayPal's (47-venmo-cashapp.js)
+          const label = APP[app.src].label;
+          IMP.source = app.src; IMP.kind = 'paypal'; IMP.ppSrc = app.src;
+          IMP.ppRows = app.src === 'venmo' ? parseVenmo(rows, app.hi) : parseCashApp(rows, app.hi);
+          if (!IMP.ppRows.length) throw new Error(`Ọrọ̀ found a ${label} file but couldn’t read any payments from it.`);
+          IMP.step = 'paypal';
+        } else if (isPayPalFile(rows[hi], file.name)) {
           IMP.source = 'paypal'; IMP.kind = 'paypal'; IMP.ppRows = parsePayPal(rows, hi);
           if (!IMP.ppRows.length) throw new Error('Ọrọ̀ found a PayPal file but couldn’t read any payments from it.');
           IMP.step = 'paypal';
@@ -249,7 +255,7 @@ function renderImport() {
         <div><h4>Brokerage holdings</h4><p>Download the <strong>Positions</strong> page as CSV (Fidelity, Schwab, Vanguard and most others), or an investment QFX. Ọrọ̀ updates shares, prices and cost basis.</p></div>
         <div><h4>Moving from another app</h4><p>Exports from <strong>YNAB, Monarch, Mint, Copilot, Tiller</strong> (CSV) or <strong>Quicken</strong> (QIF) bring every account at once, with categories, tags and notes. PDF statements work as a last resort.</p></div>
       </div>
-      <p class="muted small pp-help"><strong>PayPal:</strong> on paypal.com, Activity › Download (All transactions, CSV). Ọrọ̀ uses it to name the card and bank lines that only say “PayPal”. It adds nothing new.</p>`;
+      <p class="muted small pp-help"><strong>PayPal, Venmo and Cash App:</strong> on paypal.com, Activity › Download (All transactions, CSV); on venmo.com, Statements › Download CSV; on cash.app on a computer, Activity › Statements › Export CSV. Ọrọ̀ uses them to name the card and bank lines that only say “PayPal”, “Venmo” or “Cash App”, with who it was to or from and the note. It adds nothing new.</p>`;
     const inp = $('#imp-file'), drop = $('#imp-drop');
     inp.onchange = () => importFiles([...inp.files]);
     drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };

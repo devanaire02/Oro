@@ -148,14 +148,15 @@ function batchCounts(it) {
 function renderBatchStep(box) {
   const items = IMP.items;
   let nTx = 0, nPosFiles = 0, nPP = 0, nMark = 0;
+  const ppSrcs = new Set();
   const cards = items.map((it, k) => {
     const head = `<header class="batch-head"><label class="check"><input type="checkbox" data-binc="${k}" ${it.include ? 'checked' : ''} ${it.problem || it.solo ? 'disabled' : ''}> <strong>${esc(it.fileName)}</strong></label>`;
     if (it.problem || it.solo) return `<section class="batch-item off">${head}<span class="muted small">Not included</span></header>
       <p class="notice ${it.problem ? 'bad' : ''} small">${esc(it.problem || it.solo)}</p>${it.solo ? `<button class="btn small" data-imp="bsolo-${k}">Import this file on its own</button>` : ''}</section>`;
     if (it.kind === 'paypal') {
-      const pays = it.ppRows.filter(p => ['buy', 'refund'].includes(ppKind(p))).length;
-      if (it.include) nPP++;
-      return `<section class="batch-item ${it.include ? '' : 'off'}">${head}<span class="muted small">${/\.pdf$/i.test(it.fileName) ? 'PayPal statement' : 'PayPal activity'} · ${pays} payment${pays === 1 ? '' : 's'}</span></header>
+      const pays = appPayCount(it.ppRows), L = APP[it.ppSrc || 'paypal'].label;
+      if (it.include) { nPP++; ppSrcs.add(it.ppSrc || 'paypal'); }
+      return `<section class="batch-item ${it.include ? '' : 'off'}">${head}<span class="muted small">${L} ${/\.pdf$/i.test(it.fileName) ? 'statement' : 'activity'} · ${pays} payment${pays === 1 ? '' : 's'}</span></header>
         <p class="muted small">Adds nothing new. After the other files import, Ọrọ̀ shows which card and bank lines it can name from this file.</p></section>`;
     }
     if (it.kind === 'positions') {
@@ -213,7 +214,7 @@ function renderBatchStep(box) {
   if (nTx) parts.push(`${nTx.toLocaleString()} transaction${nTx === 1 ? '' : 's'}`);
   if (nPosFiles) parts.push(`${nPosFiles} holdings file${nPosFiles === 1 ? '' : 's'}`);
   if (nMark) parts.push(`${parts.length ? 'mark' : 'Mark'} whose card on ${nMark.toLocaleString()}`);
-  if (nPP) parts.push('PayPal details');
+  if (nPP) parts.push(`${appLabels(Object.keys(APP).filter(k => ppSrcs.has(k)))} details`);
   setModalActions(`<button class="btn ghost" data-imp="back">Start over</button><button class="btn primary" data-imp="bcommit" ${nFiles ? '' : 'disabled'}>${parts.length ? `Import ${parts.join(' and ')}` : nFiles ? 'Nothing new · remember the accounts' : 'Nothing to import'}</button>`);
 }
 

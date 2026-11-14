@@ -1,12 +1,24 @@
-/* ================= PayPal details =================
+/* ================= PayPal, Venmo and Cash App details =================
    A card or bank statement shows a PayPal purchase only as "PAYPAL *INST XFER $12.47". PayPal's own activity file says
    it was McDonald's. Importing that file adds nothing new: each PayPal payment is matched to the card or bank line with
-   the same amount a few days later, and that line takes the store's name, the item as a memo when it has none, and a
-   category when it has none. The bank's own wording is kept, and a payment already named is skipped next time. */
+   the same amount a few days later, and that line takes the store's name, the item and note in its memo, and a
+   category when it has none. The bank's own wording is kept, and a payment already named is skipped next time.
+   Venmo's and Cash App's files go through the same step (47-venmo-cashapp.js reads them): a payment to a person names
+   the bank line "Venmo to Sam", and money that came in names the deposit it reached the bank in, with who paid and their
+   notes. A name you gave the line yourself stays; what the file says goes in the memo instead. Inside the app this is
+   all still called "paypal" (IMP.kind, IMP.step, t.pp); t.pp.src says which app when it isn't PayPal. */
 const PP_BANK = /PAYPAL|\bPYPL\b|\bPP\s?\*/i;
 const PP_FUNDING = /deposit|add(ed)? funds|instant transfer|funding/i;
 const PP_IGNORE = /authori[sz]ation|\bhold\b|currency conversion|deposit|add(ed)? funds|transfer (to|from)|withdrawal|reversal|void|cash ?back|reward|repayment|interest/i;
 const PP_PERSON = /^(general payment|mobile payment|payment sent|send money|money sent|personal payment)$|friends|family/i;
+/* The three apps: what their bank lines say, and the start of the wording kept for rules and your history */
+const APP = {
+  paypal: { label: 'PayPal', bank: PP_BANK },
+  venmo: { label: 'Venmo', bank: /\bVENMO\b/i, raw: 'VENMO' },
+  cashapp: { label: 'Cash App', bank: /CASH ?APP|SQUARE CASH|\bSQC\b/i, raw: 'CASH APP' },
+};
+const andList = a => a.length <= 1 ? (a[0] || '') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`;
+const appLabels = srcs => andList((srcs.length ? srcs : ['paypal']).map(s => APP[s].label));
 const PP_WHY = {
   card: 'Paid by card or bank. Import that statement, then this file again.',
   balance: 'Looks paid from your PayPal balance (or PayPal Credit), so no card or bank line shows it.',
@@ -25,7 +37,7 @@ function isPayPalFile(headers, fileName = '') {
 function parsePayPal(rows, hi) {
   const H = rows[hi].map(c => String(c).trim().toLowerCase());
   const col = (...names) => { for (const n of names) { const i = H.indexOf(n); if (i >= 0) return i; } return -1; };
-  const c = { date: col('date'), name: col('name'), type: col('type', 'description'), status: col('status'), cur: col('currency'), gross: col('gross', 'amount', 'net'), impact: col('balance impact'), id: col('transaction id'), item: col('item title', 'subject', 'note') };
+  const c = { date: col('date'), name: col('name'), type: col('type', 'description'), status: col('status'), cur: col('currency'), gross: col('gross', 'amount', 'net'), impact: col('balance impact'), id: col('transaction id'), item: col('item title', 'subject'), note: col('note', 'message') };
   const out = [];
   for (const r of rows.slice(hi + 1)) {
     const get = i => i >= 0 ? String(r[i] ?? '').trim() : '';
@@ -37,7 +49,7 @@ function parsePayPal(rows, hi) {
     if (impact === 'credit' && amount < 0) amount = -amount;
     // only the store or person: never the email addresses or street address in the file
     const name = get(c.name).replace(/\S+@\S+\.\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
-    out.push({ date, name, type: get(c.type), status: get(c.status), currency: get(c.cur).toUpperCase(), amount: round2(amount), impact, id: get(c.id) || `d:${date}:${round2(amount)}:${normPayee(name)}`, item: get(c.item).replace(/\S+@\S+\.\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 120) });
+    out.push({ date, name, type: get(c.type), status: get(c.status), currency: get(c.cur).toUpperCase(), amount: round2(amount), impact, id: get(c.id) || `d:${date}:${round2(amount)}:${normPayee(name)}`, item: get(c.item).replace(/\S+@\S+\.\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 120), note: appNote(get(c.note)) });
   }
   return out;
 }
@@ -110,9 +122,21 @@ function ppNameHint(t, p) {
   return !!w && normPayee(t.rawPayee || t.payee).includes(w);
 }
 
-function ppMatch(list) {
-  const done = new Set(state.transactions.filter(t => t.pp?.id).flatMap(t => [t.pp.id, t.pp.k]).filter(Boolean));
-  const pays = [], funding = [], R = { matches: [], left: [], done: 0, skipped: 0 };
+/* All the rows of one review (PayPal's, Venmo's and Cash App's files can come in one batch): one result, no bank line
+   named twice */
+function appMatch(list) {
+  const R = { matches: [], left: [], done: 0, skipped: 0, srcs: [] }, usedT = new Set(), by = {};
+  for (const p of list) (by[p.src || 'paypal'] ||= []).push(p);
+  R.srcs = Object.keys(APP).filter(k => by[k]);
+  if (by.paypal) ppMatch(by.paypal, R, usedT);
+  for (const src of ['venmo', 'cashapp']) if (by[src]) p2pMatch(src, by[src], R, usedT);
+  R.matches.sort((a, b) => b.t.date.localeCompare(a.t.date));
+  R.left.sort((a, b) => b.p.date.localeCompare(a.p.date));
+  return R;
+}
+function ppMatch(list, R = { matches: [], left: [], done: 0, skipped: 0 }, usedT = new Set()) {
+  const done = new Set(state.transactions.filter(t => t.pp?.id && !t.pp.src).flatMap(t => [t.pp.id, t.pp.k]).filter(Boolean));
+  const pays = [], funding = [];
   const ids = new Set();
   for (const p of list) {
     if (ids.has(p.id)) continue;   // the same payment in two files (a statement and a CSV)
@@ -124,7 +148,7 @@ function ppMatch(list) {
     if (k === 'currency') { R.left.push({ p, why: 'currency' }); continue; }
     pays.push(p);
   }
-  const lines = state.transactions.filter(t => !t.pp && PP_BANK.test(t.rawPayee || t.payee || ''));
+  const lines = state.transactions.filter(t => !t.pp && !usedT.has(t.id) && PP_BANK.test(t.rawPayee || t.payee || ''));
   const pairs = [];
   pays.forEach((p, i) => lines.forEach((t, j) => {
     if (Math.sign(t.amount) !== Math.sign(p.amount) || Math.abs(t.amount - p.amount) > 0.005) return;
@@ -133,10 +157,10 @@ function ppMatch(list) {
     pairs.push({ i, j, score: (ppNameHint(t, p) ? 0 : 10) + Math.abs(d) + (d < 0 ? 0.5 : 0) });
   }));
   pairs.sort((a, b) => a.score - b.score);
-  const usedP = new Set(), usedT = new Set(), hist = categoryHistory();
+  const usedP = new Set(), usedJ = new Set(), hist = categoryHistory();
   for (const { i, j } of pairs) {
-    if (usedP.has(i) || usedT.has(j)) continue;
-    usedP.add(i); usedT.add(j);
+    if (usedP.has(i) || usedJ.has(j)) continue;
+    usedP.add(i); usedJ.add(j); usedT.add(lines[j].id);
     R.matches.push(ppMatchRow(pays[i], lines[j], hist));
   }
   pays.forEach((p, i) => {
@@ -157,39 +181,63 @@ function ppMatchRow(p, t, hist) {
   const guess = rule ? rule.categoryId : auto?.id || '';
   const had = isSplit(t) ? '' : (t.categoryId || '');
   const payee = rule?.rename || (person ? `PayPal ${t.amount < 0 ? 'to' : 'from'} ${prettyPayee(p.name)}` : prettyPayee(p.name)) || prettyPayee(t.payee);
-  return { p, t, raw, payee, person: rule?.person || '', guess, how: rule ? 'rule' : auto?.how || '', had, categoryId: had || guess, include: true, touched: false };
+  return { src: 'paypal', p, t, raw, payee, memo: [p.item, p.note].filter(Boolean).join(' · '), keep: !appNameIsBanks(t, PP_BANK), person: rule?.person || '', guess, how: rule ? 'rule' : auto?.how || '', had, categoryId: had || guess, include: true, touched: false };
 }
+/* The line still carries the bank's own wording (or none), so the file's name can replace it. A name you typed, or one
+   a rule of yours gave it, stays: the file's name and note go in the memo instead. */
+function appNameIsBanks(t, re) {
+  const p = String(t.payee || '').trim(), raw = String(t.rawPayee || '').trim();
+  return !p || re.test(p) || p === prettyPayee(raw) || normPayee(p) === normPayee(raw);
+}
+/* A note as the app's file has it: one line, no email addresses, not endless */
+const appNote = v => String(v || '').replace(/\S+@\S+\.\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 200);
 
 function ppReviewOpen(rows, fileName) {
   startImport({ step: 'paypal', kind: 'paypal', source: 'paypal', ppRows: rows, fileName });
 }
+function appWhy(l) {
+  const L = APP[l.p.src || 'paypal'].label;
+  if (!l.p.src) return PP_WHY[l.why];
+  return {
+    balance: `Paid from your ${L} balance, so no bank or card line shows it.`,
+    unknown: `No bank or card line that says “${L}” with this amount yet.`,
+    deposit: `No deposit that says “${L}” with this amount yet.`,
+    held: `Still in your ${L} balance, or moved to the bank after this file ends.`,
+  }[l.why] || '';
+}
 function renderPayPalStep(box) {
-  const R = IMP.pp || (IMP.pp = ppMatch(IMP.ppRows || []));
+  const R = IMP.pp || (IMP.pp = appMatch(IMP.ppRows || []));
   const M = R.matches, on = M.filter(m => m.include).length;
   const opts = catOptions(null, true);
   const refile = M.filter(m => m.had && m.guess && m.guess !== m.had);
   const s = n => n === 1 ? '' : 's';
   const acctName = id => acctById(id)?.name || '';
-  const leftNote = R.left.some(l => l.why === 'card') ? '<p class="muted small">Import the card or bank statement that paid for these, then this PayPal file again. Ones already named are skipped.</p>' : '';
+  const labels = appLabels(R.srcs), one = R.srcs.length <= 1, onlyPP = !R.srcs.some(x => x !== 'paypal');
+  const leftNote = R.left.some(l => ['card', 'unknown', 'deposit'].includes(l.why)) ? `<p class="muted small">Import the card or bank statement ${onlyPP ? 'that paid for these' : 'these went through'}, then this ${one ? `${labels} file` : 'file'} again. Ones already named are skipped.</p>` : '';
+  const lede = onlyPP ? 'PayPal’s file doesn’t add transactions. It names the ones your cards and bank show only as “PayPal”, using the store and amount PayPal recorded.'
+    : one ? `${labels}’s file doesn’t add transactions. It names the ones your bank and cards show only as “${labels}”: who it was to or from, with the note in the memo. Money that came in names the deposit it reached your bank in.`
+    : `These files don’t add transactions. They name the ones your bank and cards show only as ${R.srcs.map(x => `“${APP[x].label}”`).join(R.srcs.length > 2 ? ', ' : ' or ').replace(/, (?=[^,]*$)/, ' or ')}: the store or person, with any note in the memo.`;
   box.innerHTML = `
-    <p class="lede">PayPal’s file doesn’t add transactions. It names the ones your cards and bank show only as “PayPal”, using the store and amount PayPal recorded.</p>
-    <p class="pp-sum">${M.length ? `<strong>${M.length} matched</strong>` : '<strong>No “PayPal” lines to name</strong>'}${R.done ? ` · ${R.done} named before` : ''}${R.left.length ? ` · ${R.left.length} without a match` : ''}</p>
+    <p class="lede">${lede}</p>
+    <p class="pp-sum">${M.length ? `<strong>${M.length} matched</strong>` : `<strong>No “${one ? labels : 'PayPal”, “Venmo” or “Cash App'}” lines to name</strong>`}${R.done ? ` · ${R.done} named before` : ''}${R.left.length ? ` · ${R.left.length} without a match` : ''}</p>
     ${refile.length ? `<label class="check small"><input type="checkbox" id="pp-refile" ${IMP.ppRefile ? 'checked' : ''}> Also re-file ${refile.length === 1 ? 'the one that already has' : `the ${refile.length} that already have`} a category, using the store’s name</label>` : ''}
     ${M.length ? `<div class="pp-list">${M.map((m, i) => {
       const t = m.t, changed = m.had && m.categoryId !== m.had;
       return `<div class="pp-row ${m.include ? '' : 'off'}">
-        <input type="checkbox" data-pp="${i}" ${m.include ? 'checked' : ''} aria-label="Name this one ${esc(m.payee)}">
-        <div class="pp-main"><strong>${esc(m.payee)}</strong>
-          <span class="muted small">${dateLabel(t.date, true)} · ${esc(acctName(t.accountId))} · was “${esc(t.rawPayee || t.payee)}”${m.p.item ? ` · ${esc(m.p.item)}` : ''}</span></div>
+        <input type="checkbox" data-pp="${i}" ${m.include ? 'checked' : ''} aria-label="Name this one ${esc(m.keep ? t.payee : m.payee)}">
+        <div class="pp-main"><strong>${esc(m.keep ? t.payee : m.payee)}</strong>
+          <span class="muted small">${dateLabel(t.date, true)} · ${esc(acctName(t.accountId))} · was “${esc(t.rawPayee || t.payee)}”${m.src === 'paypal' && m.p.item ? ` · ${esc(m.p.item)}` : ''}</span>
+          ${m.keep ? `<span class="muted small pp-keep">Keeps your name. The memo gets “${esc(m.payee)}”${m.memo ? ' and the note' : ''}.</span>` : ''}
+          ${m.memo && (m.src !== 'paypal' || m.p.note) ? `<span class="small pp-note">${esc(m.src === 'paypal' ? m.p.note : m.memo)}</span>` : ''}</div>
         <span class="num ${signClass(t.amount)}">${money(t.amount)}</span>
         ${isSplit(t) ? '<span class="muted small pp-cat">Split: categories kept</span>'
           : `<select class="pp-cat" data-ppcat="${i}" aria-label="Category for ${esc(m.payee)}"${m.how && m.categoryId === m.guess && !m.had ? ` title="${esc(m.how === 'rule' ? 'From your rule' : GUESS_WHY[m.how] || '')}"` : ''}>${opts.replace(`value="${m.categoryId}"`, `value="${m.categoryId}" selected`)}</select>`}
         ${changed ? `<span class="muted small pp-was">Was ${esc(catName(m.had))}</span>` : ''}
       </div>`;
     }).join('')}</div>` : ''}
-    ${R.left.length ? `<details class="pp-left"${M.length ? '' : ' open'}><summary>${R.left.length} PayPal payment${s(R.left.length)} without a match</summary>${leftNote}
-      <ul>${R.left.map(l => `<li><span class="nowrap">${dateLabel(l.p.date, true)}</span><span>${esc(l.p.name || l.p.type)}</span><span class="num ${signClass(l.p.amount)}">${money(l.p.amount)}</span><span class="muted small">${esc(PP_WHY[l.why])}</span></li>`).join('')}</ul></details>` : ''}
-    ${R.skipped ? `<p class="muted small">${R.skipped} line${s(R.skipped)} that only move money inside PayPal (card funding, holds, transfers) ${R.skipped === 1 ? 'was' : 'were'} left out.</p>` : ''}`;
+    ${R.left.length ? `<details class="pp-left"${M.length ? '' : ' open'}><summary>${R.left.length}${one ? ` ${labels}` : ''} payment${s(R.left.length)} without a match</summary>${leftNote}
+      <ul>${R.left.map(l => `<li><span class="nowrap">${dateLabel(l.p.date, true)}</span><span>${esc(l.p.name || l.p.type)}${l.p.note ? ` <span class="muted">· ${esc(l.p.note)}</span>` : ''}</span><span class="num ${signClass(l.p.amount)}">${money(l.p.amount)}</span><span class="muted small">${esc(appWhy(l))}</span></li>`).join('')}</ul></details>` : ''}
+    ${R.skipped ? `<p class="muted small">${R.skipped} line${s(R.skipped)} that only move${R.skipped === 1 ? 's' : ''} money inside ${onlyPP ? 'PayPal (card funding, holds, transfers)' : `${one ? labels : 'these apps'} (adding money, spending the balance by card, holds)`} ${R.skipped === 1 ? 'was' : 'were'} left out.</p>` : ''}`;
   box.onchange = e => {
     const el = e.target, d = el.dataset;
     if (d.pp != null) { M[+d.pp].include = el.checked; el.closest('.pp-row').classList.toggle('off', !el.checked); return ppCount(); }
@@ -207,13 +255,18 @@ function ppCount() { const n = IMP.pp.matches.filter(m => m.include).length, b =
 
 function ppApply() {
   let named = 0, filed = 0;
+  const srcs = IMP.pp.srcs || ['paypal'];
   for (const m of IMP.pp.matches) {
     if (!m.include) continue;
     const t = state.transactions.find(x => x.id === m.t.id);
     if (!t || t.pp) continue;
-    t.pp = { id: m.p.id, k: `${m.p.date}:${m.p.amount}`, was: t.rawPayee || t.payee };
-    t.payee = m.payee; t.rawPayee = m.raw;
-    if (m.p.item && !t.memo) t.memo = m.p.item;
+    t.pp = m.src === 'paypal' ? { id: m.p.id, k: `${m.p.date}:${m.p.amount}`, was: t.rawPayee || t.payee }
+      : { id: m.p.id, ...(m.ids?.length ? { ids: m.ids } : {}), was: t.rawPayee || t.payee, src: m.src };
+    // the memo gets the item and note (and the file's name when yours stays), added to what you wrote, never replacing it
+    const note = m.keep ? [m.payee, m.memo].filter(Boolean).join(': ') : m.memo;
+    if (!m.keep) t.payee = m.payee;
+    t.rawPayee = m.raw;
+    if (note && !String(t.memo || '').includes(note)) t.memo = t.memo ? `${t.memo} · ${note}` : note;
     if (!isSplit(t) && (m.categoryId || '') !== (t.categoryId || '')) { t.categoryId = m.categoryId || null; if (m.categoryId) filed++; }
     if (m.person && !t.person && m.categoryId === m.guess) t.person = m.person;
     named++;
@@ -222,5 +275,5 @@ function ppApply() {
   if (!named) return;
   commit();
   const unc = state.transactions.filter(t => t.pp && isUncat(t)).length;
-  toast(`Named ${named} PayPal transaction${named === 1 ? '' : 's'}${filed ? `, and filed ${filed}` : ''}.${unc ? ` ${unc} still need a category.` : ''}`, { label: 'Undo', fn: undo });
+  toast(`Named ${named} ${srcs.length === 1 ? `${APP[srcs[0]].label} transaction${named === 1 ? '' : 's'}` : `transaction${named === 1 ? '' : 's'} from ${appLabels(srcs)}`}${filed ? `, and filed ${filed}` : ''}.${unc ? ` ${unc} still need a category.` : ''}`, { label: 'Undo', fn: undo });
 }
